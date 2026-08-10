@@ -3888,6 +3888,7 @@ export default {
 
   // WalletConnect
   'walletConnect.walletConnect': 'WalletConnect',
+  'walletConnect.pairSubtitle': 'Link a dApp to your wallet with a WalletConnect URI',
   'walletConnect.connectViaPaste': 'Paste URI',
   'walletConnect.connectViaScan': 'Scan QR Code',
   'walletConnect.pasteUri': 'Paste WalletConnect URI',
