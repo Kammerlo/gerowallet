@@ -23,6 +23,12 @@ export enum MessageTypes {
   GET_PAIRING_QR = 'GET_PAIRING_QR',
   GET_PAIRING_STATUS = 'GET_PAIRING_STATUS',
   VERIFY_SPENDING_PASSWORD = 'VERIFY_SPENDING_PASSWORD',
+  // Live support chat: one-time-per-wallet identity handshake. BG asks Nexus for a
+  // nonce, CIP-8 signs the challenge subject with the wallet's STAKE key (same
+  // machinery as PRODUCE_DEVICE_REGISTER_PROOF), and returns the pseudonymous
+  // Chatwoot identifier + HMAC + display name. Needs spending auth, so the caller
+  // supplies password / PRF privateKeyBytes. See chrome/supportChatAuth.ts.
+  SUPPORT_CHAT_AUTH = 'SUPPORT_CHAT_AUTH',
   SIGN_WITH_GOOGLE = 'SIGN_WITH_GOOGLE',
   // MPC "Sign in with Google" wallet (Plan D)
   CREATE_MPC_GOOGLE_WALLET = 'CREATE_MPC_GOOGLE_WALLET',

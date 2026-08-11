@@ -70,6 +70,12 @@ function buildCSP(dev: boolean): string {
     'wss://*.strikefinance.org',
     'https://*.gerowallet.io',
     'wss://*.gerowallet.io',
+    // Live support chat (self-hosted Chatwoot): public Client API over https and
+    // the ActionCable realtime stream over wss. Listed explicitly — the wildcards
+    // above already cover the default host, but VITE_SUPPORT_CHAT_URL is
+    // overridable per environment and the intent should be visible here.
+    'https://support.gerowallet.io',
+    'wss://support.gerowallet.io',
     // Midnight — the SDK's UnshieldedWallet/DustWallet/ShieldedWallet sync
     // connects directly to the Midnight Foundation indexer (HTTP for queries,
     // WS for subscriptions). Wildcard covers preview/preprod/mainnet plus

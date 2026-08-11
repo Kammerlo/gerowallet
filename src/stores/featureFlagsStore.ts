@@ -26,6 +26,10 @@ export interface FeatureFlags {
   isBitcoinGeroSyncEnabled: boolean;
   isMidnightConvertEnabled: boolean;
   isGoogleWalletEnabled: boolean;
+  // Master gate for the non-custodial live support chat (Chatwoot). Default OFF:
+  // the dock's support entry point stays hidden until flipped ON via gero-sync,
+  // so support can be held or killed without a client release.
+  isLiveChatEnabled: boolean;
   // Master gate for WalletConnect v2 pairing/signing. Default OFF: even with a
   // VITE_WALLETCONNECT_PROJECT_ID configured, the background skips WalletKit init
   // and the Connected dApps UI hides the WalletConnect section until flipped ON
@@ -71,6 +75,7 @@ const featureFlagsState = Vue.observable<FeatureFlagsState>({
     isMidnightConvertEnabled: false,
     isGoogleWalletEnabled: false,
     isWalletConnectEnabled: false,
+    isLiveChatEnabled: false,
     collateralTrustedDapps: [],
   },
   isInitialized: false,
@@ -142,6 +147,8 @@ export const featureFlagsStore = {
     // WalletConnect ships DARK (default false); the background reads this mirror
     // to decide whether to init WalletKit at all.
     featureFlagsState.flags.isWalletConnectEnabled = featureFlagService.getFlag('isWalletConnectEnabled', false);
+    // Live support chat ships DARK (default false) until the Chatwoot inbox is staffed.
+    featureFlagsState.flags.isLiveChatEnabled = featureFlagService.getFlag('isLiveChatEnabled', false);
     featureFlagsState.flags.collateralTrustedDapps = featureFlagService.getFlag<string[]>('collateralTrustedDapps', []);
     persistFlagsForBackground();
   },
@@ -206,6 +213,9 @@ export const featureFlagsStore = {
       Vue.set(featureFlagsState.flags, 'isWalletConnectEnabled', newValue);
       // Mirror the live flip so the background picks it up on next login/init.
       persistFlagsForBackground();
+    });
+    featureFlagService.onFlagChange('isLiveChatEnabled', (newValue) => {
+      Vue.set(featureFlagsState.flags, 'isLiveChatEnabled', newValue);
     });
     featureFlagService.onFlagChange('collateralTrustedDapps', (newValue) => {
       Vue.set(featureFlagsState.flags, 'collateralTrustedDapps', Array.isArray(newValue) ? newValue : []);
@@ -355,6 +365,16 @@ export const featureFlagsStore = {
   },
 
   /**
+   * Check if the non-custodial live support chat is enabled.
+   * Ships DARK (default false): the support entry point stays hidden and no
+   * Chatwoot/Nexus handshake traffic is generated until this is flipped ON, so
+   * gero-sync can hold or kill live chat without a client release.
+   */
+  isLiveChatEnabled(): boolean {
+    return featureFlagsState.flags.isLiveChatEnabled;
+  },
+
+  /**
    * Reset flags (disable all until re-initialized).
    */
   reset(): void {
@@ -376,6 +396,7 @@ export const featureFlagsStore = {
       isMidnightConvertEnabled: false,
       isGoogleWalletEnabled: false,
       isWalletConnectEnabled: false,
+      isLiveChatEnabled: false,
       collateralTrustedDapps: [],
     });
     featureFlagsState.isInitialized = false;

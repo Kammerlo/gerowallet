@@ -8,7 +8,9 @@
 /**
  * Sensitive options-context methods that must originate from an own extension
  * page (the wallet UI), never a content script. Scoped to the cross-device
- * settings/signing mutators to keep the router-level check's blast radius small.
+ * settings/signing mutators — plus the support-chat handshake, which likewise
+ * takes spending auth and produces a stake-key signature — to keep the
+ * router-level check's blast radius small.
  */
 export const EXTENSION_PAGE_ONLY_METHODS = new Set<string>([
   'SET_REMOTE_SIGNING_ENABLED',
@@ -17,6 +19,7 @@ export const EXTENSION_PAGE_ONLY_METHODS = new Set<string>([
   'UNTRUST_CROSS_DEVICE',
   'REQUEST_CROSS_DEVICE_SIGNATURE',
   'PRODUCE_DEVICE_REGISTER_PROOF',
+  'SUPPORT_CHAT_AUTH',
 ]);
 
 /**
