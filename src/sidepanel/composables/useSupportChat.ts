@@ -52,6 +52,14 @@ export type SupportConnectionState = 'idle' | 'connecting' | 'connected' | 'reco
 export interface SupportMessage {
   /** Chatwoot message id; NEGATIVE for an optimistic local echo not yet confirmed. */
   id: number;
+  /**
+   * Stable client-side list key. Set on an optimistic echo (its original negative
+   * id) and carried onto the reconciled message when the server id arrives, so the
+   * UI's `:key` does not change under it — otherwise Vue tears down and re-animates
+   * the user's own bubble on every send. Undefined for messages that never had an
+   * optimistic twin (history and cable arrivals).
+   */
+  clientId?: number;
   role: 'user' | 'agent';
   text: string;
   agentName?: string;
@@ -275,12 +283,16 @@ export function createSupportChat(deps: SupportChatDeps = {}): SupportChat {
 
   /** Append (or reconcile) a message that arrived from the server. */
   function ingest(message: SupportMessage, countUnread = true): void {
+    // Already present (e.g. a gap-fill re-listing it): keep the entry we have, so
+    // a reconciled message does not lose its clientId and change the UI's key.
     if (messages.value.some((m) => m.id === message.id)) return;
     if (message.role === 'user') {
-      // Reconcile our own optimistic echo instead of showing the text twice.
-      const optimistic = messages.value.findIndex((m) => m.id < 0 && m.text === message.text);
-      if (optimistic !== -1) {
-        messages.value.splice(optimistic, 1, message);
+      // Reconcile our own optimistic echo instead of showing the text twice, and
+      // carry its clientId across so the UI's list key survives the id swap.
+      const index = messages.value.findIndex((m) => m.id < 0 && m.text === message.text);
+      if (index !== -1) {
+        const local = messages.value[index];
+        messages.value.splice(index, 1, { ...message, clientId: local.clientId ?? local.id });
         return;
       }
     }
@@ -524,7 +536,10 @@ export function createSupportChat(deps: SupportChatDeps = {}): SupportChat {
         return false;
       }
 
-      optimistic = { id: -nextLocalId++, role: 'user', text: trimmed, createdAt: Date.now() };
+      // The negative id doubles as the stable client key: `ingest` carries it onto
+      // the reconciled message, so the bubble is never re-keyed mid-send.
+      const localId = -nextLocalId++;
+      optimistic = { id: localId, clientId: localId, role: 'user', text: trimmed, createdAt: Date.now() };
       messages.value.push(optimistic);
 
       try {

@@ -273,8 +273,38 @@ describe('useSupportChat', () => {
       // The cable is not subscribed yet on a first send, so the POST response is
       // what promotes the local echo to a real message.
       expect(h.chat.messages.value).toEqual([
-        { id: 31, role: 'user', text: 'my tx is stuck', agentName: undefined, createdAt: 31000 },
+        { id: 31, clientId: -1, role: 'user', text: 'my tx is stuck', agentName: undefined, createdAt: 31000 },
       ]);
+    });
+
+    it('keeps the optimistic clientId as a stable list key through reconciliation', async () => {
+      const h = makeHarness();
+      h.store[1] = cached();
+      await h.chat.enter();
+      h.api.sendMessage.mockResolvedValue({ id: 31, role: 'user', text: 'gm', createdAt: 31000 });
+
+      await h.chat.send('gm');
+      const reconciled = h.chat.messages.value[0];
+      // Server id for identity, original negative id for the UI's :key — a key
+      // change here makes Vue tear down and re-animate the user's own bubble.
+      expect(reconciled.id).toBe(31);
+      expect(reconciled.clientId).toBe(-1);
+
+      // A gap-fill that re-lists the same message must not re-key it either.
+      h.api.listMessages.mockResolvedValue([{ id: 31, role: 'user', text: 'gm', createdAt: 31000 }]);
+      await h.cableOptions()?.onReconnected?.();
+      await flushPromises(2);
+      expect(h.chat.messages.value).toHaveLength(1);
+      expect(h.chat.messages.value[0]).toMatchObject({ id: 31, clientId: -1 });
+    });
+
+    it('leaves clientId undefined for messages that never had an optimistic twin', async () => {
+      const h = makeHarness();
+      h.store[1] = cached();
+      h.api.listMessages.mockResolvedValue([{ id: 5, role: 'agent', text: 'hi', createdAt: 5 }]);
+      await h.chat.enter();
+      h.cableOptions()?.onMessage({ id: 6, role: 'agent', text: 'still here?', createdAt: 6 });
+      expect(h.chat.messages.value.map((m) => m.clientId)).toEqual([undefined, undefined]);
     });
 
     it('does not duplicate when the cable later broadcasts the same message', async () => {
