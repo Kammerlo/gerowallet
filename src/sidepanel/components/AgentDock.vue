@@ -213,6 +213,12 @@
         <p v-if="activeMode === 'copilot'" class="agent-dock__disclaimer">{{ $t('copilot.disclaimer') }}</p>
       </div>
     </transition>
+
+    <!-- Spending-auth prompt for the support chat's one-time identity handshake.
+         Mounted here (not inside the panel) so the hook it registers stays wired
+         for the dock's whole lifetime, and mounted at all only behind the flag,
+         so a flag-off context never registers a prompt it can never show. -->
+    <SupportAuthPrompt v-if="liveChatEnabled" />
   </div>
 </template>
 
@@ -229,31 +235,30 @@ import ChartCard from '@/sidepanel/components/agent/ChartCard.vue';
 import SwapCard from '@/sidepanel/components/agent/SwapCard.vue';
 import StakingCard from '@/sidepanel/components/agent/StakingCard.vue';
 import AllowanceCard from '@/sidepanel/components/agent/AllowanceCard.vue';
+import SupportAuthPrompt from '@/sidepanel/components/SupportAuthPrompt.vue';
 
 type DockMode = 'copilot' | 'support';
 
 export default defineComponent({
   name: 'AgentDock',
-  components: { ChartCard, SwapCard, StakingCard, AllowanceCard },
+  components: { ChartCard, SwapCard, StakingCard, AllowanceCard, SupportAuthPrompt },
   setup() {
     const draft = ref('');
     const dock = agentDock;
     const scroll = ref<HTMLElement | null>(null);
     const { isAnySheetOpen } = useSheetVisibility();
 
-    // Everything support-related is gated behind the live-chat flag. `mode` can
+    // Everything support-related is gated behind the live-chat flag: `mode` can
     // only ever flip to 'support' via UI this flag hides (the header toggle and
-    // the escalation chip), so flag-off leaves the dock's rendered output and
-    // behavior identical to before this feature existed.
+    // the escalation chip). But the flag can drop at RUNTIME (a live gero-sync
+    // push) while `mode` is still latently 'support' from before it did, so `mode`
+    // alone is not "what's on screen" — `activeMode` is, and every branch below
+    // reads it instead of re-deriving `mode === 'support' && liveChatEnabled.value`.
+    // That is what makes flag-off leave the dock's rendered output and behavior
+    // identical to before this feature existed, and makes a mid-session flip
+    // incapable of leaving the dock half-rendered in support state.
     const liveChatEnabled = computed(() => featureFlagsStore.isLiveChatEnabled());
     const mode = ref<DockMode>('copilot');
-
-    // The single source of truth for "what's actually on screen right now" —
-    // `mode` alone isn't enough because the flag can flip off at runtime (a live
-    // gero-sync push) while `mode` is still latently 'support' from before. Every
-    // branch below reads activeMode instead of re-deriving `mode === 'support' &&
-    // liveChatEnabled.value`, so a flag flip mid-session can never leave the dock
-    // half-rendered in support state.
     const activeMode = computed<DockMode>(() => (liveChatEnabled.value ? mode.value : 'copilot'));
 
     function enterCopilotMode(): void {
@@ -357,9 +362,16 @@ export default defineComponent({
       void submit();
     }
 
+    // activeMode is a dep (and the guard's subject) for the same reason it is in
+    // the support watcher below: switching INTO a mode must pin that thread to its
+    // latest message, not just new messages arriving once already there — so coming
+    // BACK to copilot from a long support thread scrolls too. The dock's own refs
+    // are read unconditionally, unlike supportChat's: they belong to a singleton
+    // this component always uses, in either mode.
     watch(
-      () => [dock.messages.value.length, dock.busy.value],
+      () => [activeMode.value, dock.messages.value.length, dock.busy.value],
       () => {
+        if (activeMode.value !== 'copilot') return;
         void nextTick(() => {
           const el = scroll.value;
           if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
@@ -368,11 +380,10 @@ export default defineComponent({
     );
 
     // Mirrors the watcher above for the support thread, kept separate so the
-    // original copilot scroll behavior above is untouched. As above, the getter
-    // only reads supportChat.messages/busy when support is actually active, so
-    // flag-off (or copilot mode) never subscribes to the singleton's refs.
-    // activeMode itself is in the deps so switching INTO a non-empty thread also
-    // pins to the latest message, not just new messages arriving once already there.
+    // copilot scroll behavior stays independently readable. The difference: this
+    // getter only reads supportChat.messages/busy when support is actually
+    // active, so flag-off (or copilot mode) never subscribes to the singleton's
+    // refs at all.
     watch(
       () =>
         activeMode.value === 'support'

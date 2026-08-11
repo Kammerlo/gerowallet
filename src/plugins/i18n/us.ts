@@ -828,6 +828,8 @@ export default {
   'support.watchOnly.notice': 'Live chat is not available for watch-only wallets.',
   'support.agentFallbackName': 'Gero Support',
   'support.placeholder': 'Message support...',
+  'support.auth.title': 'Verify your wallet',
+  'support.auth.body': 'Confirm once so support can recognize you anonymously. Your wallet signs a one-time message. No transaction is made and no funds move.',
   'support.error.unavailable': 'Live chat is temporarily unavailable. Please try again later.',
   'support.error.sendFailed': 'Your message could not be sent. Please try again.',
   // --- Cross-device signing ---

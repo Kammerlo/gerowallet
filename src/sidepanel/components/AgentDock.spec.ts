@@ -104,6 +104,15 @@ vi.mock('@/sidepanel/composables/useSheetVisibility', () => ({
   useSheetVisibility: () => sheetVisibility,
 }));
 
+// The spending-auth dialog is stubbed out wholesale rather than stubbed at mount:
+// its real module graph reaches PassKeyAuthButton -> webauthn-prf and
+// PassKeyPasswordField -> Dexie, none of which this dock-only spec should load.
+// Its own contract (registering/settling the promptAuth hook) is covered by
+// useSupportAuthPrompt.spec.ts.
+vi.mock('@/sidepanel/components/SupportAuthPrompt.vue', () => ({
+  default: { name: 'SupportAuthPrompt', render: (h: (tag: string) => unknown) => h('div') },
+}));
+
 import Vue, { ref } from 'vue';
 
 // AgentDock.vue renders raw <v-icon> (Vuetify isn't installed/registered in this
@@ -224,6 +233,9 @@ describe('AgentDock — flag off (isLiveChatEnabled: false)', () => {
   it('renders no mode toggle, no escalation chip, no unread dots — Copilot only, unchanged', async () => {
     setLiveChatEnabled(false);
     mockSupportChat.unread.value = 5; // must still have zero visible effect
+    // Likewise a live error: without this the notice assertion below would pass
+    // on a null errorKey alone and never exercise the activeMode gate.
+    mockSupportChat.errorKey.value = 'support.error.sendFailed';
     const wrapper = mountDock();
 
     expect(wrapper.find('.agent-dock__mode-toggle').exists()).toBe(false);
@@ -255,6 +267,12 @@ describe('AgentDock — flag off (isLiveChatEnabled: false)', () => {
     const wrapper = mountDock();
     await clickSupportToggle(wrapper);
     expect(wrapper.text()).toContain('support.intro.title');
+
+    // A visible banner BEFORE the flip, so the post-flip assertion proves the
+    // activeMode gate hides it rather than passing on an already-null errorKey.
+    mockSupportChat.errorKey.value = 'support.error.sendFailed';
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('.agent-dock__notice').exists()).toBe(true);
 
     setLiveChatEnabled(false);
     await wrapper.vm.$nextTick();

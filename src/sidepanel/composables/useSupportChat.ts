@@ -326,6 +326,10 @@ export function createSupportChat(deps: SupportChatDeps = {}): SupportChat {
   }
 
   function connectCable(session: ThreadSession): void {
+    // Every caller already checks, but make the safety local rather than
+    // emergent: opening a socket for a thread that no longer exists would
+    // subscribe the new wallet's UI to the old wallet's conversation.
+    if (isStale(session)) return;
     if (!identity?.pubsubToken) return;
     if (cable) {
       cable.connect();
@@ -528,6 +532,8 @@ export function createSupportChat(deps: SupportChatDeps = {}): SupportChat {
     busy.value = true;
     setError(null);
     let optimistic: SupportMessage | null = null;
+    /** Did the text actually reach Chatwoot? Drives the rollback in `finally`. */
+    let delivered = false;
     try {
       const known = await ensureIdentity(session);
       if (known.status !== 'ok') {
@@ -544,6 +550,7 @@ export function createSupportChat(deps: SupportChatDeps = {}): SupportChat {
 
       try {
         await deliver(trimmed, session);
+        delivered = true;
       } catch (error) {
         if (!(error instanceof ChatAuthError)) throw error;
         // Stale/rotated HMAC: rebuild the identity once, then retry once.
@@ -554,6 +561,7 @@ export function createSupportChat(deps: SupportChatDeps = {}): SupportChat {
         }
         try {
           await deliver(trimmed, session);
+          delivered = true;
         } catch (retryError) {
           if (retryError instanceof StaleSessionError) throw retryError;
           debugLog('supportChat: retry after re-handshake failed', retryError);
@@ -577,8 +585,12 @@ export function createSupportChat(deps: SupportChatDeps = {}): SupportChat {
       return false;
     } finally {
       // A message that never reached Chatwoot must not linger in the thread —
-      // send() returned false and the UI still owns the draft.
-      if (optimistic && errorKey.value) {
+      // send() returned false and the UI still owns the draft. Keyed on DELIVERY,
+      // not on `errorKey`: a stale-session abort reports no error at all (its
+      // thread is gone), and a concurrent reset can clear the key before this
+      // runs, either of which would strand the bubble. Safe on the success path
+      // too — a reconciled echo was spliced out already, so indexOf is -1.
+      if (optimistic && !delivered) {
         const index = messages.value.indexOf(optimistic);
         if (index !== -1) messages.value.splice(index, 1);
       }

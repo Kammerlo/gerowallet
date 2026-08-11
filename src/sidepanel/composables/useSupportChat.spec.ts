@@ -534,6 +534,35 @@ describe('useSupportChat', () => {
       expect(h.chat.errorKey.value).toBeNull();
     });
 
+    it('leaves no orphan optimistic bubble when a switch abandons the send after the POST', async () => {
+      const active = Vue.observable({ wallet: CARDANO_WALLET as SupportWalletSnapshot });
+      const h = makeHarness({ wallet: () => active.wallet });
+      h.store[1] = cached();
+      h.store[2] = cached({ identifier: 'v1:bb', sourceId: 'src-2', conversationId: 77 });
+      const post = deferred<SupportApiMessage>();
+      h.api.sendMessage.mockReturnValue(post.promise);
+
+      const pending = h.chat.send('for wallet one');
+      await flushPromises(2);
+      // The bubble is on screen optimistically while the POST is in flight.
+      expect(h.chat.messages.value.map((m) => m.text)).toEqual(['for wallet one']);
+
+      active.wallet = { id: 2, chain: 'Cardano', type: 'Normal', stakeAddress: 'stake1uother' };
+      await flushPromises();
+      // The POST itself SUCCEEDS here — the send is abandoned only by the
+      // ownership check that follows it, which deliberately reports no error
+      // (the thread it belonged to no longer exists). This is the one shape
+      // where a rollback keyed on `errorKey` would never fire; keying it on
+      // "did this text actually get delivered" is what makes the cleanup local
+      // instead of leaning on resetThread having replaced the array.
+      post.resolve({ id: 31, role: 'user', text: 'for wallet one', createdAt: 31000 });
+
+      expect(await pending).toBe(false);
+      expect(h.chat.messages.value).toEqual([]);
+      expect(h.chat.errorKey.value).toBeNull();
+      expect(h.chat.busy.value).toBe(false);
+    });
+
     it('a send after a switch uses the NEW wallet identity', async () => {
       let current: SupportWalletSnapshot = CARDANO_WALLET;
       const h = makeHarness({ wallet: () => current });
