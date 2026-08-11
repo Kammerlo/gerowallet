@@ -9,10 +9,17 @@
  * leaves the wallet↔Nexus leg; the chat itself only ever sees the pseudonym.
  *
  * <p>SECURITY: the wallet must NEVER blind-sign a server-supplied string with its
- * stake key. {@link runSupportChatHandshake} reconstructs the expected subject
- * locally and refuses to sign anything that is not byte-for-byte equal, so a
- * compromised/hostile Nexus cannot harvest a stake-key signature over a payload of
- * its choosing.
+ * stake key. Two guards bound what can be signed, and together they mean the only
+ * server-controlled bytes are an opaque token from a restricted alphabet:
+ * <ol>
+ *   <li>the nonce must match {@link NONCE_PATTERN} — no pipes, whitespace,
+ *       newlines, or other separators that could smuggle structure into the
+ *       subject, and a bounded length; and</li>
+ *   <li>the returned `message` must equal the subject we rebuild locally from the
+ *       domain, OUR stake address, and that nonce, byte for byte.</li>
+ * </ol>
+ * A hostile Nexus therefore cannot steer the signature at a payload of its own
+ * shape — the domain prefix and address are ours, and the tail is constrained.
  *
  * <p>Runs in the background service worker because that is the only context that
  * can reach the wallet's private keys.
@@ -25,6 +32,13 @@ export type { SupportChatVerifiedIdentity };
 
 /** Domain-separated challenge subject. Mirrors DEVICE_REGISTER_DOMAIN's shape. */
 export const SUPPORT_CHALLENGE_DOMAIN = 'gero-support/v1';
+
+/**
+ * The only server-chosen bytes that reach the signer. URL-safe base64 alphabet,
+ * bounded length: no `|` (the subject separator), no whitespace/newlines, no
+ * control characters — so a nonce cannot fake extra subject fields.
+ */
+export const NONCE_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
 export const SUPPORT_CHALLENGE_PATH = '/api/support/chat/challenge';
 export const SUPPORT_VERIFY_PATH = '/api/support/chat/verify';
 
@@ -80,6 +94,11 @@ async function requestChallenge(stakeAddress: string): Promise<{ nonce: string; 
   const nonce = data?.nonce;
   const message = data?.message;
   if (!nonce || !message) throw new Error('Support challenge response incomplete');
+  // Constrain the one server-chosen component BEFORE it is folded into a string
+  // the stake key will sign (see the module note on the two guards).
+  if (!NONCE_PATTERN.test(nonce)) {
+    throw new Error('Support challenge nonce malformed — refusing to sign');
+  }
   // Never sign a server-chosen payload: the subject must be exactly what we expect.
   if (message !== buildSupportChallengeSubject(stakeAddress, nonce)) {
     throw new Error('Support challenge subject mismatch — refusing to sign');
@@ -134,4 +153,66 @@ export async function runSupportChatHandshake(
   }
   /* istanbul ignore next — the loop either returns or throws */
   throw new Error('Support chat handshake failed');
+}
+
+/**
+ * The slice of {@link ../chrome/walletBg.WalletBg} the handshake needs. Declared
+ * structurally so this stays unit-testable without constructing a real wallet.
+ */
+export interface SupportChatSigner {
+  chain?: string;
+  stakeAddress?: string;
+  signData(
+    address: string,
+    payloadHex: string,
+    password: string,
+    accountIndex: number,
+    keys: unknown,
+    privateKeyBytes?: Uint8Array,
+  ): Promise<{ signature: string; key: unknown }>;
+}
+
+export interface SupportChatAuthInput {
+  /** Spending password (software wallets). */
+  password?: string;
+  /** Pre-decrypted root key bytes (PRF / PassKey wallets). */
+  privateKeyBytes?: Uint8Array;
+}
+
+/** Only Cardano wallets have a reward address to be pseudonymized. */
+const CARDANO_CHAIN = 'Cardano';
+
+/**
+ * Gate on wallet capability, then run the handshake with the wallet's stake key.
+ * Extracted from the background message handler so the guards are testable and the
+ * handler stays a thin envelope — mirrors `walletManager.produceDeviceRegisterProof`.
+ *
+ * Throws on every failure path (locked wallet, wrong chain, no reward address,
+ * wrong password, Nexus rejection); the caller maps that to a `success:false` reply.
+ */
+export async function authenticateSupportChat(
+  wallet: SupportChatSigner | null | undefined,
+  keys: unknown,
+  auth: SupportChatAuthInput,
+): Promise<SupportChatVerifiedIdentity> {
+  if (!wallet) throw new Error('Support chat requires an unlocked wallet');
+  if (wallet.chain !== CARDANO_CHAIN) throw new Error('Support chat requires a Cardano wallet');
+  const stakeAddress = wallet.stakeAddress;
+  if (!stakeAddress || !stakeAddress.startsWith('stake1')) {
+    throw new Error('Support chat requires a wallet with a reward address');
+  }
+  return runSupportChatHandshake({
+    stakeAddress,
+    sign: async (payloadHex: string) => {
+      const { signature, key } = await wallet.signData(
+        stakeAddress,
+        payloadHex,
+        auth.password ?? '',
+        0,
+        keys,
+        auth.privateKeyBytes,
+      );
+      return { signature, key: String(key) };
+    },
+  });
 }

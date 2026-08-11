@@ -24,6 +24,11 @@ import {
 } from '@/services/crossDevice/deviceIdentityStore';
 import { isDeviceIdConsistent } from '@/services/crossDevice/deviceIdentity';
 import { verifyDeviceRegisterProof, buildDeviceRegisterSubject } from '@/services/crossDevice/registerProof';
+import {
+  authenticateSupportChat,
+  type SupportChatAuthInput,
+  type SupportChatVerifiedIdentity,
+} from '@/chrome/supportChatAuth';
 import { loadDeviceRegisterProof, saveDeviceRegisterProof } from '@/services/crossDevice/deviceProofStore';
 import { mintPairingNonce, consumePairingNonce, peekPairingNonce } from '@/services/crossDevice/pairingNonceStore';
 import { buildPairingQrPayload, type PairingQrPayload } from '@/services/crossDevice/pairingQr';
@@ -1593,6 +1598,19 @@ export class WalletManager {
       debugLog('produceDeviceRegisterProof failed:', e);
       return false;
     }
+  }
+
+  /**
+   * Live support chat: run the one-time identity handshake for the active wallet.
+   * Nexus issues a nonce, the wallet's STAKE key CIP-8 signs the challenge subject
+   * (same signData path as {@link produceDeviceRegisterProof}), and Nexus returns a
+   * pseudonymous Chatwoot identifier + HMAC. Called from the UI right after the
+   * user authenticated, so the caller supplies the password / PRF privateKeyBytes;
+   * nothing is cached here. Throws on any failure — the message handler maps that
+   * to a `success:false` reply. Cardano software wallets with a reward address only.
+   */
+  async runSupportChatAuth(auth: SupportChatAuthInput): Promise<SupportChatVerifiedIdentity> {
+    return authenticateSupportChat(this.walletBg, WalletStore.state.keys, auth);
   }
 
   /**

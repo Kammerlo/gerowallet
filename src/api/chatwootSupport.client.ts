@@ -94,6 +94,8 @@ export interface RawChatwootMessage {
   created_at?: number | string;
   sender?: { name?: string } | null;
   private?: boolean;
+  /** Present on cable broadcasts; used to scope a frame to the active conversation. */
+  conversation_id?: number;
 }
 
 function statusOf(error: unknown): number | undefined {
@@ -111,7 +113,9 @@ function asRequestError(error: unknown, what: string): ChatRequestError {
  * identifier_hash was missing/stale/wrong — an AUTH failure, not a server outage.
  */
 function throwContactError(error: unknown, what: string): never {
-  if (error instanceof ChatAuthError) throw error;
+  // Already-typed failures (including the malformed-response guards below) pass
+  // through verbatim — re-wrapping them would bury the original message.
+  if (error instanceof ChatAuthError || error instanceof ChatRequestError) throw error;
   if (statusOf(error) === 500) throw new ChatAuthError(`${what} rejected by the support inbox`);
   throw asRequestError(error, what);
 }
@@ -156,50 +160,58 @@ function contactBody(identity: SupportContactIdentity): Record<string, string> {
   return body;
 }
 
+/**
+ * Create the pseudonymous contact. NOTE: this alone leaves the contact
+ * hmac-UNVERIFIED — callers must use {@link ensureContact} instead.
+ */
+async function createContact(identity: SupportContactIdentity): Promise<SupportContact> {
+  try {
+    const { data } = await supportChatAxiosInstance.post<{ source_id?: string; pubsub_token?: string }>(
+      '/contacts',
+      contactBody(identity),
+    );
+    const sourceId = data?.source_id;
+    const pubsubToken = data?.pubsub_token;
+    if (!sourceId || !pubsubToken) {
+      throw new ChatRequestError('Support contact response missing source_id/pubsub_token');
+    }
+    return { sourceId, pubsubToken };
+  } catch (error) {
+    throwContactError(error, 'Support contact create');
+  }
+}
+
+/**
+ * Re-send the identity to an existing contact. This is the call that actually
+ * flips `hmac_verified` on the Chatwoot side, which is what preserves the
+ * conversation across sessions and devices.
+ */
+async function updateContact(sourceId: string, identity: SupportContactIdentity): Promise<void> {
+  try {
+    await supportChatAxiosInstance.patch(`/contacts/${encodeURIComponent(sourceId)}`, contactBody(identity));
+  } catch (error) {
+    throwContactError(error, 'Support contact update');
+  }
+}
+
+/**
+ * Create + verify a contact in one step (POST then the mandatory PATCH).
+ * The ONLY sanctioned contact-creation path.
+ *
+ * Calls the module functions directly rather than `this.*` so the pairing cannot
+ * be broken by destructuring the api object or swapping a single method on it —
+ * the PATCH is a security-relevant step, not a caller's choice.
+ */
+async function ensureContact(identity: SupportContactIdentity): Promise<SupportContact> {
+  const contact = await createContact(identity);
+  await updateContact(contact.sourceId, identity);
+  return contact;
+}
+
 export const chatwootSupportApi = {
-  /**
-   * Create the pseudonymous contact. NOTE: this alone leaves the contact
-   * hmac-UNVERIFIED — callers must use {@link ensureContact} instead.
-   */
-  async createContact(identity: SupportContactIdentity): Promise<SupportContact> {
-    try {
-      const { data } = await supportChatAxiosInstance.post<{ source_id?: string; pubsub_token?: string }>(
-        '/contacts',
-        contactBody(identity),
-      );
-      const sourceId = data?.source_id;
-      const pubsubToken = data?.pubsub_token;
-      if (!sourceId || !pubsubToken) {
-        throw new ChatRequestError('Support contact response missing source_id/pubsub_token');
-      }
-      return { sourceId, pubsubToken };
-    } catch (error) {
-      throwContactError(error, 'Support contact create');
-    }
-  },
-
-  /**
-   * Re-send the identity to an existing contact. This is the call that actually
-   * flips `hmac_verified` on the Chatwoot side, which is what preserves the
-   * conversation across sessions and devices.
-   */
-  async updateContact(sourceId: string, identity: SupportContactIdentity): Promise<void> {
-    try {
-      await supportChatAxiosInstance.patch(`/contacts/${encodeURIComponent(sourceId)}`, contactBody(identity));
-    } catch (error) {
-      throwContactError(error, 'Support contact update');
-    }
-  },
-
-  /**
-   * Create + verify a contact in one step (POST then the mandatory PATCH).
-   * The ONLY sanctioned contact-creation path.
-   */
-  async ensureContact(identity: SupportContactIdentity): Promise<SupportContact> {
-    const contact = await this.createContact(identity);
-    await this.updateContact(contact.sourceId, identity);
-    return contact;
-  },
+  createContact,
+  updateContact,
+  ensureContact,
 
   /** Open a conversation for the contact. Created lazily on the first send. */
   async createConversation(sourceId: string): Promise<number> {

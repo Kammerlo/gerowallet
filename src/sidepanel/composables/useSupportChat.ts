@@ -13,12 +13,18 @@
 // and lets the UI render it. It also never logs identifiers, tokens, or
 // addresses.
 //
+// NOT flag-gated by design. `isAvailable` answers "can this wallet sign the
+// handshake", which is a capability question; whether the feature is offered at
+// all is `featureFlags.isLiveChatEnabled()`, checked by the UI that owns the
+// entry point. Keeping the two separate means the flag has exactly one owner and
+// this composable stays testable without a flag store.
+//
 // Structural model: `useAgentDock.ts` — an injectable factory plus a singleton.
 
 import { computed, ref, watch, type Ref } from 'vue';
 import { Messaging } from '@/chrome/messaging';
 import { MessageTypes } from '@/models/MessageTypes';
-import { Blockchain } from '@/models/types';
+import { Blockchain, WalletType } from '@/models/types';
 import { walletStore } from '@/stores/walletStore';
 import { debugLog } from '@/utils/debug';
 import {
@@ -119,14 +125,36 @@ type IdentityOutcome =
   | { status: 'cancelled' }
   | { status: 'failed' };
 
+/** Which wallet's thread an in-flight async operation belongs to. */
+interface ThreadSession {
+  /** Wallet id captured when the operation started — the ONLY id it may write to. */
+  owner: number;
+  /** Thread generation, bumped on every reset, so a switch-back is still detected. */
+  gen: number;
+}
+
+/**
+ * Thrown (and swallowed) when the wallet changed mid-operation. Not an error the
+ * user should see: the thread it belonged to no longer exists on screen.
+ */
+class StaleSessionError extends Error {
+  constructor() {
+    super('Support chat session superseded');
+    this.name = 'StaleSessionError';
+  }
+}
+
 /**
  * Wallet types whose stake key the BACKGROUND can unlock for the handshake.
  * `Normal` covers both password and PRF/PassKey wallets. Hardware wallets
  * (Ledger/Trezor/Keystone) have no decryptable key here, and MPC `Google` wallets
  * would need the MPC session share path (`resolveSignPrivateKeyBytes`), so both
  * are reported as unavailable rather than failing halfway through a send.
+ *
+ * Fails CLOSED: a record with no `type` at all is treated as not-signable rather
+ * than assumed to be a software wallet.
  */
-const SIGNABLE_WALLET_TYPES = new Set(['Normal', 'normal']);
+const SIGNABLE_WALLET_TYPES = new Set<string>([WalletType.Normal]);
 
 /** Ask the background to run challenge → CIP-8 sign → verify. */
 async function backgroundRequestIdentity(auth: SupportAuthInput): Promise<SupportChatVerifiedIdentity | null> {
@@ -179,7 +207,7 @@ function defaultWallet(): SupportWalletSnapshot | null {
   return logged && typeof logged.id === 'number' ? logged : null;
 }
 
-export function createSupportChat(deps: SupportChatDeps = {}) {
+export function createSupportChat(deps: SupportChatDeps = {}): SupportChat {
   const api: SupportChatApi = deps.api ?? chatwootSupportApi;
   const cache: SupportIdentityCache = deps.cache ?? supportIdentityCache;
   const makeCable = deps.createCable ?? createSupportCable;
@@ -196,9 +224,9 @@ export function createSupportChat(deps: SupportChatDeps = {}) {
   const isAvailable = computed<boolean>(() => {
     const wallet = readWallet();
     if (!wallet) return false;
-    if (wallet.chain && wallet.chain !== Blockchain.CARDANO) return false;
+    if (wallet.chain !== Blockchain.CARDANO) return false;
     if (!wallet.stakeAddress || !wallet.stakeAddress.startsWith('stake1')) return false;
-    return SIGNABLE_WALLET_TYPES.has(wallet.type || 'Normal');
+    return !!wallet.type && SIGNABLE_WALLET_TYPES.has(wallet.type);
   });
 
   let identity: SupportChatIdentity | null = null;
@@ -206,12 +234,35 @@ export function createSupportChat(deps: SupportChatDeps = {}) {
   let entered = false;
   let walletId: number | null = null;
   let nextLocalId = 1;
+  /** Bumped by every thread reset; see {@link ThreadSession}. */
+  let generation = 0;
+
+  /**
+   * Snapshot of "which wallet's thread am I working on". Every async operation
+   * takes one at entry and re-checks it after each await, because a wallet switch
+   * can land mid-flight and re-point `walletId`/`identity` underneath it. Without
+   * this, an in-flight send could persist wallet A's identity under wallet B's id,
+   * post A's message into B's conversation, or wipe B's healthy cache.
+   */
+  function beginSession(): ThreadSession | null {
+    return walletId === null ? null : { owner: walletId, gen: generation };
+  }
+
+  function isStale(session: ThreadSession): boolean {
+    return walletId !== session.owner || generation !== session.gen;
+  }
+
+  /** Abort the in-flight operation if the thread it belongs to is gone. */
+  function assertOwn(session: ThreadSession): void {
+    if (isStale(session)) throw new StaleSessionError();
+  }
 
   function setError(key: string | null): void {
     errorKey.value = key;
   }
 
   function resetThread(): void {
+    generation += 1;
     cable?.close();
     cable = null;
     identity = null;
@@ -223,7 +274,7 @@ export function createSupportChat(deps: SupportChatDeps = {}) {
   }
 
   /** Append (or reconcile) a message that arrived from the server. */
-  function ingest(message: SupportMessage): void {
+  function ingest(message: SupportMessage, countUnread = true): void {
     if (messages.value.some((m) => m.id === message.id)) return;
     if (message.role === 'user') {
       // Reconcile our own optimistic echo instead of showing the text twice.
@@ -234,19 +285,35 @@ export function createSupportChat(deps: SupportChatDeps = {}) {
       }
     }
     messages.value.push(message);
-    if (message.role === 'agent') unread.value += 1;
+    if (countUnread && message.role === 'agent') unread.value += 1;
   }
 
-  async function loadHistory(): Promise<void> {
-    if (!identity?.sourceId || !identity.conversationId) return;
+  /**
+   * Merge server history into the thread.
+   *
+   * MERGE, never replace: an optimistic echo or a cable message can land while the
+   * fetch is in flight, and assigning the response would drop it. `countUnread` is
+   * false for the initial load (the user is opening the thread, so old agent
+   * messages are not "new") and true for a reconnect gap-fill, where anything that
+   * arrived while the socket was down genuinely is unseen.
+   */
+  async function loadHistory(session: ThreadSession, countUnread: boolean): Promise<void> {
+    const sourceId = identity?.sourceId;
+    const conversationId = identity?.conversationId;
+    if (!sourceId || !conversationId) return;
+    let history: SupportMessage[];
     try {
-      messages.value = await api.listMessages(identity.sourceId, identity.conversationId);
+      history = await api.listMessages(sourceId, conversationId);
     } catch (error) {
       debugLog('supportChat: history fetch failed', error);
+      return;
     }
+    if (isStale(session)) return;
+    for (const message of history) ingest(message, countUnread);
+    messages.value.sort((a, b) => a.createdAt - b.createdAt);
   }
 
-  function connectCable(): void {
+  function connectCable(session: ThreadSession): void {
     if (!identity?.pubsubToken) return;
     if (cable) {
       cable.connect();
@@ -254,13 +321,21 @@ export function createSupportChat(deps: SupportChatDeps = {}) {
     }
     cable = makeCable({
       pubsubToken: identity.pubsubToken,
-      onMessage: (message) => ingest(message),
+      // Read at dispatch time: the conversation is created lazily and may not
+      // exist yet when the cable comes up.
+      activeConversationId: () => identity?.conversationId,
+      onMessage: (message) => {
+        if (isStale(session)) return;
+        ingest(message);
+      },
       onState: (state: SupportCableState) => {
+        if (isStale(session)) return;
         connectionState.value = state;
       },
-      // Broadcasts during a drop are not replayed, so refill from REST.
+      // Broadcasts during a drop are not replayed, so refill from REST — and count
+      // what we missed as unread.
       onReconnected: () => {
-        void loadHistory();
+        void loadHistory(session, true);
       },
     });
     cable.connect();
@@ -285,10 +360,14 @@ export function createSupportChat(deps: SupportChatDeps = {}) {
     return walletId;
   }
 
-  /** Persist whatever we know about the identity so the next session skips the handshake. */
-  async function persist(): Promise<void> {
-    if (walletId === null || !identity) return;
-    await cache.save(walletId, identity);
+  /**
+   * Persist whatever we know about the identity so the next session skips the
+   * handshake. Writes to the session's OWNER id, never to whatever wallet happens
+   * to be active when the write lands.
+   */
+  async function persist(session: ThreadSession): Promise<void> {
+    if (isStale(session) || !identity) return;
+    await cache.save(session.owner, identity);
   }
 
   /**
@@ -297,7 +376,7 @@ export function createSupportChat(deps: SupportChatDeps = {}) {
    * `cancelled` (the prompt resolved null) is deliberately NOT `failed`: the user
    * chose not to authenticate, which is not an error worth rendering.
    */
-  async function handshake(): Promise<IdentityOutcome> {
+  async function handshake(session: ThreadSession): Promise<IdentityOutcome> {
     let auth: SupportAuthInput | null;
     try {
       auth = await promptAuth();
@@ -305,25 +384,26 @@ export function createSupportChat(deps: SupportChatDeps = {}) {
       debugLog('supportChat: auth prompt failed', error);
       return { status: 'failed' };
     }
+    assertOwn(session); // the user may have switched wallets at the prompt
     if (!auth) return { status: 'cancelled' };
     const verified = await requestIdentity(auth);
+    assertOwn(session);
     if (!verified?.identifier) return { status: 'failed' };
     identity = { ...verified };
-    await persist();
+    await persist(session);
     return { status: 'ok', identity };
   }
 
   /** Cached identity, or the handshake result. */
-  async function ensureIdentity(): Promise<IdentityOutcome> {
+  async function ensureIdentity(session: ThreadSession): Promise<IdentityOutcome> {
     if (identity?.identifier) return { status: 'ok', identity };
-    if (walletId !== null) {
-      const cachedIdentity = await cache.load(walletId);
-      if (cachedIdentity?.identifier) {
-        identity = cachedIdentity;
-        return { status: 'ok', identity };
-      }
+    const cachedIdentity = await cache.load(session.owner);
+    assertOwn(session);
+    if (cachedIdentity?.identifier) {
+      identity = cachedIdentity;
+      return { status: 'ok', identity };
     }
-    return handshake();
+    return handshake(session);
   }
 
   /**
@@ -331,23 +411,37 @@ export function createSupportChat(deps: SupportChatDeps = {}) {
    * the mandatory PATCH — without the PATCH the contact is never hmac_verified and
    * silently loses its history across sessions.
    */
-  async function ensureConversation(): Promise<SupportChatIdentity> {
-    if (!identity) throw new ChatAuthError('No support identity');
-    if (!identity.sourceId || !identity.pubsubToken) {
+  async function ensureConversation(session: ThreadSession): Promise<SupportChatIdentity> {
+    assertOwn(session);
+    // Work off a local snapshot so a concurrent reset can never leave us
+    // dereferencing a half-cleared identity.
+    let current = identity;
+    if (!current) throw new ChatAuthError('No support identity');
+
+    if (!current.sourceId || !current.pubsubToken) {
       const contact = await api.ensureContact({
-        identifier: identity.identifier,
-        identifierHash: identity.identifierHash,
-        name: identity.displayName,
+        identifier: current.identifier,
+        identifierHash: current.identifierHash,
+        name: current.displayName,
       });
-      identity = { ...identity, sourceId: contact.sourceId, pubsubToken: contact.pubsubToken };
-      await persist();
+      // The switch can land while the contact round-trip is in flight; without
+      // this, wallet A's contact would be written over wallet B's identity.
+      assertOwn(session);
+      current = { ...current, sourceId: contact.sourceId, pubsubToken: contact.pubsubToken };
+      identity = current;
+      await persist(session);
+      assertOwn(session);
     }
-    if (!identity.conversationId) {
-      const conversationId = await api.createConversation(identity.sourceId as string);
-      identity = { ...identity, conversationId };
-      await persist();
+
+    if (!current.conversationId) {
+      const conversationId = await api.createConversation(current.sourceId as string);
+      assertOwn(session);
+      current = { ...current, conversationId };
+      identity = current;
+      await persist(session);
+      assertOwn(session);
     }
-    return identity;
+    return current;
   }
 
   /**
@@ -355,32 +449,38 @@ export function createSupportChat(deps: SupportChatDeps = {}) {
    * (rotated/stale HMAC). Runs at most ONCE per send — a genuinely bad identity
    * would otherwise loop forever.
    */
-  async function recoverIdentity(): Promise<boolean> {
-    if (walletId !== null) await cache.clear(walletId);
+  async function recoverIdentity(session: ThreadSession): Promise<boolean> {
+    // Guarded + owner-scoped: a mid-flight switch must never wipe the cache of the
+    // wallet that is now active — its identity is perfectly healthy.
+    assertOwn(session);
+    await cache.clear(session.owner);
+    assertOwn(session);
     const displayName = identity?.displayName;
     identity = null;
     cable?.close();
     cable = null;
-    const outcome = await handshake();
+    const outcome = await handshake(session);
     if (outcome.status !== 'ok') return false;
     // Keep the pseudonym the agent already knows this person by if the fresh
     // handshake didn't return one — and persist it, or the cache keeps the blank.
     if (!outcome.identity.displayName && displayName) {
       identity = { ...outcome.identity, displayName };
-      await persist();
+      await persist(session);
     }
     return true;
   }
 
   async function enter(): Promise<void> {
     syncWallet();
-    if (!isAvailable.value || walletId === null) return;
+    const session = beginSession();
+    if (!session || !isAvailable.value) return;
     if (entered && cable?.isConnected()) return;
     entered = true;
     setError(null);
 
     if (!identity?.identifier) {
-      const cachedIdentity = await cache.load(walletId);
+      const cachedIdentity = await cache.load(session.owner);
+      if (isStale(session)) return;
       // No identity yet → stay idle. The handshake (and its signature prompt)
       // only ever happens on an explicit send.
       if (!cachedIdentity?.identifier) return;
@@ -389,13 +489,16 @@ export function createSupportChat(deps: SupportChatDeps = {}) {
     if (!identity.sourceId || !identity.pubsubToken) return;
 
     connectionState.value = 'connecting';
-    await loadHistory();
-    connectCable();
+    // Opening the thread is not "receiving" — history must not inflate the badge.
+    await loadHistory(session, false);
+    if (isStale(session)) return;
+    connectCable(session);
   }
 
-  async function deliver(text: string): Promise<void> {
-    const target = await ensureConversation();
+  async function deliver(text: string, session: ThreadSession): Promise<void> {
+    const target = await ensureConversation(session);
     const sent = await api.sendMessage(target.sourceId as string, target.conversationId as number, text);
+    assertOwn(session); // the POST landed in the OLD thread; don't paint it into the new one
     // Reconcile the optimistic echo with the server's id/timestamp immediately.
     // The cable is not necessarily subscribed yet on a first send, so waiting for
     // the broadcast would leave a negative local id in the thread until the next
@@ -407,13 +510,14 @@ export function createSupportChat(deps: SupportChatDeps = {}) {
     syncWallet();
     const trimmed = (text || '').trim();
     if (!trimmed || busy.value) return false;
-    if (!isAvailable.value || walletId === null) return false;
+    const session = beginSession();
+    if (!session || !isAvailable.value) return false;
 
     busy.value = true;
     setError(null);
     let optimistic: SupportMessage | null = null;
     try {
-      const known = await ensureIdentity();
+      const known = await ensureIdentity(session);
       if (known.status !== 'ok') {
         // A deliberate cancel is not an error — the dock just keeps the draft.
         if (known.status === 'failed') setError('support.error.sendFailed');
@@ -424,18 +528,19 @@ export function createSupportChat(deps: SupportChatDeps = {}) {
       messages.value.push(optimistic);
 
       try {
-        await deliver(trimmed);
+        await deliver(trimmed, session);
       } catch (error) {
         if (!(error instanceof ChatAuthError)) throw error;
         // Stale/rotated HMAC: rebuild the identity once, then retry once.
         debugLog('supportChat: identity rejected, re-running handshake');
-        if (!(await recoverIdentity())) {
+        if (!(await recoverIdentity(session))) {
           setError('support.error.unavailable');
           return false;
         }
         try {
-          await deliver(trimmed);
+          await deliver(trimmed, session);
         } catch (retryError) {
+          if (retryError instanceof StaleSessionError) throw retryError;
           debugLog('supportChat: retry after re-handshake failed', retryError);
           setError('support.error.unavailable');
           return false;
@@ -443,9 +548,15 @@ export function createSupportChat(deps: SupportChatDeps = {}) {
       }
 
       entered = true;
-      connectCable();
+      connectCable(session);
       return true;
     } catch (error) {
+      // The wallet changed under us: the thread this send belonged to is gone, so
+      // there is nothing to report and nothing left to clean up.
+      if (error instanceof StaleSessionError) {
+        debugLog('supportChat: send abandoned after wallet switch');
+        return false;
+      }
       debugLog('supportChat: send failed', error);
       setError('support.error.sendFailed');
       return false;
@@ -466,18 +577,12 @@ export function createSupportChat(deps: SupportChatDeps = {}) {
 
   // Wallet switch while the dock is open: drop the old thread and re-enter for the
   // new wallet (a different wallet is a different, unlinkable support identity).
-  try {
-    watch(
-      () => readWallet()?.id ?? null,
-      () => {
-        syncWallet(true);
-      },
-    );
-  } catch (error) {
-    // No reactive context (e.g. background import) — the per-operation
-    // syncWallet() calls still catch the switch.
-    debugLog('supportChat: wallet watcher unavailable', error);
-  }
+  watch(
+    () => readWallet()?.id ?? null,
+    () => {
+      syncWallet(true);
+    },
+  );
 
   walletId = readWallet()?.id ?? null;
 

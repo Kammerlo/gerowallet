@@ -22,7 +22,12 @@
  * conversation stream.
  */
 
-import { normalizeChatwootMessage, SUPPORT_CABLE_URL, type SupportApiMessage } from '@/api/chatwootSupport.client';
+import {
+  normalizeChatwootMessage,
+  SUPPORT_CABLE_URL,
+  type RawChatwootMessage,
+  type SupportApiMessage,
+} from '@/api/chatwootSupport.client';
 import { debugLog } from '@/utils/debug';
 
 /** Connection states the cable reports. `idle` is owned by the composable, not the cable. */
@@ -43,6 +48,13 @@ export interface SupportCableOptions {
   pubsubToken: string;
   /** Cable endpoint; defaults to the support origin's `/cable`. */
   url?: string;
+  /**
+   * The conversation the thread is currently showing, read at dispatch time (it
+   * is created lazily, after the cable may already be up). A broadcast for any
+   * OTHER conversation on this contact is ignored outright in v1 — not shown and
+   * not counted as unread — because the UI has nowhere to put it.
+   */
+  activeConversationId?: () => number | undefined;
   /** Fired for every renderable message.created (activity + private notes dropped). */
   onMessage: (message: SupportApiMessage) => void;
   onState: (state: SupportCableState) => void;
@@ -56,6 +68,8 @@ export interface SupportCableOptions {
   retryDelaysMs?: number[];
   /** Treat the socket as dead if the server goes quiet for this long (pings are ~3s). */
   pingTimeoutMs?: number;
+  /** Give up on a socket that never fires `onopen` (captive portal, black hole). */
+  connectTimeoutMs?: number;
 }
 
 export interface SupportCable {
@@ -68,6 +82,7 @@ export interface SupportCable {
 
 const DEFAULT_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 15000];
 const DEFAULT_PING_TIMEOUT_MS = 20000;
+const DEFAULT_CONNECT_TIMEOUT_MS = 10000;
 
 function defaultSocketFactory(url: string): CableSocket {
   return new WebSocket(url) as unknown as CableSocket;
@@ -84,6 +99,7 @@ export function createSupportCable(options: SupportCableOptions): SupportCable {
   const makeSocket = options.socketFactory || defaultSocketFactory;
   const retryDelays = options.retryDelaysMs?.length ? options.retryDelaysMs : DEFAULT_RETRY_DELAYS_MS;
   const pingTimeoutMs = options.pingTimeoutMs ?? DEFAULT_PING_TIMEOUT_MS;
+  const connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
   const subscribeFrame = JSON.stringify({
     command: 'subscribe',
     identifier: JSON.stringify({ channel: 'RoomChannel', pubsub_token: options.pubsubToken }),
@@ -91,7 +107,9 @@ export function createSupportCable(options: SupportCableOptions): SupportCable {
 
   let socket: CableSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  let pingTimer: ReturnType<typeof setTimeout> | null = null;
+  // One watchdog covers both dead phases: a socket that never opens (armed at
+  // connect time) and an open socket that stops pinging (re-armed on every frame).
+  let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
   let attempt = 0;
   let subscribed = false;
   let hasSubscribedBefore = false;
@@ -103,9 +121,13 @@ export function createSupportCable(options: SupportCableOptions): SupportCable {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
-    if (pingTimer) {
-      clearTimeout(pingTimer);
-      pingTimer = null;
+    clearWatchdog();
+  }
+
+  function clearWatchdog(): void {
+    if (watchdogTimer) {
+      clearTimeout(watchdogTimer);
+      watchdogTimer = null;
     }
   }
 
@@ -118,14 +140,14 @@ export function createSupportCable(options: SupportCableOptions): SupportCable {
     socket = null;
   }
 
-  function armPingTimeout(): void {
-    if (pingTimer) clearTimeout(pingTimer);
-    pingTimer = setTimeout(() => {
-      // The server went quiet — the socket can stay "open" forever in that state,
-      // so drop it ourselves and let the normal backoff path bring it back.
-      debugLog('supportChat: cable went quiet, forcing reconnect');
+  function armWatchdog(timeoutMs: number, reason: string): void {
+    clearWatchdog();
+    watchdogTimer = setTimeout(() => {
+      // A socket that never opened, or an open one that stopped pinging, can sit
+      // there indefinitely — drop it and let the normal backoff path bring it back.
+      debugLog(`supportChat: cable ${reason}, forcing reconnect`);
       dropAndScheduleReconnect();
-    }, pingTimeoutMs);
+    }, timeoutMs);
   }
 
   function dropAndScheduleReconnect(): void {
@@ -142,10 +164,7 @@ export function createSupportCable(options: SupportCableOptions): SupportCable {
   function scheduleReconnect(): void {
     if (closedByUs || reconnectTimer) return;
     subscribed = false;
-    if (pingTimer) {
-      clearTimeout(pingTimer);
-      pingTimer = null;
-    }
+    clearWatchdog();
     if (attempt >= retryDelays.length) {
       exhausted = true;
       options.onState('unavailable');
@@ -172,15 +191,15 @@ export function createSupportCable(options: SupportCableOptions): SupportCable {
     switch (frame.type) {
       case 'welcome':
         socket?.send(subscribeFrame);
-        armPingTimeout();
+        armWatchdog(pingTimeoutMs, 'went quiet');
         return;
       case 'ping':
-        armPingTimeout();
+        armWatchdog(pingTimeoutMs, 'went quiet');
         return;
       case 'confirm_subscription': {
         subscribed = true;
         attempt = 0;
-        armPingTimeout();
+        armWatchdog(pingTimeoutMs, 'went quiet');
         options.onState('connected');
         if (hasSubscribedBefore) options.onReconnected?.();
         hasSubscribedBefore = true;
@@ -195,7 +214,20 @@ export function createSupportCable(options: SupportCableOptions): SupportCable {
     }
 
     if (frame.message?.event !== 'message.created') return; // unknown event -> ignore
-    const message = normalizeChatwootMessage(frame.message.data as Parameters<typeof normalizeChatwootMessage>[0]);
+    const data = frame.message.data as RawChatwootMessage | undefined;
+    // A contact can hold several conversations (an agent may open a new one).
+    // The dock renders exactly one, so anything else is dropped entirely in v1 —
+    // showing it would be wrong and counting it unread would badge a thread the
+    // user cannot open. Frames without a conversation_id are not filtered.
+    const active = options.activeConversationId?.();
+    if (
+      active !== undefined &&
+      typeof data?.conversation_id === 'number' &&
+      data.conversation_id !== active
+    ) {
+      return;
+    }
+    const message = normalizeChatwootMessage(data);
     if (message) options.onMessage(message);
   }
 
@@ -210,7 +242,10 @@ export function createSupportCable(options: SupportCableOptions): SupportCable {
       return;
     }
     socket = next;
-    next.onopen = () => armPingTimeout();
+    // Armed BEFORE the socket can open: without this a socket that never fires
+    // onopen would leave the cable stuck in `connecting` forever.
+    armWatchdog(connectTimeoutMs, 'never opened');
+    next.onopen = () => armWatchdog(pingTimeoutMs, 'opened but stayed silent');
     next.onmessage = (event) => handleFrame(event?.data);
     next.onclose = () => {
       if (socket !== next) return;

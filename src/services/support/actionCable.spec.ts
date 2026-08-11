@@ -207,6 +207,51 @@ describe('support ActionCable', () => {
     expect(h.sockets).toHaveLength(1);
   });
 
+  it('ignores message.created for a different conversation on the same contact', () => {
+    let active: number | undefined = 42;
+    const h = harness({ activeConversationId: () => active });
+    const socket = bringUp(h);
+    socket.emit(messageFrame({ id: 1, content: 'mine', message_type: 1, created_at: 1, conversation_id: 42 }));
+    socket.emit(messageFrame({ id: 2, content: 'someone else', message_type: 1, created_at: 2, conversation_id: 99 }));
+    expect(h.messages.map((m) => m.id)).toEqual([1]);
+
+    // Frames are scoped at dispatch time: the conversation is created lazily, so
+    // the id can still be unknown when the cable comes up.
+    active = undefined;
+    socket.emit(messageFrame({ id: 3, content: 'unscoped', message_type: 1, created_at: 3, conversation_id: 99 }));
+    expect(h.messages.map((m) => m.id)).toEqual([1, 3]);
+  });
+
+  it('does not filter frames that carry no conversation_id', () => {
+    const h = harness({ activeConversationId: () => 42 });
+    const socket = bringUp(h);
+    socket.emit(messageFrame({ id: 4, content: 'no scope field', message_type: 1, created_at: 4 }));
+    expect(h.messages.map((m) => m.id)).toEqual([4]);
+  });
+
+  it('close() cancels the watchdog — no reconnect after an intentional close', () => {
+    const h = harness({ pingTimeoutMs: 12_000 });
+    const socket = bringUp(h);
+    h.cable.close();
+    const statesAfterClose = h.states.length;
+    vi.advanceTimersByTime(120_000);
+    expect(h.sockets).toHaveLength(1);
+    expect(socket.closed).toBe(true);
+    expect(h.states).toHaveLength(statesAfterClose); // watchdog never fired
+  });
+
+  it('gives up on a socket that never opens and retries', () => {
+    const h = harness({ connectTimeoutMs: 8_000 });
+    h.cable.connect();
+    const socket = h.sockets[0];
+    expect(h.states).toEqual(['connecting']);
+    vi.advanceTimersByTime(8_000); // never fired onopen
+    expect(socket.closed).toBe(true);
+    expect(h.states[h.states.length - 1]).toBe('reconnecting');
+    vi.advanceTimersByTime(1_000);
+    expect(h.sockets).toHaveLength(2);
+  });
+
   it('forces a reconnect when the server stops pinging', () => {
     const h = harness({ pingTimeoutMs: 12_000 });
     const socket = bringUp(h);

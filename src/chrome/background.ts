@@ -2547,53 +2547,22 @@ app.addToOptions(MessageTypes.GET_PAIRING_STATUS, async (request, sendResponse) 
 // pseudonymous Chatwoot identifier + HMAC. Requires spending auth, so the caller
 // passes the password / PRF privateKeyBytes it already collected — nothing is
 // cached here, and neither the password nor the identifier is ever logged.
-// Software Cardano wallets only: hardware wallets have no decryptable stake key.
+// Capability guards (Cardano + reward address) live in walletManager.runSupportChatAuth
+// -> authenticateSupportChat; this handler is only the envelope + key hygiene.
 app.addToOptions(MessageTypes.SUPPORT_CHAT_AUTH, async (request, sendResponse) => {
+  const pkBytes = request.data?.privateKeyBytes;
+  // Our own copy of the PRF root key — zeroed in the finally below so it does not
+  // linger in the service worker's heap after the signature is produced.
+  const privateKeyBytes = Array.isArray(pkBytes) ? Uint8Array.from(pkBytes) : undefined;
   try {
     const password = typeof request.data?.password === 'string' ? request.data.password : '';
-    const pkBytes = request.data?.privateKeyBytes;
-    const privateKeyBytes = Array.isArray(pkBytes) ? Uint8Array.from(pkBytes) : undefined;
-
-    const walletBg = walletManager.getWallet();
-    if (!walletBg || walletBg.chain !== Blockchain.CARDANO) {
-      throw new Error('Support chat requires an unlocked Cardano wallet');
-    }
-    const stakeAddress = walletBg.stakeAddress;
-    if (!stakeAddress || !String(stakeAddress).startsWith('stake1')) {
-      throw new Error('Support chat requires a wallet with a reward address');
-    }
-
-    const { runSupportChatHandshake } = await import('@/chrome/supportChatAuth');
-    const identity = await runSupportChatHandshake({
-      stakeAddress: String(stakeAddress),
-      sign: async (payloadHex: string) => {
-        const { signature, key } = await walletBg.signData(
-          stakeAddress,
-          payloadHex,
-          password,
-          0,
-          WalletStore.state.keys,
-          privateKeyBytes,
-        );
-        return { signature, key: String(key) };
-      },
-    });
-
-    sendResponse({
-      id: request.id,
-      data: { success: true, identity },
-      target: TARGET,
-      sender: SENDER.extension,
-    });
+    const identity = await walletManager.runSupportChatAuth({ password, privateKeyBytes });
+    sendResponse(crossDeviceReply(request.id, { success: true, identity }));
   } catch (error) {
-    sendResponse({
-      id: request.id,
-      data: { success: false, error: getErrorMessage(error) },
-      target: TARGET,
-      sender: SENDER.extension,
-    });
+    sendResponse(crossDeviceReply(request.id, { success: false, error: getErrorMessage(error) }));
+  } finally {
+    privateKeyBytes?.fill(0);
   }
-  return true;
 });
 
 // Pool operator transaction signing handler (cold key + wallet keys)

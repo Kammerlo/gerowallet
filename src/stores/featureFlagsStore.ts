@@ -26,9 +26,10 @@ export interface FeatureFlags {
   isBitcoinGeroSyncEnabled: boolean;
   isMidnightConvertEnabled: boolean;
   isGoogleWalletEnabled: boolean;
-  // Master gate for the non-custodial live support chat (Chatwoot). Default OFF:
-  // the dock's support entry point stays hidden until flipped ON via gero-sync,
-  // so support can be held or killed without a client release.
+  // Gate for the non-custodial live support chat (Chatwoot). Default OFF. The UI
+  // that owns the support entry point checks this before offering the feature;
+  // the chat plumbing itself is inert until something calls into it, so hiding
+  // the entry point is what holds or kills the feature without a client release.
   isLiveChatEnabled: boolean;
   // Master gate for WalletConnect v2 pairing/signing. Default OFF: even with a
   // VITE_WALLETCONNECT_PROJECT_ID configured, the background skips WalletKit init
@@ -366,9 +367,10 @@ export const featureFlagsStore = {
 
   /**
    * Check if the non-custodial live support chat is enabled.
-   * Ships DARK (default false): the support entry point stays hidden and no
-   * Chatwoot/Nexus handshake traffic is generated until this is flipped ON, so
-   * gero-sync can hold or kill live chat without a client release.
+   * Ships DARK (default false). The caller is the UI that renders the support
+   * entry point: while it is hidden nothing calls the chat composable, so no
+   * Chatwoot or Nexus traffic is generated. Lets gero-sync hold or kill live chat
+   * without a client release.
    */
   isLiveChatEnabled(): boolean {
     return featureFlagsState.flags.isLiveChatEnabled;

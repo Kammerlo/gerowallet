@@ -75,6 +75,25 @@ function cached(extra: Partial<SupportChatIdentity> = {}): SupportChatIdentity {
   return { ...VERIFIED, sourceId: 'src-1', pubsubToken: 'tok-1', conversationId: 42, ...extra };
 }
 
+/** Drain Vue's watcher queue and any chained promise callbacks. */
+async function flushPromises(rounds = 8): Promise<void> {
+  for (let i = 0; i < rounds; i++) {
+    await nextTick();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+/** A promise plus its resolve/reject, for pausing a mocked call mid-flight. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('useSupportChat', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -421,13 +440,68 @@ describe('useSupportChat', () => {
 
       active.wallet = { id: 2, chain: 'Cardano', type: 'Normal', stakeAddress: 'stake1uother' };
       h.api.listMessages.mockResolvedValue([{ id: 8, role: 'user', text: 'wallet two', createdAt: 8 }]);
-      await nextTick();
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await flushPromises();
 
       expect(h.cable.close).toHaveBeenCalled();
       expect(h.chat.unread.value).toBe(0);
       expect(h.api.listMessages).toHaveBeenLastCalledWith('src-2', 77);
       expect(h.chat.messages.value.map((m) => m.text)).toEqual(['wallet two']);
+    });
+
+    it('a switch mid-send never touches the new wallet (no cross-wallet write or delivery)', async () => {
+      const active = Vue.observable({ wallet: CARDANO_WALLET as SupportWalletSnapshot });
+      const h = makeHarness({ wallet: () => active.wallet });
+      // Wallet 1 has an identity but no contact yet, so the send must call
+      // ensureContact — which is where we freeze it.
+      h.store[1] = { ...VERIFIED };
+      h.store[2] = cached({ identifier: 'v1:bb', identifierHash: 'h2', sourceId: 'src-2', conversationId: 77 });
+      const contact = deferred<{ sourceId: string; pubsubToken: string }>();
+      h.api.ensureContact.mockReturnValue(contact.promise);
+
+      const pending = h.chat.send('for wallet one');
+      await flushPromises(2);
+      expect(h.api.ensureContact).toHaveBeenCalledTimes(1);
+
+      // The user switches wallets while the contact round-trip is in flight.
+      active.wallet = { id: 2, chain: 'Cardano', type: 'Normal', stakeAddress: 'stake1uother' };
+      await flushPromises();
+      contact.resolve({ sourceId: 'src-1', pubsubToken: 'tok-1' });
+
+      expect(await pending).toBe(false);
+
+      // Wallet 2's cached identity is untouched, and nothing was written under its id.
+      expect(h.store[2]).toMatchObject({ identifier: 'v1:bb', sourceId: 'src-2', conversationId: 77 });
+      expect(h.cache.save).not.toHaveBeenCalledWith(2, expect.anything());
+      expect(h.cache.clear).not.toHaveBeenCalled();
+      // Wallet 1's message never reached any conversation.
+      expect(h.api.sendMessage).not.toHaveBeenCalled();
+      // And wallet 2's thread shows neither the message nor an error.
+      expect(h.chat.messages.value).toEqual([]);
+      expect(h.chat.errorKey.value).toBeNull();
+      expect(h.chat.busy.value).toBe(false);
+    });
+
+    it('a switch mid-send never wipes the new wallet\'s cache during ChatAuthError recovery', async () => {
+      const active = Vue.observable({ wallet: CARDANO_WALLET as SupportWalletSnapshot });
+      const h = makeHarness({ wallet: () => active.wallet });
+      h.store[1] = cached();
+      h.store[2] = cached({ identifier: 'v1:bb', sourceId: 'src-2', conversationId: 77 });
+      const post = deferred<never>();
+      h.api.sendMessage.mockReturnValue(post.promise);
+
+      const pending = h.chat.send('for wallet one');
+      await flushPromises(2);
+
+      active.wallet = { id: 2, chain: 'Cardano', type: 'Normal', stakeAddress: 'stake1uother' };
+      await flushPromises();
+      post.reject(new ChatAuthError('rejected'));
+
+      expect(await pending).toBe(false);
+      // Recovery would normally clear the cache — but only ever for the wallet the
+      // send belonged to, and here it must not run at all.
+      expect(h.cache.clear).not.toHaveBeenCalledWith(2);
+      expect(h.store[2]).toMatchObject({ identifier: 'v1:bb' });
+      expect(h.chat.errorKey.value).toBeNull();
     });
 
     it('a send after a switch uses the NEW wallet identity', async () => {

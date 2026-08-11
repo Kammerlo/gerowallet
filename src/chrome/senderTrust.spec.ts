@@ -37,4 +37,8 @@ describe('isOwnExtensionPageSender', () => {
     expect(EXTENSION_PAGE_ONLY_METHODS.has('WC_PAIR')).toBe(false);
     expect(EXTENSION_PAGE_ONLY_METHODS.has('SIGN_TX')).toBe(false);
   });
+
+  it('gates the support-chat handshake (it takes spending auth and signs with the stake key)', () => {
+    expect(EXTENSION_PAGE_ONLY_METHODS.has('SUPPORT_CHAT_AUTH')).toBe(true);
+  });
 });
