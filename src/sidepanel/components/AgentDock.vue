@@ -10,6 +10,11 @@
     >
       <v-icon v-if="!dock.isOpen.value" size="22" color="var(--g-accent)">mdi-robot-outline</v-icon>
       <v-icon v-else size="22" color="var(--g-accent)">mdi-close</v-icon>
+      <span
+        v-if="liveChatEnabled && !dock.isOpen.value && supportChat.unread.value > 0"
+        class="agent-dock__fab-dot"
+        aria-hidden="true"
+      ></span>
     </button>
 
     <transition name="dock-panel">
@@ -17,10 +22,37 @@
         <header class="agent-dock__head">
           <div class="agent-dock__head-text">
             <span class="agent-dock__title">{{ $t('copilot.title') }}</span>
-            <span class="agent-dock__status">
-              {{ dock.busy.value ? $t('copilot.status.thinking') : $t('copilot.status.ready') }}
-            </span>
+            <span class="agent-dock__status">{{ $t(statusKey) }}</span>
           </div>
+
+          <div v-if="liveChatEnabled" class="agent-dock__mode-toggle" role="tablist">
+            <button
+              type="button"
+              class="agent-dock__mode-btn"
+              :class="{ 'is-active': mode === 'copilot' }"
+              role="tab"
+              :aria-selected="mode === 'copilot'"
+              :aria-label="$t('support.toggle.copilot')"
+              @click="enterCopilotMode()"
+            >{{ $t('support.toggle.copilot') }}</button>
+            <button
+              type="button"
+              class="agent-dock__mode-btn"
+              :class="{ 'is-active': mode === 'support' }"
+              role="tab"
+              :aria-selected="mode === 'support'"
+              :aria-label="$t('support.toggle.support')"
+              @click="enterSupportMode()"
+            >
+              {{ $t('support.toggle.support') }}
+              <span
+                v-if="mode === 'copilot' && supportChat.unread.value > 0"
+                class="agent-dock__unread-dot"
+                aria-hidden="true"
+              ></span>
+            </button>
+          </div>
+
           <button
             class="agent-dock__close"
             :aria-label="$t('copilot.close')"
@@ -31,80 +63,136 @@
         </header>
 
         <div ref="scroll" class="agent-dock__messages">
-          <div
-            v-if="dock.messages.value.length === 0 && !dock.busy.value"
-            class="agent-dock__empty"
-          >
-            <div class="agent-dock__empty-orb">G</div>
-            <p class="agent-dock__empty-h">{{ $t('copilot.greeting.line1') }}</p>
-            <p class="agent-dock__empty-sub">{{ $t('copilot.greeting.line2') }}</p>
-            <div class="agent-dock__chips">
-              <button class="chip" @click="quickSend($t('copilot.suggest.portfolio'))">
-                {{ $t('copilot.suggest.portfolio') }}
-              </button>
-              <button class="chip" @click="quickSend($t('copilot.suggest.staking'))">
-                {{ $t('copilot.suggest.staking') }}
-              </button>
-              <button class="chip" @click="quickSend($t('copilot.suggest.swap'))">
-                {{ $t('copilot.suggest.swap') }}
-              </button>
-            </div>
-          </div>
-
-          <transition-group name="msg" tag="div" class="agent-dock__list">
+          <template v-if="mode === 'copilot' || !liveChatEnabled">
             <div
-              v-for="m in dock.messages.value"
-              :key="m.id"
-              :class="['agent-dock__msg', m.role]"
+              v-if="dock.messages.value.length === 0 && !dock.busy.value"
+              class="agent-dock__empty"
             >
-              <div v-if="m.role === 'assistant'" class="agent-dock__avatar">G</div>
-              <div class="agent-dock__bubble">
-                <!-- assistant replies are markdown (escaped-first, then rendered); user text stays plain -->
-                <div
-                  v-if="m.role === 'assistant'"
-                  class="agent-dock__md"
-                  v-html="renderMarkdown(m.text)"
-                ></div>
-                <p v-else class="agent-dock__text">{{ m.text }}</p>
-                <div v-if="m.intent" class="agent-dock__card">
-                  <ChartCard
-                    v-if="m.intent.type === 'chart-token'"
-                    :symbol="m.intent.symbol"
-                    :asset-id="m.intent.assetId"
-                  />
-                  <SwapCard
-                    v-else-if="m.intent.type === 'swap'"
-                    :intent="m.intent.swap"
-                  />
-                  <StakingCard
-                    v-else-if="m.intent.type === 'staking'"
-                    :intent="m.intent.staking"
-                  />
-                  <AllowanceCard v-else-if="m.intent.type === 'allowance'" />
-                </div>
+              <div class="agent-dock__empty-orb">G</div>
+              <p class="agent-dock__empty-h">{{ $t('copilot.greeting.line1') }}</p>
+              <p class="agent-dock__empty-sub">{{ $t('copilot.greeting.line2') }}</p>
+              <div class="agent-dock__chips">
+                <button class="chip" @click="quickSend($t('copilot.suggest.portfolio'))">
+                  {{ $t('copilot.suggest.portfolio') }}
+                </button>
+                <button class="chip" @click="quickSend($t('copilot.suggest.staking'))">
+                  {{ $t('copilot.suggest.staking') }}
+                </button>
+                <button class="chip" @click="quickSend($t('copilot.suggest.swap'))">
+                  {{ $t('copilot.suggest.swap') }}
+                </button>
+                <button v-if="liveChatEnabled" class="chip" @click="enterSupportMode()">
+                  {{ $t('support.chip.talkToHuman') }}
+                </button>
               </div>
             </div>
-          </transition-group>
 
-          <div v-if="dock.busy.value" class="agent-dock__msg assistant">
-            <div class="agent-dock__avatar">G</div>
-            <div class="agent-dock__busy" :aria-label="$t('copilot.status.thinking')">
-              <span class="dot"></span>
-              <span class="dot"></span>
-              <span class="dot"></span>
+            <transition-group name="msg" tag="div" class="agent-dock__list">
+              <div
+                v-for="m in dock.messages.value"
+                :key="m.id"
+                :class="['agent-dock__msg', m.role]"
+              >
+                <div v-if="m.role === 'assistant'" class="agent-dock__avatar">G</div>
+                <div class="agent-dock__bubble">
+                  <!-- assistant replies are markdown (escaped-first, then rendered); user text stays plain -->
+                  <div
+                    v-if="m.role === 'assistant'"
+                    class="agent-dock__md"
+                    v-html="renderMarkdown(m.text)"
+                  ></div>
+                  <p v-else class="agent-dock__text">{{ m.text }}</p>
+                  <div v-if="m.intent" class="agent-dock__card">
+                    <ChartCard
+                      v-if="m.intent.type === 'chart-token'"
+                      :symbol="m.intent.symbol"
+                      :asset-id="m.intent.assetId"
+                    />
+                    <SwapCard
+                      v-else-if="m.intent.type === 'swap'"
+                      :intent="m.intent.swap"
+                    />
+                    <StakingCard
+                      v-else-if="m.intent.type === 'staking'"
+                      :intent="m.intent.staking"
+                    />
+                    <AllowanceCard v-else-if="m.intent.type === 'allowance'" />
+                  </div>
+                </div>
+              </div>
+            </transition-group>
+
+            <div v-if="dock.busy.value" class="agent-dock__msg assistant">
+              <div class="agent-dock__avatar">G</div>
+              <div class="agent-dock__busy" :aria-label="$t('copilot.status.thinking')">
+                <span class="dot"></span>
+                <span class="dot"></span>
+                <span class="dot"></span>
+              </div>
             </div>
-          </div>
+          </template>
+
+          <!-- Support (live chat) thread: same bubble layout as Copilot, but plain text
+               only (no markdown, no intent cards) and agent bubbles carry an agentName
+               caption. Only reachable when liveChatEnabled — see the header toggle and
+               escalation chip above, the only two ways `mode` becomes 'support'. -->
+          <template v-else>
+            <div v-if="supportChat.errorKey.value" class="agent-dock__notice" role="alert">
+              {{ $t(supportChat.errorKey.value) }}
+            </div>
+
+            <div
+              v-if="supportChat.messages.value.length === 0 && !supportChat.busy.value"
+              class="agent-dock__empty"
+            >
+              <div class="agent-dock__empty-orb">G</div>
+              <p class="agent-dock__empty-h">{{ $t('support.intro.title') }}</p>
+              <p class="agent-dock__empty-sub">{{ $t('support.intro.line') }}</p>
+              <p class="agent-dock__status">{{ $t(statusKey) }}</p>
+            </div>
+
+            <transition-group name="msg" tag="div" class="agent-dock__list">
+              <div
+                v-for="m in supportChat.messages.value"
+                :key="m.id"
+                :class="['agent-dock__msg', m.role === 'user' ? 'user' : 'assistant']"
+              >
+                <div v-if="m.role === 'agent'" class="agent-dock__avatar">{{ agentInitial(m.agentName) }}</div>
+                <div class="agent-dock__bubble">
+                  <span v-if="m.role === 'agent'" class="agent-dock__agent-name">
+                    {{ m.agentName || $t('support.agentFallbackName') }}
+                  </span>
+                  <p class="agent-dock__text">{{ m.text }}</p>
+                </div>
+              </div>
+            </transition-group>
+
+            <div v-if="supportChat.busy.value" class="agent-dock__msg assistant">
+              <div class="agent-dock__avatar">{{ agentInitial() }}</div>
+              <div class="agent-dock__busy" :aria-label="$t(statusKey)">
+                <span class="dot"></span>
+                <span class="dot"></span>
+                <span class="dot"></span>
+              </div>
+            </div>
+          </template>
         </div>
 
-        <footer class="agent-dock__input">
+        <footer
+          v-if="mode === 'support' && liveChatEnabled && !supportChat.isAvailable.value"
+          class="agent-dock__input agent-dock__input--notice"
+        >
+          <p class="agent-dock__watch-only">{{ $t('support.watchOnly.notice') }}</p>
+        </footer>
+        <footer v-else class="agent-dock__input">
           <input
             v-model="draft"
-            :placeholder="$t('copilot.placeholder')"
+            :placeholder="inputPlaceholder"
             @keyup.enter="submit()"
           />
           <button
             class="agent-dock__send"
-            :disabled="dock.busy.value"
+            :disabled="sendDisabled"
             :aria-label="$t('copilot.send')"
             @click="submit()"
           >
@@ -118,14 +206,19 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, nextTick, ref, watch } from 'vue';
+import { computed, defineComponent, nextTick, ref, watch } from 'vue';
 import { agentDock } from '@/sidepanel/composables/useAgentDock';
 import { renderMarkdown } from '@/services/agent/renderMarkdown';
 import { useSheetVisibility } from '@/sidepanel/composables/useSheetVisibility';
+import { supportChat } from '@/sidepanel/composables/useSupportChat';
+import { featureFlags } from '@/stores/featureFlagsStore';
+import i18n from '@/plugins/i18n';
 import ChartCard from '@/sidepanel/components/agent/ChartCard.vue';
 import SwapCard from '@/sidepanel/components/agent/SwapCard.vue';
 import StakingCard from '@/sidepanel/components/agent/StakingCard.vue';
 import AllowanceCard from '@/sidepanel/components/agent/AllowanceCard.vue';
+
+type DockMode = 'copilot' | 'support';
 
 export default defineComponent({
   name: 'AgentDock',
@@ -136,6 +229,63 @@ export default defineComponent({
     const scroll = ref<HTMLElement | null>(null);
     const { isAnySheetOpen } = useSheetVisibility();
 
+    // Everything support-related is gated behind the live-chat flag. `mode` can
+    // only ever flip to 'support' via UI this flag hides (the header toggle and
+    // the escalation chip), so flag-off leaves the dock's rendered output and
+    // behavior identical to before this feature existed.
+    const liveChatEnabled = computed(() => featureFlags.isLiveChatEnabled());
+    const mode = ref<DockMode>('copilot');
+
+    function enterCopilotMode(): void {
+      mode.value = 'copilot';
+    }
+
+    function enterSupportMode(): void {
+      mode.value = 'support';
+      if (liveChatEnabled.value) void supportChat.enter();
+    }
+
+    // The support thread counts as "seen" whenever it is the visible content of
+    // an open dock — covers switching into support mode, re-opening the dock
+    // while already in support mode, and new messages arriving while it's on screen.
+    watch(
+      () => [mode.value, dock.isOpen.value, supportChat.messages.value.length],
+      () => {
+        if (liveChatEnabled.value && mode.value === 'support' && dock.isOpen.value) {
+          supportChat.markSeen();
+        }
+      },
+    );
+
+    // Single source for the header status text (and the support empty-state's
+    // status line, which shows the same connection state) — copilot's
+    // thinking/ready pair outside support mode, the live-chat connection state inside it.
+    const statusKey = computed(() => {
+      if (mode.value === 'support' && liveChatEnabled.value) {
+        const state = supportChat.connectionState.value;
+        if (state === 'connecting') return 'support.status.connecting';
+        if (state === 'reconnecting') return 'support.status.reconnecting';
+        if (state === 'unavailable') return 'support.status.unavailable';
+        return 'support.status.ready'; // 'connected' or 'idle'
+      }
+      return dock.busy.value ? 'copilot.status.thinking' : 'copilot.status.ready';
+    });
+
+    const sendDisabled = computed(() =>
+      mode.value === 'support' && liveChatEnabled.value ? supportChat.busy.value : dock.busy.value,
+    );
+
+    const inputPlaceholder = computed(() =>
+      mode.value === 'support' && liveChatEnabled.value
+        ? (i18n.t('support.placeholder') as string)
+        : (i18n.t('copilot.placeholder') as string),
+    );
+
+    function agentInitial(agentName?: string): string {
+      const name = agentName || (i18n.t('support.agentFallbackName') as string);
+      return (name || 'S').trim().charAt(0).toUpperCase() || 'S';
+    }
+
     // Nothing may compete for attention while the user is mid-flow —
     // signing above all. Close the chat panel the instant a sheet opens
     // (the FAB itself just fades out via the is-hidden class below), and
@@ -145,6 +295,16 @@ export default defineComponent({
     });
 
     async function submit(): Promise<void> {
+      if (mode.value === 'support' && liveChatEnabled.value) {
+        const text = draft.value;
+        if (!text.trim() || supportChat.busy.value) return;
+        // The composable owns the draft on failure: only clear it once send()
+        // confirms the message actually went out, so a dropped connection never
+        // silently discards what the user typed.
+        const sent = await supportChat.send(text);
+        if (sent) draft.value = '';
+        return;
+      }
       const text = draft.value;
       draft.value = '';
       await dock.send(text);
@@ -165,7 +325,37 @@ export default defineComponent({
       },
     );
 
-    return { draft, dock, submit, quickSend, scroll, renderMarkdown, isAnySheetOpen };
+    // Mirrors the watcher above for the support thread, kept separate so the
+    // original copilot scroll behavior above is untouched.
+    watch(
+      () => [supportChat.messages.value.length, supportChat.busy.value],
+      () => {
+        if (mode.value !== 'support') return;
+        void nextTick(() => {
+          const el = scroll.value;
+          if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+        });
+      },
+    );
+
+    return {
+      draft,
+      dock,
+      submit,
+      quickSend,
+      scroll,
+      renderMarkdown,
+      isAnySheetOpen,
+      mode,
+      liveChatEnabled,
+      supportChat,
+      statusKey,
+      sendDisabled,
+      inputPlaceholder,
+      enterCopilotMode,
+      enterSupportMode,
+      agentInitial,
+    };
   },
 });
 </script>
@@ -234,6 +424,17 @@ export default defineComponent({
   transition: opacity 150ms ease;
 }
 
+.agent-dock__fab-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--g-accent);
+  border: 1px solid var(--fab-bg);
+}
+
 /* ── Panel ────────────────────────────────────────────────────────────── */
 .agent-dock__panel {
   position: fixed;
@@ -264,7 +465,7 @@ export default defineComponent({
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 12px 14px;
   background: color-mix(in srgb, var(--g-accent) 6%, transparent);
   border-bottom: 1px solid var(--divider);
@@ -286,9 +487,52 @@ export default defineComponent({
   color: var(--g-accent);
 }
 
+/* ── Mode toggle (Copilot / Support) ─────────────────────────────────── */
+.agent-dock__mode-toggle {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--g-r-pill);
+  background: var(--accent-08);
+  border: 1px solid var(--divider);
+}
+
+.agent-dock__mode-btn {
+  position: relative;
+  height: 22px;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  border-radius: var(--g-r-pill);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 150ms ease, background-color 150ms ease;
+}
+
+.agent-dock__mode-btn.is-active {
+  color: var(--g-accent);
+  background: var(--accent-14);
+}
+
+.agent-dock__unread-dot {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--g-accent);
+}
+
 .agent-dock__close {
   width: 28px;
   height: 28px;
+  flex-shrink: 0;
+  margin-left: auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -317,6 +561,27 @@ export default defineComponent({
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* ── Support error banner ─────────────────────────────────────────────── */
+.agent-dock__notice {
+  flex-shrink: 0;
+  padding: 8px 10px;
+  border-radius: var(--g-r-chip);
+  background: var(--g-raised);
+  border: 1px solid var(--g-hairline-2);
+  color: var(--g-text-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ── Support agent-name caption ───────────────────────────────────────── */
+.agent-dock__agent-name {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
 }
 
 .agent-dock__messages::-webkit-scrollbar {
@@ -595,6 +860,17 @@ export default defineComponent({
   padding: 10px 12px;
   border-top: 1px solid var(--divider);
   background: transparent;
+}
+
+.agent-dock__input--notice {
+  justify-content: center;
+}
+
+.agent-dock__watch-only {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
 }
 
 .agent-dock__input input {
