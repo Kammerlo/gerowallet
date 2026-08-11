@@ -102,13 +102,22 @@ export interface SupportChatDeps {
   /** Runs the stake-key handshake in the background. null = could not authenticate. */
   requestIdentity?: (auth: SupportAuthInput) => Promise<SupportChatVerifiedIdentity | null>;
   /**
-   * Collects spending auth for the one-time handshake. Returning null means the
-   * user cancelled — or, by default, that no prompt is wired up yet (see
-   * {@link setSupportAuthPrompt}).
+   * Collects spending auth for the one-time handshake. Resolving null means the
+   * user CANCELLED (no error shown); throwing means auth FAILED. The default
+   * throws until the dock wires a prompt in — see {@link setSupportAuthPrompt}.
    */
   promptAuth?: () => Promise<SupportAuthInput | null>;
   wallet?: () => SupportWalletSnapshot | null;
 }
+
+/**
+ * Result of establishing an identity. `cancelled` and `failed` both stop the send,
+ * but only `failed` is worth surfacing as an error — see {@link setSupportAuthPrompt}.
+ */
+type IdentityOutcome =
+  | { status: 'ok'; identity: SupportChatIdentity }
+  | { status: 'cancelled' }
+  | { status: 'failed' };
 
 /**
  * Wallet types whose stake key the BACKGROUND can unlock for the handshake.
@@ -139,9 +148,17 @@ async function backgroundRequestIdentity(auth: SupportAuthInput): Promise<Suppor
  * Spending-auth prompt for the one-time handshake.
  *
  * The stake key can only be unlocked with the spending password (or a PassKey PRF
- * secret), and collecting either needs UI this module must not own. Until the dock
- * wires a prompt in, the default returns null: the handshake is skipped and
- * `send()` reports `support.error.sendFailed` instead of half-committing.
+ * secret), and collecting either needs UI this module must not own.
+ *
+ * CONTRACT — the two outcomes are NOT the same and must be signalled differently:
+ * <ul>
+ *   <li>resolve `null` = the user deliberately CANCELLED. `send()` returns false
+ *       and leaves `errorKey` null, so the dock keeps the draft without flashing
+ *       an error banner at someone who just changed their mind.</li>
+ *   <li>THROW = auth genuinely failed (wrong password, PassKey error, no prompt
+ *       wired yet). `send()` returns false with `support.error.sendFailed`.</li>
+ * </ul>
+ * Resolving an auth object means "proceed with these credentials".
  */
 let authPrompt: (() => Promise<SupportAuthInput | null>) | null = null;
 
@@ -151,7 +168,10 @@ export function setSupportAuthPrompt(prompt: (() => Promise<SupportAuthInput | n
 }
 
 function defaultPromptAuth(): Promise<SupportAuthInput | null> {
-  return authPrompt ? authPrompt() : Promise.resolve(null);
+  // No prompt wired yet is a FAILURE, not a user cancel — the send could never
+  // have succeeded, so the dock should say so rather than silently swallow it.
+  if (!authPrompt) return Promise.reject(new Error('Support chat auth prompt not wired'));
+  return authPrompt();
 }
 
 function defaultWallet(): SupportWalletSnapshot | null {
@@ -271,25 +291,36 @@ export function createSupportChat(deps: SupportChatDeps = {}) {
     await cache.save(walletId, identity);
   }
 
-  /** Run the one-time stake-key handshake. Returns null when auth is unavailable. */
-  async function handshake(): Promise<SupportChatIdentity | null> {
-    const auth = await promptAuth();
-    if (!auth) return null;
+  /**
+   * Run the one-time stake-key handshake.
+   *
+   * `cancelled` (the prompt resolved null) is deliberately NOT `failed`: the user
+   * chose not to authenticate, which is not an error worth rendering.
+   */
+  async function handshake(): Promise<IdentityOutcome> {
+    let auth: SupportAuthInput | null;
+    try {
+      auth = await promptAuth();
+    } catch (error) {
+      debugLog('supportChat: auth prompt failed', error);
+      return { status: 'failed' };
+    }
+    if (!auth) return { status: 'cancelled' };
     const verified = await requestIdentity(auth);
-    if (!verified?.identifier) return null;
+    if (!verified?.identifier) return { status: 'failed' };
     identity = { ...verified };
     await persist();
-    return identity;
+    return { status: 'ok', identity };
   }
 
   /** Cached identity, or the handshake result. */
-  async function ensureIdentity(): Promise<SupportChatIdentity | null> {
-    if (identity?.identifier) return identity;
+  async function ensureIdentity(): Promise<IdentityOutcome> {
+    if (identity?.identifier) return { status: 'ok', identity };
     if (walletId !== null) {
       const cachedIdentity = await cache.load(walletId);
       if (cachedIdentity?.identifier) {
         identity = cachedIdentity;
-        return identity;
+        return { status: 'ok', identity };
       }
     }
     return handshake();
@@ -330,9 +361,14 @@ export function createSupportChat(deps: SupportChatDeps = {}) {
     identity = null;
     cable?.close();
     cable = null;
-    const fresh = await handshake();
-    if (!fresh) return false;
-    if (!fresh.displayName && displayName) identity = { ...fresh, displayName };
+    const outcome = await handshake();
+    if (outcome.status !== 'ok') return false;
+    // Keep the pseudonym the agent already knows this person by if the fresh
+    // handshake didn't return one — and persist it, or the cache keeps the blank.
+    if (!outcome.identity.displayName && displayName) {
+      identity = { ...outcome.identity, displayName };
+      await persist();
+    }
     return true;
   }
 
@@ -359,7 +395,12 @@ export function createSupportChat(deps: SupportChatDeps = {}) {
 
   async function deliver(text: string): Promise<void> {
     const target = await ensureConversation();
-    await api.sendMessage(target.sourceId as string, target.conversationId as number, text);
+    const sent = await api.sendMessage(target.sourceId as string, target.conversationId as number, text);
+    // Reconcile the optimistic echo with the server's id/timestamp immediately.
+    // The cable is not necessarily subscribed yet on a first send, so waiting for
+    // the broadcast would leave a negative local id in the thread until the next
+    // history load. `ingest` dedupes, so a later broadcast of the same id is a no-op.
+    if (sent) ingest(sent);
   }
 
   async function send(text: string): Promise<boolean> {
@@ -373,8 +414,9 @@ export function createSupportChat(deps: SupportChatDeps = {}) {
     let optimistic: SupportMessage | null = null;
     try {
       const known = await ensureIdentity();
-      if (!known) {
-        setError('support.error.sendFailed');
+      if (known.status !== 'ok') {
+        // A deliberate cancel is not an error — the dock just keeps the draft.
+        if (known.status === 'failed') setError('support.error.sendFailed');
         return false;
       }
 

@@ -195,14 +195,41 @@ describe('useSupportChat', () => {
       expect(h.store[1]).toMatchObject({ identifier: 'v1:aa', sourceId: 'src-1', conversationId: 42 });
     });
 
-    it('returns false and appends NOTHING when the user cancels auth', async () => {
+    it('a deliberate cancel returns false with NO error and appends nothing', async () => {
       const h = makeHarness({ promptAuth: vi.fn().mockResolvedValue(null) });
       const ok = await h.chat.send('hello');
       expect(ok).toBe(false);
       expect(h.chat.messages.value).toEqual([]);
-      expect(h.chat.errorKey.value).toBe('support.error.sendFailed');
+      // Cancelling is a choice, not a failure — the dock keeps the draft, no banner.
+      expect(h.chat.errorKey.value).toBeNull();
+      expect(h.requestIdentity).not.toHaveBeenCalled();
       expect(h.api.ensureContact).not.toHaveBeenCalled();
       expect(h.chat.busy.value).toBe(false);
+    });
+
+    it('clears a previous error when a later send is cancelled', async () => {
+      const promptAuth = vi.fn().mockRejectedValueOnce(new Error('wrong password')).mockResolvedValue(null);
+      const h = makeHarness({ promptAuth });
+      expect(await h.chat.send('hello')).toBe(false);
+      expect(h.chat.errorKey.value).toBe('support.error.sendFailed');
+      expect(await h.chat.send('hello')).toBe(false);
+      expect(h.chat.errorKey.value).toBeNull();
+    });
+
+    it('an auth FAILURE (prompt throws) returns false with support.error.sendFailed', async () => {
+      const h = makeHarness({ promptAuth: vi.fn().mockRejectedValue(new Error('PassKey failed')) });
+      expect(await h.chat.send('hello')).toBe(false);
+      expect(h.chat.messages.value).toEqual([]);
+      expect(h.chat.errorKey.value).toBe('support.error.sendFailed');
+      expect(h.requestIdentity).not.toHaveBeenCalled();
+    });
+
+    it('treats a not-yet-wired auth prompt as a failure, not a cancel', async () => {
+      // No promptAuth dep at all -> the module default, which throws until the
+      // dock calls setSupportAuthPrompt().
+      const h = makeHarness({ promptAuth: undefined });
+      expect(await h.chat.send('hello')).toBe(false);
+      expect(h.chat.errorKey.value).toBe('support.error.sendFailed');
     });
 
     it('returns false and appends NOTHING when the handshake itself fails', async () => {
@@ -218,6 +245,35 @@ describe('useSupportChat', () => {
       expect(await h.chat.send('hello')).toBe(false);
       expect(h.chat.messages.value).toEqual([]);
       expect(h.chat.errorKey.value).toBe('support.error.sendFailed');
+    });
+
+    it('reconciles the optimistic echo with the id the send POST returned', async () => {
+      const h = makeHarness();
+      h.api.sendMessage.mockResolvedValue({ id: 31, role: 'user', text: 'my tx is stuck', createdAt: 31000 });
+      expect(await h.chat.send('my tx is stuck')).toBe(true);
+      // The cable is not subscribed yet on a first send, so the POST response is
+      // what promotes the local echo to a real message.
+      expect(h.chat.messages.value).toEqual([
+        { id: 31, role: 'user', text: 'my tx is stuck', agentName: undefined, createdAt: 31000 },
+      ]);
+    });
+
+    it('does not duplicate when the cable later broadcasts the same message', async () => {
+      const h = makeHarness();
+      h.store[1] = cached();
+      await h.chat.enter();
+      h.api.sendMessage.mockResolvedValue({ id: 31, role: 'user', text: 'gm', createdAt: 31000 });
+      await h.chat.send('gm');
+      h.cableOptions()?.onMessage({ id: 31, role: 'user', text: 'gm', createdAt: 31000 });
+      expect(h.chat.messages.value.map((m) => m.id)).toEqual([31]);
+    });
+
+    it('keeps the optimistic echo when the POST returns no message body', async () => {
+      const h = makeHarness();
+      h.api.sendMessage.mockResolvedValue(null);
+      expect(await h.chat.send('gm')).toBe(true);
+      expect(h.chat.messages.value).toHaveLength(1);
+      expect(h.chat.messages.value[0].id).toBeLessThan(0);
     });
 
     it('ignores blank input', async () => {
@@ -270,6 +326,37 @@ describe('useSupportChat', () => {
       h.api.sendMessage.mockRejectedValue(new ChatAuthError('rejected'));
       expect(await h.chat.send('hi')).toBe(false);
       expect(h.chat.errorKey.value).toBe('support.error.unavailable');
+    });
+
+    it('carries the display name over to the rebuilt contact when the fresh identity has none', async () => {
+      const h = makeHarness();
+      h.store[1] = cached();
+      h.api.sendMessage.mockRejectedValueOnce(new ChatAuthError('rejected'));
+      // Nexus returned a new identifier but no pseudonym — keep the one the agent
+      // already knows this person by.
+      h.requestIdentity.mockResolvedValue({ identifier: 'v1:new', identifierHash: 'h2', displayName: '' });
+
+      expect(await h.chat.send('hi again')).toBe(true);
+
+      expect(h.api.ensureContact).toHaveBeenCalledWith({
+        identifier: 'v1:new',
+        identifierHash: 'h2',
+        name: 'quiet-dew-4f2a',
+      });
+    });
+
+    it('persists the carried-over display name as part of recovery, not just on the next write', async () => {
+      const h = makeHarness();
+      h.store[1] = cached();
+      h.api.sendMessage.mockRejectedValue(new ChatAuthError('rejected'));
+      h.requestIdentity.mockResolvedValue({ identifier: 'v1:new', identifierHash: 'h2', displayName: '' });
+      // Fail right after the re-handshake so recovery's own persist is the ONLY
+      // thing that can have written the carried-over name to the cache.
+      h.api.ensureContact.mockRejectedValue(new Error('network down'));
+
+      expect(await h.chat.send('hi again')).toBe(false);
+
+      expect(h.store[1]).toMatchObject({ identifier: 'v1:new', displayName: 'quiet-dew-4f2a' });
     });
   });
 
