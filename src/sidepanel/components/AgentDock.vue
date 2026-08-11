@@ -68,7 +68,7 @@
           :id="liveChatEnabled ? 'agent-dock-thread' : undefined"
           :role="liveChatEnabled ? 'tabpanel' : undefined"
         >
-          <template v-if="mode === 'copilot' || !liveChatEnabled">
+          <template v-if="activeMode === 'copilot'">
             <div
               v-if="dock.messages.value.length === 0 && !dock.busy.value"
               class="agent-dock__empty"
@@ -142,10 +142,6 @@
                caption. Only reachable when liveChatEnabled — see the header toggle and
                escalation chip above, the only two ways `mode` becomes 'support'. -->
           <template v-else>
-            <div v-if="supportChat.errorKey.value" class="agent-dock__notice" role="alert">
-              {{ $t(supportChat.errorKey.value) }}
-            </div>
-
             <div
               v-if="supportChat.messages.value.length === 0 && !supportChat.busy.value"
               class="agent-dock__empty"
@@ -159,7 +155,7 @@
             <transition-group name="msg" tag="div" class="agent-dock__list">
               <div
                 v-for="m in supportChat.messages.value"
-                :key="m.id"
+                :key="m.clientId ?? m.id"
                 :class="['agent-dock__msg', m.role === 'user' ? 'user' : 'assistant']"
               >
                 <div v-if="m.role === 'agent'" class="agent-dock__avatar">{{ agentInitial(m.agentName) }}</div>
@@ -174,7 +170,7 @@
 
             <div v-if="supportChat.busy.value" class="agent-dock__msg assistant">
               <div class="agent-dock__avatar">{{ agentInitial() }}</div>
-              <div class="agent-dock__busy" :aria-label="$t(statusKey)">
+              <div class="agent-dock__busy" :aria-label="$t('support.status.typing')">
                 <span class="dot"></span>
                 <span class="dot"></span>
                 <span class="dot"></span>
@@ -183,8 +179,18 @@
           </template>
         </div>
 
+        <!-- Kept outside the scrollable thread so a new error is never scrolled out of
+             view by the busy→false scroll-to-bottom watcher. -->
+        <div
+          v-if="activeMode === 'support' && supportChat.errorKey.value"
+          class="agent-dock__notice"
+          role="alert"
+        >
+          {{ $t(supportChat.errorKey.value) }}
+        </div>
+
         <footer
-          v-if="mode === 'support' && liveChatEnabled && !supportChat.isAvailable.value"
+          v-if="activeMode === 'support' && !supportChat.isAvailable.value"
           class="agent-dock__input agent-dock__input--notice"
         >
           <p class="agent-dock__watch-only">{{ $t('support.watchOnly.notice') }}</p>
@@ -204,7 +210,7 @@
             <v-icon size="16" color="var(--g-on-grad)">mdi-send</v-icon>
           </button>
         </footer>
-        <p class="agent-dock__disclaimer">{{ $t('copilot.disclaimer') }}</p>
+        <p v-if="activeMode === 'copilot'" class="agent-dock__disclaimer">{{ $t('copilot.disclaimer') }}</p>
       </div>
     </transition>
   </div>
@@ -217,6 +223,7 @@ import { renderMarkdown } from '@/services/agent/renderMarkdown';
 import { useSheetVisibility } from '@/sidepanel/composables/useSheetVisibility';
 import { supportChat } from '@/sidepanel/composables/useSupportChat';
 import { featureFlagsStore } from '@/stores/featureFlagsStore';
+import { debugWarn } from '@/utils/debug';
 import i18n from '@/plugins/i18n';
 import ChartCard from '@/sidepanel/components/agent/ChartCard.vue';
 import SwapCard from '@/sidepanel/components/agent/SwapCard.vue';
@@ -241,27 +248,43 @@ export default defineComponent({
     const liveChatEnabled = computed(() => featureFlagsStore.isLiveChatEnabled());
     const mode = ref<DockMode>('copilot');
 
+    // The single source of truth for "what's actually on screen right now" —
+    // `mode` alone isn't enough because the flag can flip off at runtime (a live
+    // gero-sync push) while `mode` is still latently 'support' from before. Every
+    // branch below reads activeMode instead of re-deriving `mode === 'support' &&
+    // liveChatEnabled.value`, so a flag flip mid-session can never leave the dock
+    // half-rendered in support state.
+    const activeMode = computed<DockMode>(() => (liveChatEnabled.value ? mode.value : 'copilot'));
+
     function enterCopilotMode(): void {
       mode.value = 'copilot';
     }
 
     function enterSupportMode(): void {
       mode.value = 'support';
-      if (liveChatEnabled.value) void supportChat.enter();
+      if (activeMode.value === 'support') {
+        // enter() failures surface to the user via supportChat.errorKey/connectionState
+        // already; swallow here only so a throwing contract impl can't produce an
+        // unhandled promise rejection.
+        void supportChat.enter().catch((err: unknown) => debugWarn('[AgentDock] supportChat.enter() failed', err));
+      }
     }
 
     // The support thread counts as "seen" whenever it is the visible content of
     // an open dock — covers switching into support mode, re-opening the dock
-    // while already in support mode, and new messages arriving while it's on screen.
-    // The getter only reads supportChat.messages when the flag is on, so with the
-    // flag off this watcher never subscribes to the singleton's refs at all.
+    // while already in support mode, and new unread messages arriving while it's
+    // on screen (keyed on `unread`, not message count, so a same-length mutation —
+    // e.g. an existing message's status changing — still clears the badge).
+    // The getter only reads supportChat.unread when support is actually active, so
+    // with the flag off (or in copilot mode) this watcher never subscribes to the
+    // singleton's refs at all.
     watch(
       () =>
-        liveChatEnabled.value
-          ? [mode.value, dock.isOpen.value, supportChat.messages.value.length]
-          : [mode.value, dock.isOpen.value],
+        activeMode.value === 'support'
+          ? [activeMode.value, dock.isOpen.value, supportChat.unread.value]
+          : [activeMode.value, dock.isOpen.value],
       () => {
-        if (liveChatEnabled.value && mode.value === 'support' && dock.isOpen.value) {
+        if (activeMode.value === 'support' && dock.isOpen.value) {
           supportChat.markSeen();
         }
       },
@@ -271,7 +294,7 @@ export default defineComponent({
     // status line, which shows the same connection state) — copilot's
     // thinking/ready pair outside support mode, the live-chat connection state inside it.
     const statusKey = computed(() => {
-      if (mode.value === 'support' && liveChatEnabled.value) {
+      if (activeMode.value === 'support') {
         const state = supportChat.connectionState.value;
         if (state === 'connecting') return 'common.connecting';
         if (state === 'reconnecting') return 'support.status.reconnecting';
@@ -282,18 +305,20 @@ export default defineComponent({
     });
 
     const sendDisabled = computed(() =>
-      mode.value === 'support' && liveChatEnabled.value ? supportChat.busy.value : dock.busy.value,
+      activeMode.value === 'support' ? supportChat.busy.value : dock.busy.value,
     );
 
     const inputPlaceholder = computed(() =>
-      mode.value === 'support' && liveChatEnabled.value
+      activeMode.value === 'support'
         ? (i18n.t('support.placeholder') as string)
         : (i18n.t('copilot.placeholder') as string),
     );
 
     function agentInitial(agentName?: string): string {
-      const name = agentName || (i18n.t('support.agentFallbackName') as string);
-      return (name || 'S').trim().charAt(0).toUpperCase() || 'S';
+      const name = (agentName || (i18n.t('support.agentFallbackName') as string)).trim();
+      // Spread (not .charAt/[0]) so a surrogate-pair agent name (e.g. an emoji)
+      // yields a whole character instead of half of one.
+      return [...name][0]?.toUpperCase() ?? 'S';
     }
 
     // Nothing may compete for attention while the user is mid-flow —
@@ -305,13 +330,20 @@ export default defineComponent({
     });
 
     async function submit(): Promise<void> {
-      if (mode.value === 'support' && liveChatEnabled.value) {
+      if (activeMode.value === 'support') {
         const text = draft.value;
         if (!text.trim() || supportChat.busy.value) return;
         // The composable owns the draft on failure: only clear it once send()
         // confirms the message actually went out, so a dropped connection never
-        // silently discards what the user typed.
-        const sent = await supportChat.send(text);
+        // silently discards what the user typed. A throwing contract impl is
+        // treated the same as a resolved-false send (draft kept, no unhandled
+        // rejection) — the failure still surfaces via supportChat.errorKey.
+        let sent = false;
+        try {
+          sent = await supportChat.send(text);
+        } catch (err) {
+          debugWarn('[AgentDock] supportChat.send() threw', err);
+        }
         if (sent) draft.value = '';
         return;
       }
@@ -337,12 +369,17 @@ export default defineComponent({
 
     // Mirrors the watcher above for the support thread, kept separate so the
     // original copilot scroll behavior above is untouched. As above, the getter
-    // only reads supportChat.messages/busy when the flag is on, so flag-off never
-    // subscribes to the singleton's refs.
+    // only reads supportChat.messages/busy when support is actually active, so
+    // flag-off (or copilot mode) never subscribes to the singleton's refs.
+    // activeMode itself is in the deps so switching INTO a non-empty thread also
+    // pins to the latest message, not just new messages arriving once already there.
     watch(
-      () => (liveChatEnabled.value ? [supportChat.messages.value.length, supportChat.busy.value] : []),
+      () =>
+        activeMode.value === 'support'
+          ? [activeMode.value, supportChat.messages.value.length, supportChat.busy.value]
+          : [activeMode.value],
       () => {
-        if (mode.value !== 'support') return;
+        if (activeMode.value !== 'support') return;
         void nextTick(() => {
           const el = scroll.value;
           if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
@@ -359,6 +396,7 @@ export default defineComponent({
       renderMarkdown,
       isAnySheetOpen,
       mode,
+      activeMode,
       liveChatEnabled,
       supportChat,
       statusKey,
@@ -466,6 +504,7 @@ export default defineComponent({
 
 .agent-dock__head,
 .agent-dock__messages,
+.agent-dock__notice,
 .agent-dock__input,
 .agent-dock__disclaimer {
   position: relative;
@@ -493,6 +532,7 @@ export default defineComponent({
 .agent-dock__head-text {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .agent-dock__title {
@@ -501,9 +541,14 @@ export default defineComponent({
   color: var(--g-text-1);
 }
 
+/* min-width:0 above lets this actually shrink and truncate instead of forcing
+   the 320px header wider/narrower (e.g. a longer connection-status string). */
 .agent-dock__status {
   font-size: 11px;
   color: var(--g-accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── Mode toggle (Copilot / Support) ─────────────────────────────────── */
@@ -588,9 +633,26 @@ export default defineComponent({
   gap: 10px;
 }
 
+.agent-dock__messages::-webkit-scrollbar {
+  width: 4px;
+}
+
+.agent-dock__messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.agent-dock__messages::-webkit-scrollbar-thumb {
+  background: var(--accent-30);
+  border-radius: 4px;
+}
+
 /* ── Support error banner ─────────────────────────────────────────────── */
+/* A sibling of .agent-dock__messages (not nested inside its scroll area) —
+   see the template comment where it's placed — so margin (not the messages
+   flex-column's gap) provides the spacing on each side. */
 .agent-dock__notice {
   flex-shrink: 0;
+  margin: 0 12px 10px;
   padding: 8px 10px;
   border-radius: var(--g-r-chip);
   background: var(--g-raised);
@@ -607,19 +669,6 @@ export default defineComponent({
   font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
-}
-
-.agent-dock__messages::-webkit-scrollbar {
-  width: 4px;
-}
-
-.agent-dock__messages::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.agent-dock__messages::-webkit-scrollbar-thumb {
-  background: var(--accent-30);
-  border-radius: 4px;
 }
 
 .agent-dock__msg {

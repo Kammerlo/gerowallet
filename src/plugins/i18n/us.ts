@@ -824,6 +824,7 @@ export default {
   'support.status.ready': 'Connected',
   'support.status.reconnecting': 'Reconnecting...',
   'support.status.unavailable': 'Support unavailable',
+  'support.status.typing': 'Agent is typing',
   'support.watchOnly.notice': 'Live chat is not available for watch-only wallets.',
   'support.agentFallbackName': 'Gero Support',
   'support.placeholder': 'Message support...',

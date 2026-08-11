@@ -17,6 +17,10 @@ import { mount, type Wrapper } from '@vue/test-utils';
 type SupportConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
 interface SupportMessage {
   id: number;
+  // Optional stable key the real composable is expected to attach so an
+  // optimistic (negative-id) message keeps the same vnode across the id swap
+  // once the server confirms it — see AgentDock.vue's `:key="m.clientId ?? m.id"`.
+  clientId?: number;
   role: 'user' | 'agent';
   text: string;
   agentName?: string;
@@ -42,8 +46,11 @@ interface MockDock {
   toggle: ReturnType<typeof vi.fn>;
   send: ReturnType<typeof vi.fn>;
 }
-interface LiveChatGate {
-  enabled: boolean;
+interface FlagsHolder {
+  isLiveChatEnabled: () => boolean;
+}
+interface SheetVisibility {
+  isAnySheetOpen: { value: boolean };
 }
 
 // vi.mock(...) factories are hoisted above every import in this file — including
@@ -52,11 +59,13 @@ interface LiveChatGate {
 // "Cannot access 'x' before initialization". vi.hoisted() runs in that same early phase
 // and is the escape hatch for OUR OWN state (`vi` itself is safe to use inside it), but
 // `ref()` still isn't available yet there. So: create plain placeholder objects here
-// (mutated in place below, once `vue` has actually loaded, well before any test runs
-// `mount()`), and keep every vi.mock(...) factory closed over these SAME object
-// references rather than fresh literals.
+// for EVERY piece of state a vi.mock(...) factory below closes over (mutated in place
+// once `vue` has actually loaded, well before any test runs `mount()`), rather than
+// only some of them — a factory that closures over a plain `const` declared outside
+// vi.hoisted only "works" if nothing forces it to resolve before that `const` runs,
+// which is a fragile accident of file order, not a guarantee.
 // See https://vitest.dev/api/vi.html#vi-hoisted.
-const { mockSupportChat, mockDock, liveChatGate } = vi.hoisted(() => {
+const { mockSupportChat, mockDock, flagsHolder, sheetVisibility } = vi.hoisted(() => {
   return {
     mockSupportChat: {
       enter: vi.fn().mockResolvedValue(undefined),
@@ -69,20 +78,22 @@ const { mockSupportChat, mockDock, liveChatGate } = vi.hoisted(() => {
       toggle: vi.fn(),
       send: vi.fn().mockResolvedValue(undefined),
     } as unknown as MockDock,
-    liveChatGate: { enabled: true } as LiveChatGate,
+    // Placeholder closure, REPLACED (not merged) below once a real ref exists — a
+    // plain `{ enabled: boolean }` object here would not be Vue-reactive, so
+    // AgentDock's `liveChatEnabled` computed would cache its first read forever and
+    // never notice setLiveChatEnabled() flipping it later (this bit a real test:
+    // asserting a runtime flag-flip while already in Support mode).
+    flagsHolder: { isLiveChatEnabled: () => true } as FlagsHolder,
+    sheetVisibility: {} as SheetVisibility,
   };
 });
-
-function setLiveChatEnabled(on: boolean): void {
-  liveChatGate.enabled = on;
-}
 
 vi.mock('@/sidepanel/composables/useSupportChat', () => ({
   supportChat: mockSupportChat,
 }));
 
 vi.mock('@/stores/featureFlagsStore', () => ({
-  featureFlagsStore: { isLiveChatEnabled: () => liveChatGate.enabled },
+  featureFlagsStore: { isLiveChatEnabled: () => flagsHolder.isLiveChatEnabled() },
 }));
 
 vi.mock('@/sidepanel/composables/useAgentDock', () => ({
@@ -90,17 +101,36 @@ vi.mock('@/sidepanel/composables/useAgentDock', () => ({
 }));
 
 vi.mock('@/sidepanel/composables/useSheetVisibility', () => ({
-  useSheetVisibility: () => ({ isAnySheetOpen: sheetOpen }),
+  useSheetVisibility: () => sheetVisibility,
 }));
 
 import Vue, { ref } from 'vue';
 
-// `ref` is only live from this point on — attach the real reactive properties to the
-// SAME objects the mocks above already returned, so any component that captured
-// `agentDock`/`supportChat` at import time (a plain object reference) still sees these
-// once Vue actually reads `.value` during a later render (mount() only happens inside
-// a test's it() callback, well after this module has finished initializing).
-const sheetOpen = ref(false);
+// AgentDock.vue renders raw <v-icon> (Vuetify isn't installed/registered in this
+// test's Vue instance) — ignore it as a custom element so Vue doesn't warn on every
+// render, mirroring GeroSwapEmbed.spec.ts's handling of its own <gero-swap> element.
+Vue.config.ignoredElements = [...(Vue.config.ignoredElements || []), 'v-icon'];
+
+// `ref` is only live from this point on. Reassigning (not Object.assign-merging)
+// `flagsHolder.isLiveChatEnabled` to a closure over a real ref is what makes the flag
+// genuinely reactive: AgentDock's `computed(() => featureFlagsStore.isLiveChatEnabled())`
+// calls through to this closure, so Vue correctly tracks `liveChatEnabledRef` as its
+// dependency and recomputes whenever setLiveChatEnabled() below changes it — a plain
+// mutated property on a non-reactive object cannot trigger that.
+const liveChatEnabledRef = ref(true);
+flagsHolder.isLiveChatEnabled = () => liveChatEnabledRef.value;
+
+function setLiveChatEnabled(on: boolean): void {
+  liveChatEnabledRef.value = on;
+}
+
+// `ref` is also used to back the other mocked collaborators — attach the real reactive
+// properties to the SAME objects the mocks above already returned, so any component
+// that captured `agentDock`/`supportChat`/the sheet-visibility result at import time (a
+// plain object reference) still sees these once Vue actually reads `.value` during a
+// later render (mount() only happens inside a test's it() callback, well after this
+// module has finished initializing).
+Object.assign(sheetVisibility, { isAnySheetOpen: ref(false) });
 
 Object.assign(mockSupportChat, {
   messages: ref<SupportMessage[]>([]),
@@ -123,11 +153,13 @@ import AgentDock from './AgentDock.vue';
 // depending on translated copy (no i18n plugin is installed on the test Vue
 // instance — see the CLAUDE.md guidance to check existing spec harnesses;
 // none of this repo's component specs render translated text today, so this
-// establishes the pattern for the new dock-only spec).
+// establishes the pattern for the new dock-only spec). Note this only stubs
+// template `$t(...)` calls — AgentDock.vue's `inputPlaceholder` computed calls the
+// real `i18n.t(...)` singleton directly, so its assertions below use the real
+// committed us.ts copy instead of raw keys.
 const $t = (key: string): string => key;
 
 interface AgentDockVm {
-  mode: 'copilot' | 'support';
   draft: string;
   submit: () => Promise<void>;
 }
@@ -147,9 +179,23 @@ function vmOf(wrapper: Wrapper<Vue>): AgentDockVm {
   return wrapper.vm as unknown as AgentDockVm;
 }
 
+// Selects a header mode-toggle button by its accessible name (its visible text —
+// no aria-label duplicates it, see AgentDock.vue) rather than positional
+// `buttons.at(0/1)`, so the test still finds the right button if the toggle's
+// markup order ever changes.
+function findModeButton(wrapper: Wrapper<Vue>, mode: 'copilot' | 'support'): Wrapper<Vue> {
+  const label = mode === 'copilot' ? 'support.toggle.copilot' : 'support.toggle.support';
+  const match = wrapper.findAll('.agent-dock__mode-btn').wrappers.find((w) => w.text().includes(label));
+  if (!match) throw new Error(`mode toggle button not found for: ${mode}`);
+  return match;
+}
+
 async function clickSupportToggle(wrapper: Wrapper<Vue>): Promise<void> {
-  const buttons = wrapper.findAll('.agent-dock__mode-btn');
-  await buttons.at(1).trigger('click');
+  await findModeButton(wrapper, 'support').trigger('click');
+}
+
+async function clickCopilotToggle(wrapper: Wrapper<Vue>): Promise<void> {
+  await findModeButton(wrapper, 'copilot').trigger('click');
 }
 
 beforeEach(() => {
@@ -204,6 +250,22 @@ describe('AgentDock — flag off (isLiveChatEnabled: false)', () => {
     expect(mockSupportChat.enter).not.toHaveBeenCalled();
     expect(mockSupportChat.markSeen).not.toHaveBeenCalled();
   });
+
+  it('flips off at runtime while already in Support mode: falls back to Copilot with no latent support state', async () => {
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+    expect(wrapper.text()).toContain('support.intro.title');
+
+    setLiveChatEnabled(false);
+    await wrapper.vm.$nextTick();
+
+    // activeMode collapses to 'copilot' the instant the flag drops, even though
+    // the internal `mode` ref is still latently 'support' — no half-rendered state.
+    expect(wrapper.find('.agent-dock__mode-toggle').exists()).toBe(false);
+    expect(wrapper.text()).toContain('copilot.greeting.line1');
+    expect(wrapper.text()).not.toContain('support.intro.title');
+    expect(wrapper.find('.agent-dock__notice').exists()).toBe(false);
+  });
 });
 
 describe('AgentDock — Support (live chat) UI', () => {
@@ -215,8 +277,7 @@ describe('AgentDock — Support (live chat) UI', () => {
     expect(wrapper.text()).toContain('support.intro.title');
     expect(wrapper.text()).not.toContain('copilot.greeting.line1');
 
-    const buttons = wrapper.findAll('.agent-dock__mode-btn');
-    await buttons.at(0).trigger('click');
+    await clickCopilotToggle(wrapper);
     expect(wrapper.text()).toContain('copilot.greeting.line1');
     expect(wrapper.text()).not.toContain('support.intro.title');
   });
@@ -239,9 +300,8 @@ describe('AgentDock — Support (live chat) UI', () => {
   it('enter() is idempotent-friendly: re-entering support mode calls enter() again (composable owns dedupe)', async () => {
     const wrapper = mountDock();
     await clickSupportToggle(wrapper);
-    const buttons = wrapper.findAll('.agent-dock__mode-btn');
-    await buttons.at(0).trigger('click'); // back to copilot
-    await buttons.at(1).trigger('click'); // support again
+    await clickCopilotToggle(wrapper);
+    await clickSupportToggle(wrapper);
     expect(mockSupportChat.enter).toHaveBeenCalledTimes(2);
   });
 
@@ -249,15 +309,28 @@ describe('AgentDock — Support (live chat) UI', () => {
     const wrapper = mountDock();
     expect(mockSupportChat.markSeen).not.toHaveBeenCalled();
     await clickSupportToggle(wrapper);
-    expect(mockSupportChat.markSeen).toHaveBeenCalled();
+    expect(mockSupportChat.markSeen).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks the thread as seen again when the dock is closed and reopened while still in Support mode', async () => {
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+    expect(mockSupportChat.markSeen).toHaveBeenCalledTimes(1);
+
+    mockDock.isOpen.value = false;
+    await wrapper.vm.$nextTick();
+    mockDock.isOpen.value = true;
+    await wrapper.vm.$nextTick();
+
+    expect(mockSupportChat.markSeen).toHaveBeenCalledTimes(2);
   });
 });
 
 describe('AgentDock — Support send behavior', () => {
   it('clears the draft only when supportChat.send() resolves true', async () => {
     const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
     const vm = vmOf(wrapper);
-    vm.mode = 'support';
     vm.draft = 'hello';
     mockSupportChat.send.mockResolvedValueOnce(true);
 
@@ -269,8 +342,8 @@ describe('AgentDock — Support send behavior', () => {
 
   it('keeps the draft when supportChat.send() resolves false', async () => {
     const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
     const vm = vmOf(wrapper);
-    vm.mode = 'support';
     vm.draft = 'hello';
     mockSupportChat.send.mockResolvedValueOnce(false);
 
@@ -282,13 +355,25 @@ describe('AgentDock — Support send behavior', () => {
 
   it('does not call send() for a blank/whitespace-only draft', async () => {
     const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
     const vm = vmOf(wrapper);
-    vm.mode = 'support';
     vm.draft = '   ';
 
     await vm.submit();
 
     expect(mockSupportChat.send).not.toHaveBeenCalled();
+  });
+
+  it('does not call dock.send() when submitting from Support mode', async () => {
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+    const vm = vmOf(wrapper);
+    vm.draft = 'hello support';
+
+    await vm.submit();
+
+    expect(mockSupportChat.send).toHaveBeenCalledWith('hello support');
+    expect(mockDock.send).not.toHaveBeenCalled();
   });
 
   it('disables the send button while supportChat.busy is true', async () => {
@@ -297,6 +382,18 @@ describe('AgentDock — Support send behavior', () => {
     await clickSupportToggle(wrapper);
     const sendBtn = wrapper.find('.agent-dock__send');
     expect(sendBtn.attributes('disabled')).toBeDefined();
+  });
+});
+
+describe('AgentDock — input placeholder', () => {
+  it('switches between the copilot and support placeholder text per mode', async () => {
+    const wrapper = mountDock();
+    // Real i18n singleton values (inputPlaceholder calls i18n.t() directly, not
+    // the mocked template $t) — see us.ts for both source strings.
+    expect(wrapper.find('.agent-dock__input input').attributes('placeholder')).toBe('Ask Gero anything...');
+
+    await clickSupportToggle(wrapper);
+    expect(wrapper.find('.agent-dock__input input').attributes('placeholder')).toBe('Message support...');
   });
 });
 
@@ -411,10 +508,12 @@ describe('AgentDock — support message bubbles', () => {
     expect(wrapper.find('.agent-dock__card').exists()).toBe(false);
   });
 
-  it('shows the busy dots while supportChat.busy is true', async () => {
+  it('shows the busy dots with a typing aria-label while supportChat.busy is true', async () => {
     mockSupportChat.busy.value = true;
     const wrapper = mountDock();
     await clickSupportToggle(wrapper);
-    expect(wrapper.find('.agent-dock__busy').exists()).toBe(true);
+    const busy = wrapper.find('.agent-dock__busy');
+    expect(busy.exists()).toBe(true);
+    expect(busy.attributes('aria-label')).toBe('support.status.typing');
   });
 });
