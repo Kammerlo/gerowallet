@@ -193,7 +193,7 @@
           v-if="activeMode === 'support' && !supportChat.isAvailable.value"
           class="agent-dock__input agent-dock__input--notice"
         >
-          <p class="agent-dock__watch-only">{{ $t('support.watchOnly.notice') }}</p>
+          <p class="agent-dock__unavailable">{{ $t('support.unavailable.notice') }}</p>
         </footer>
         <footer v-else class="agent-dock__input">
           <input
@@ -958,7 +958,7 @@ export default defineComponent({
   justify-content: center;
 }
 
-.agent-dock__watch-only {
+.agent-dock__unavailable {
   margin: 0;
   font-size: 12px;
   color: var(--text-muted);

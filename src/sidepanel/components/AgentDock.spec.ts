@@ -1,16 +1,19 @@
 // src/sidepanel/components/AgentDock.spec.ts
 //
-// Covers the Task C support (live chat) layer added to AgentDock.vue. The data
-// layer (`@/sidepanel/composables/useSupportChat`) is built by a sibling
-// workstream and does not exist in this worktree yet — it's mocked below
-// against the agreed contract shape rather than imported for real.
-// `@/stores/featureFlagsStore` already exists for real (it exports the named
-// `featureFlagsStore` singleton — see NavigationDrawer.vue etc. for the same
-// import/call shape) but is mocked here too, alongside
-// `@/sidepanel/composables/useAgentDock` (the existing Copilot composable), so
-// these tests never touch the real agent provider / network calls, mirroring
-// GeroSwapEmbed.spec.ts's pattern of stubbing every collaborator store/composable
-// a component imports.
+// Covers the support (live chat) layer of AgentDock.vue — the DOCK's own
+// behavior: which thread renders, what the header status says, when enter() /
+// markSeen() / send() fire, and what the flag hides.
+//
+// Every collaborator is mocked even though all of them now exist for real
+// (`useSupportChat`, `featureFlagsStore`, `useAgentDock`, `useSheetVisibility`,
+// `SupportAuthPrompt`). That is deliberate unit isolation, not a stand-in for
+// something unbuilt: importing them for real would drag in the agent provider,
+// Chatwoot REST/ActionCable, Dexie and WebAuthn, making these tests slow, non-
+// hermetic, and prone to failing for reasons that have nothing to do with the
+// dock. Each collaborator is covered by its own spec (useSupportChat.spec.ts,
+// useSupportAuthPrompt.spec.ts, SupportAuthPrompt.spec.ts). Mirrors
+// GeroSwapEmbed.spec.ts's pattern of stubbing every collaborator a component
+// imports.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mount, type Wrapper } from '@vue/test-utils';
 
@@ -156,6 +159,9 @@ Object.assign(mockDock, {
   messages: ref([]),
 });
 
+// @ts-ignore — tsconfig has no `*.vue` module shim, so `tsc` cannot resolve an
+// SFC imported from a .ts file. Vite/vitest resolve it fine; this keeps the
+// repo's typecheck error count where it was.
 import AgentDock from './AgentDock.vue';
 
 // $t stubbed as identity so assertions can target stable i18n keys instead of
@@ -415,17 +421,17 @@ describe('AgentDock — input placeholder', () => {
   });
 });
 
-describe('AgentDock — watch-only wallets', () => {
+describe('AgentDock — wallets support chat cannot serve', () => {
   it('replaces the input with a notice when supportChat.isAvailable is false', async () => {
     mockSupportChat.isAvailable.value = false;
     const wrapper = mountDock();
     await clickSupportToggle(wrapper);
 
     expect(wrapper.find('.agent-dock__input input').exists()).toBe(false);
-    expect(wrapper.text()).toContain('support.watchOnly.notice');
+    expect(wrapper.text()).toContain('support.unavailable.notice');
   });
 
-  it('shows the normal input again in Copilot mode even when support is watch-only-gated', async () => {
+  it('shows the normal input again in Copilot mode even when support is availability-gated', async () => {
     mockSupportChat.isAvailable.value = false;
     const wrapper = mountDock();
     expect(wrapper.find('.agent-dock__input input').exists()).toBe(true);

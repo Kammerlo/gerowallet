@@ -10,8 +10,9 @@
   panel's WebAuthn popup) and `PassKeyPasswordField` for password wallets, so
   this dialog inherits the wallet's standard auth behavior instead of forking it.
 
-  Mounted by AgentDock (the only surface that can reach support chat), so a
-  single instance covers both the dashboard and the side panel and the
+  Mounted by AgentDock (the only surface that can reach support chat), so there
+  is one instance per UI context — the dashboard and the side panel are separate
+  documents, each with its own module registry and its own hook — and the
   registration lifetime is exactly the dock's.
 -->
 <template>

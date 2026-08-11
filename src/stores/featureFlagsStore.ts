@@ -30,6 +30,11 @@ export interface FeatureFlags {
   // that owns the support entry point checks this before offering the feature;
   // the chat plumbing itself is inert until something calls into it, so hiding
   // the entry point is what holds or kills the feature without a client release.
+  //
+  // DEPENDS ON isCopilotEnabled: the only entry point is the Agent Dock, which
+  // both options/App.vue and sidepanel/App.vue mount behind isCopilotEnabled. So
+  // this flag is INERT on its own — a rollout has to flip BOTH, and turning
+  // copilot off takes live chat down with it.
   isLiveChatEnabled: boolean;
   // Master gate for WalletConnect v2 pairing/signing. Default OFF: even with a
   // VITE_WALLETCONNECT_PROJECT_ID configured, the background skips WalletKit init
@@ -371,6 +376,11 @@ export const featureFlagsStore = {
    * entry point: while it is hidden nothing calls the chat composable, so no
    * Chatwoot or Nexus traffic is generated. Lets gero-sync hold or kill live chat
    * without a client release.
+   *
+   * NOT sufficient on its own — it also requires {@link isCopilotEnabled}. The
+   * support entry point lives in the Agent Dock, and both options/App.vue and
+   * sidepanel/App.vue mount that dock behind isCopilotEnabled, so a rollout must
+   * flip BOTH flags and turning copilot off also takes live chat down.
    */
   isLiveChatEnabled(): boolean {
     return featureFlagsState.flags.isLiveChatEnabled;
