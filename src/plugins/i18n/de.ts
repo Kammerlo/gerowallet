@@ -929,7 +929,6 @@ export default {
   'support.intro.title': 'Brauchst du Hilfe?',
   'support.intro.line': 'Schreib uns, und ein Support-Mitarbeiter kommt in den Chat.',
   'support.status.ready': 'Verbunden',
-  'support.status.connecting': 'Verbindung wird hergestellt...',
   'support.status.reconnecting': 'Verbindung wird wiederhergestellt...',
   'support.status.unavailable': 'Support nicht verfuegbar',
   'support.watchOnly.notice': 'Live-Chat ist fuer Watch-Only-Wallets nicht verfuegbar.',

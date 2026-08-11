@@ -1,12 +1,14 @@
 // src/sidepanel/components/AgentDock.spec.ts
 //
 // Covers the Task C support (live chat) layer added to AgentDock.vue. The data
-// layer (`@/sidepanel/composables/useSupportChat`, and `featureFlags` on
-// `@/stores/featureFlagsStore`) is built by a sibling workstream and does not
-// exist in this worktree yet — both are mocked below against the agreed
-// contract shape rather than imported for real. `@/sidepanel/composables/useAgentDock`
-// (the existing Copilot composable) is also mocked so these tests never touch
-// the real agent provider / network calls, mirroring
+// layer (`@/sidepanel/composables/useSupportChat`) is built by a sibling
+// workstream and does not exist in this worktree yet — it's mocked below
+// against the agreed contract shape rather than imported for real.
+// `@/stores/featureFlagsStore` already exists for real (it exports the named
+// `featureFlagsStore` singleton — see NavigationDrawer.vue etc. for the same
+// import/call shape) but is mocked here too, alongside
+// `@/sidepanel/composables/useAgentDock` (the existing Copilot composable), so
+// these tests never touch the real agent provider / network calls, mirroring
 // GeroSwapEmbed.spec.ts's pattern of stubbing every collaborator store/composable
 // a component imports.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -80,7 +82,7 @@ vi.mock('@/sidepanel/composables/useSupportChat', () => ({
 }));
 
 vi.mock('@/stores/featureFlagsStore', () => ({
-  featureFlags: { isLiveChatEnabled: () => liveChatGate.enabled },
+  featureFlagsStore: { isLiveChatEnabled: () => liveChatGate.enabled },
 }));
 
 vi.mock('@/sidepanel/composables/useAgentDock', () => ({
@@ -173,7 +175,7 @@ afterEach(() => {
 });
 
 describe('AgentDock — flag off (isLiveChatEnabled: false)', () => {
-  it('renders no mode toggle, no escalation chip, no unread dots — Copilot only, unchanged', () => {
+  it('renders no mode toggle, no escalation chip, no unread dots — Copilot only, unchanged', async () => {
     setLiveChatEnabled(false);
     mockSupportChat.unread.value = 5; // must still have zero visible effect
     const wrapper = mountDock();
@@ -193,6 +195,14 @@ describe('AgentDock — flag off (isLiveChatEnabled: false)', () => {
     // Copilot content is what's on screen; support copy never renders.
     expect(wrapper.text()).toContain('copilot.greeting.line1');
     expect(wrapper.text()).not.toContain('support.intro.title');
+
+    // mode can never reach 'support' with no toggle/chip to trigger it, so the
+    // singleton's enter()/markSeen() must never fire — also proves the watcher
+    // getters never subscribed to supportChat's refs (they'd have no way to
+    // call these otherwise unreachable branches).
+    await wrapper.vm.$nextTick();
+    expect(mockSupportChat.enter).not.toHaveBeenCalled();
+    expect(mockSupportChat.markSeen).not.toHaveBeenCalled();
   });
 });
 
@@ -338,7 +348,7 @@ describe('AgentDock — unread indicators', () => {
 
 describe('AgentDock — status line mapping', () => {
   const cases: Array<[SupportConnectionState, string]> = [
-    ['connecting', 'support.status.connecting'],
+    ['connecting', 'common.connecting'],
     ['reconnecting', 'support.status.reconnecting'],
     ['unavailable', 'support.status.unavailable'],
     ['connected', 'support.status.ready'],

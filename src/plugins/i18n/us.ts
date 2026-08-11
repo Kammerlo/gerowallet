@@ -822,7 +822,6 @@ export default {
   'support.intro.title': 'Need a hand?',
   'support.intro.line': 'Send a message and a support agent will join the chat.',
   'support.status.ready': 'Connected',
-  'support.status.connecting': 'Connecting...',
   'support.status.reconnecting': 'Reconnecting...',
   'support.status.unavailable': 'Support unavailable',
   'support.watchOnly.notice': 'Live chat is not available for watch-only wallets.',

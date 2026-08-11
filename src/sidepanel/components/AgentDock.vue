@@ -19,7 +19,7 @@
 
     <transition name="dock-panel">
       <div v-if="dock.isOpen.value" class="agent-dock__panel">
-        <header class="agent-dock__head">
+        <header class="agent-dock__head" :class="{ 'agent-dock__head--with-toggle': liveChatEnabled }">
           <div class="agent-dock__head-text">
             <span class="agent-dock__title">{{ $t('copilot.title') }}</span>
             <span class="agent-dock__status">{{ $t(statusKey) }}</span>
@@ -32,7 +32,7 @@
               :class="{ 'is-active': mode === 'copilot' }"
               role="tab"
               :aria-selected="mode === 'copilot'"
-              :aria-label="$t('support.toggle.copilot')"
+              aria-controls="agent-dock-thread"
               @click="enterCopilotMode()"
             >{{ $t('support.toggle.copilot') }}</button>
             <button
@@ -41,7 +41,7 @@
               :class="{ 'is-active': mode === 'support' }"
               role="tab"
               :aria-selected="mode === 'support'"
-              :aria-label="$t('support.toggle.support')"
+              aria-controls="agent-dock-thread"
               @click="enterSupportMode()"
             >
               {{ $t('support.toggle.support') }}
@@ -62,7 +62,12 @@
           </button>
         </header>
 
-        <div ref="scroll" class="agent-dock__messages">
+        <div
+          ref="scroll"
+          class="agent-dock__messages"
+          :id="liveChatEnabled ? 'agent-dock-thread' : undefined"
+          :role="liveChatEnabled ? 'tabpanel' : undefined"
+        >
           <template v-if="mode === 'copilot' || !liveChatEnabled">
             <div
               v-if="dock.messages.value.length === 0 && !dock.busy.value"
@@ -148,7 +153,7 @@
               <div class="agent-dock__empty-orb">G</div>
               <p class="agent-dock__empty-h">{{ $t('support.intro.title') }}</p>
               <p class="agent-dock__empty-sub">{{ $t('support.intro.line') }}</p>
-              <p class="agent-dock__status">{{ $t(statusKey) }}</p>
+              <p class="agent-dock__empty-status">{{ $t(statusKey) }}</p>
             </div>
 
             <transition-group name="msg" tag="div" class="agent-dock__list">
@@ -211,7 +216,7 @@ import { agentDock } from '@/sidepanel/composables/useAgentDock';
 import { renderMarkdown } from '@/services/agent/renderMarkdown';
 import { useSheetVisibility } from '@/sidepanel/composables/useSheetVisibility';
 import { supportChat } from '@/sidepanel/composables/useSupportChat';
-import { featureFlags } from '@/stores/featureFlagsStore';
+import { featureFlagsStore } from '@/stores/featureFlagsStore';
 import i18n from '@/plugins/i18n';
 import ChartCard from '@/sidepanel/components/agent/ChartCard.vue';
 import SwapCard from '@/sidepanel/components/agent/SwapCard.vue';
@@ -233,7 +238,7 @@ export default defineComponent({
     // only ever flip to 'support' via UI this flag hides (the header toggle and
     // the escalation chip), so flag-off leaves the dock's rendered output and
     // behavior identical to before this feature existed.
-    const liveChatEnabled = computed(() => featureFlags.isLiveChatEnabled());
+    const liveChatEnabled = computed(() => featureFlagsStore.isLiveChatEnabled());
     const mode = ref<DockMode>('copilot');
 
     function enterCopilotMode(): void {
@@ -248,8 +253,13 @@ export default defineComponent({
     // The support thread counts as "seen" whenever it is the visible content of
     // an open dock — covers switching into support mode, re-opening the dock
     // while already in support mode, and new messages arriving while it's on screen.
+    // The getter only reads supportChat.messages when the flag is on, so with the
+    // flag off this watcher never subscribes to the singleton's refs at all.
     watch(
-      () => [mode.value, dock.isOpen.value, supportChat.messages.value.length],
+      () =>
+        liveChatEnabled.value
+          ? [mode.value, dock.isOpen.value, supportChat.messages.value.length]
+          : [mode.value, dock.isOpen.value],
       () => {
         if (liveChatEnabled.value && mode.value === 'support' && dock.isOpen.value) {
           supportChat.markSeen();
@@ -263,7 +273,7 @@ export default defineComponent({
     const statusKey = computed(() => {
       if (mode.value === 'support' && liveChatEnabled.value) {
         const state = supportChat.connectionState.value;
-        if (state === 'connecting') return 'support.status.connecting';
+        if (state === 'connecting') return 'common.connecting';
         if (state === 'reconnecting') return 'support.status.reconnecting';
         if (state === 'unavailable') return 'support.status.unavailable';
         return 'support.status.ready'; // 'connected' or 'idle'
@@ -326,9 +336,11 @@ export default defineComponent({
     );
 
     // Mirrors the watcher above for the support thread, kept separate so the
-    // original copilot scroll behavior above is untouched.
+    // original copilot scroll behavior above is untouched. As above, the getter
+    // only reads supportChat.messages/busy when the flag is on, so flag-off never
+    // subscribes to the singleton's refs.
     watch(
-      () => [supportChat.messages.value.length, supportChat.busy.value],
+      () => (liveChatEnabled.value ? [supportChat.messages.value.length, supportChat.busy.value] : []),
       () => {
         if (mode.value !== 'support') return;
         void nextTick(() => {
@@ -465,10 +477,17 @@ export default defineComponent({
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
   padding: 12px 14px;
   background: color-mix(in srgb, var(--g-accent) 6%, transparent);
   border-bottom: 1px solid var(--divider);
+}
+
+/* Only applied when the mode toggle renders (liveChatEnabled) — the flag-off
+   header keeps the original two-item space-between layout untouched above. */
+.agent-dock__head--with-toggle {
+  justify-content: flex-start;
+  gap: 8px;
 }
 
 .agent-dock__head-text {
@@ -510,7 +529,7 @@ export default defineComponent({
   font-weight: 500;
   color: var(--text-muted);
   cursor: pointer;
-  transition: color 150ms ease, background-color 150ms ease;
+  transition: color var(--g-dur-fast) ease, background-color var(--g-dur-fast) ease;
 }
 
 .agent-dock__mode-btn.is-active {
@@ -531,8 +550,6 @@ export default defineComponent({
 .agent-dock__close {
   width: 28px;
   height: 28px;
-  flex-shrink: 0;
-  margin-left: auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -541,6 +558,14 @@ export default defineComponent({
   border-radius: var(--g-r-control);
   cursor: pointer;
   transition: color 150ms ease;
+}
+
+/* With the toggle in play the header is a flex-start row (see
+   .agent-dock__head--with-toggle above), so the close button needs its own
+   push-to-the-end instead of relying on justify-content: space-between. */
+.agent-dock__head--with-toggle .agent-dock__close {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .agent-dock__close:hover :deep(.v-icon) {
@@ -823,6 +848,13 @@ export default defineComponent({
   font-size: 12px;
   color: var(--g-text-2);
   margin: 0;
+  text-align: center;
+}
+
+.agent-dock__empty-status {
+  font-size: 11px;
+  color: var(--g-accent);
+  margin: 10px 0 0;
   text-align: center;
 }
 
