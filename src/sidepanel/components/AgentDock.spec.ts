@@ -18,6 +18,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mount, type Wrapper } from '@vue/test-utils';
 
 type SupportConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
+// Mirrors the frozen `SupportAttachment` contract (Task B's sibling adds this
+// for real in useSupportChat.ts) — declared locally like every other mock
+// shape in this file, so this spec never depends on that PR landing first.
+interface SupportAttachment {
+  id: number;
+  fileType: string;
+  dataUrl: string;
+  thumbUrl?: string;
+  fileSize?: number;
+  extension?: string;
+}
 interface SupportMessage {
   id: number;
   // Optional stable key the real composable is expected to attach so an
@@ -28,6 +39,7 @@ interface SupportMessage {
   text: string;
   agentName?: string;
   createdAt: number;
+  attachments?: SupportAttachment[];
 }
 interface MockSupportChat {
   messages: { value: SupportMessage[] };
@@ -211,6 +223,25 @@ async function clickSupportToggle(wrapper: Wrapper<Vue>): Promise<void> {
 
 async function clickCopilotToggle(wrapper: Wrapper<Vue>): Promise<void> {
   await findModeButton(wrapper, 'copilot').trigger('click');
+}
+
+// A real `File`, with `.size` pinned via defineProperty rather than sized via
+// its content buffer — keeps size-cap/formatting tests exact without
+// allocating megabyte-scale content just to get a round byte count.
+function makeFile(name: string, size: number, type = 'text/plain'): File {
+  const file = new File(['x'], name, { type });
+  Object.defineProperty(file, 'size', { value: size, configurable: true });
+  return file;
+}
+
+// Simulates picking files in the hidden <input type="file">: happy-dom (like
+// jsdom) makes `.files` a read-only accessor on the real element, so tests
+// shadow it with an own property before dispatching the `change` AgentDock
+// listens on — the same workaround used across the ecosystem for this input.
+async function pickFiles(wrapper: Wrapper<Vue>, files: File[]): Promise<void> {
+  const input = wrapper.find('input[type="file"]');
+  Object.defineProperty(input.element, 'files', { value: files, configurable: true });
+  await input.trigger('change');
 }
 
 beforeEach(() => {
@@ -539,5 +570,251 @@ describe('AgentDock — support message bubbles', () => {
     const busy = wrapper.find('.agent-dock__busy');
     expect(busy.exists()).toBe(true);
     expect(busy.attributes('aria-label')).toBe('support.status.typing');
+  });
+});
+
+describe('AgentDock — support attachment bubbles', () => {
+  it('renders an image attachment as a thumbnail link to the full-size original, falling back to dataUrl when no thumbUrl', async () => {
+    mockSupportChat.messages.value = [
+      {
+        id: 1,
+        role: 'agent',
+        text: 'here you go',
+        agentName: 'Alex',
+        createdAt: 1,
+        attachments: [
+          { id: 101, fileType: 'image', dataUrl: 'https://cdn.example/full.png', thumbUrl: 'https://cdn.example/thumb.png' },
+          { id: 102, fileType: 'image', dataUrl: 'https://cdn.example/full2.png' },
+        ],
+      },
+    ];
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+
+    const imgs = wrapper.findAll('.agent-dock__attach-img');
+    expect(imgs.length).toBe(2);
+    expect(imgs.at(0).attributes('src')).toBe('https://cdn.example/thumb.png');
+    expect(imgs.at(1).attributes('src')).toBe('https://cdn.example/full2.png');
+
+    const link = imgs.at(0).element.closest('a');
+    expect(link?.getAttribute('href')).toBe('https://cdn.example/full.png');
+    expect(link?.getAttribute('target')).toBe('_blank');
+    expect(link?.getAttribute('rel')).toBe('noopener');
+  });
+
+  it('renders a non-image attachment as a file link with its extension and human-readable size', async () => {
+    mockSupportChat.messages.value = [
+      {
+        id: 2,
+        role: 'user',
+        text: 'invoice',
+        createdAt: 2,
+        attachments: [{ id: 103, fileType: 'file', dataUrl: 'https://cdn.example/report.pdf', extension: 'pdf', fileSize: 1536 }],
+      },
+    ];
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+
+    const fileLink = wrapper.find('.agent-dock__attach-file');
+    expect(fileLink.exists()).toBe(true);
+    expect(fileLink.attributes('href')).toBe('https://cdn.example/report.pdf');
+    expect(fileLink.attributes('target')).toBe('_blank');
+    expect(fileLink.attributes('rel')).toBe('noopener');
+    expect(fileLink.text()).toContain('PDF');
+    expect(fileLink.text()).toContain('1.5 KB');
+  });
+
+  it('omits the text <p> for an attachment-only message with empty text', async () => {
+    mockSupportChat.messages.value = [
+      {
+        id: 3,
+        role: 'agent',
+        text: '',
+        agentName: 'Alex',
+        createdAt: 3,
+        attachments: [{ id: 104, fileType: 'file', dataUrl: 'https://cdn.example/notes.txt', extension: 'txt' }],
+      },
+    ];
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+
+    expect(wrapper.find('.agent-dock__text').exists()).toBe(false);
+    expect(wrapper.find('.agent-dock__attach-file').exists()).toBe(true);
+  });
+
+  it('swaps an image attachment to the generic file row when the thumbnail fails to load', async () => {
+    mockSupportChat.messages.value = [
+      {
+        id: 4,
+        role: 'agent',
+        text: 'photo',
+        agentName: 'Alex',
+        createdAt: 4,
+        attachments: [{ id: 105, fileType: 'image', dataUrl: 'https://cdn.example/full.png', thumbUrl: 'https://cdn.example/expired-thumb.png' }],
+      },
+    ];
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+
+    expect(wrapper.find('.agent-dock__attach-img').exists()).toBe(true);
+    expect(wrapper.find('.agent-dock__attach-file').exists()).toBe(false);
+
+    await wrapper.find('.agent-dock__attach-img').trigger('error');
+
+    expect(wrapper.find('.agent-dock__attach-img').exists()).toBe(false);
+    const fallback = wrapper.find('.agent-dock__attach-file');
+    expect(fallback.exists()).toBe(true);
+    expect(fallback.attributes('href')).toBe('https://cdn.example/full.png');
+  });
+});
+
+describe('AgentDock — attachment picker and pending chips', () => {
+  it('renders the attach button and hidden file input only in Support mode', async () => {
+    const wrapper = mountDock();
+    expect(wrapper.find('.agent-dock__attach-btn').exists()).toBe(false);
+
+    await clickSupportToggle(wrapper);
+    const attachBtn = wrapper.find('.agent-dock__attach-btn');
+    expect(attachBtn.exists()).toBe(true);
+    expect(attachBtn.attributes('aria-label')).toBe('support.attach.button');
+
+    const input = wrapper.find('input[type="file"]');
+    expect(input.exists()).toBe(true);
+    expect(input.attributes('multiple')).toBeDefined();
+    expect(input.attributes('accept')).toBe('image/*,.pdf,.txt,.log,.json,.csv,.zip');
+  });
+
+  it('clicking the attach button opens the hidden file picker', async () => {
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+    const input = wrapper.find('input[type="file"]').element as HTMLInputElement;
+    const clickSpy = vi.spyOn(input, 'click');
+
+    await wrapper.find('.agent-dock__attach-btn').trigger('click');
+
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('adds picked files as pending chips above the footer', async () => {
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+
+    await pickFiles(wrapper, [makeFile('receipt.png', 2048, 'image/png')]);
+
+    const chips = wrapper.findAll('.agent-dock__pending-chip');
+    expect(chips.length).toBe(1);
+    expect(chips.at(0).text()).toContain('receipt.png');
+    expect(chips.at(0).text()).toContain('2.0 KB');
+  });
+
+  it('middle-truncates a long file name in its chip', async () => {
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+    const longName = 'quarterly-financial-report-detailed-breakdown-2026.pdf';
+
+    await pickFiles(wrapper, [makeFile(longName, 100)]);
+
+    const shown = wrapper.find('.agent-dock__pending-name').text();
+    expect(shown.length).toBeLessThan(longName.length);
+    expect(shown).toContain('…');
+  });
+
+  it('removes a pending file when its chip remove button is clicked', async () => {
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+    await pickFiles(wrapper, [makeFile('a.png', 100), makeFile('b.png', 200)]);
+    expect(wrapper.findAll('.agent-dock__pending-chip').length).toBe(2);
+
+    const removeButtons = wrapper.findAll('.agent-dock__pending-remove');
+    expect(removeButtons.at(0).attributes('aria-label')).toBe('common.remove');
+    await removeButtons.at(0).trigger('click');
+
+    const remaining = wrapper.findAll('.agent-dock__pending-chip');
+    expect(remaining.length).toBe(1);
+    expect(remaining.at(0).text()).toContain('b.png');
+  });
+
+  it('caps pending files at 5 total and shows a notice via the existing banner slot when more are picked', async () => {
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+
+    const files = Array.from({ length: 6 }, (_, i) => makeFile(`f${i}.txt`, 10));
+    await pickFiles(wrapper, files);
+
+    expect(wrapper.findAll('.agent-dock__pending-chip').length).toBe(5);
+    expect(wrapper.find('.agent-dock__notice').text()).toBe('support.error.tooManyFiles');
+  });
+
+  it('keeps the first 5 files when a later pick would exceed the cap across two picks', async () => {
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+
+    await pickFiles(wrapper, [makeFile('a.txt', 10), makeFile('b.txt', 10), makeFile('c.txt', 10), makeFile('d.txt', 10)]);
+    await pickFiles(wrapper, [makeFile('e.txt', 10), makeFile('f.txt', 10)]);
+
+    const names = wrapper.findAll('.agent-dock__pending-chip').wrappers.map((w) => w.find('.agent-dock__pending-name').text());
+    expect(names).toEqual(['a.txt', 'b.txt', 'c.txt', 'd.txt', 'e.txt']);
+    expect(wrapper.find('.agent-dock__notice').text()).toBe('support.error.tooManyFiles');
+  });
+});
+
+describe('AgentDock — support send with attachments', () => {
+  it('submit() sends the draft with pending files in Support mode', async () => {
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+    const vm = vmOf(wrapper);
+    vm.draft = 'see attached';
+    const file = makeFile('log.txt', 512);
+    await pickFiles(wrapper, [file]);
+    mockSupportChat.send.mockResolvedValueOnce(true);
+
+    await vm.submit();
+
+    expect(mockSupportChat.send).toHaveBeenCalledWith('see attached', [file]);
+    expect(vm.draft).toBe('');
+    expect(wrapper.findAll('.agent-dock__pending-chip').length).toBe(0);
+  });
+
+  it('calls send() with a single argument (no files) when there are no pending files — preserves the existing text-only contract', async () => {
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+    const vm = vmOf(wrapper);
+    vm.draft = 'no attachments here';
+    mockSupportChat.send.mockResolvedValueOnce(true);
+
+    await vm.submit();
+
+    expect(mockSupportChat.send).toHaveBeenCalledWith('no attachments here');
+  });
+
+  it('keeps pending chips and draft when send() resolves false', async () => {
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+    const vm = vmOf(wrapper);
+    vm.draft = 'see attached';
+    await pickFiles(wrapper, [makeFile('log.txt', 512)]);
+    mockSupportChat.send.mockResolvedValueOnce(false);
+
+    await vm.submit();
+
+    expect(vm.draft).toBe('see attached');
+    expect(wrapper.findAll('.agent-dock__pending-chip').length).toBe(1);
+  });
+
+  it('sends files-only with an empty draft, and the send button stays enabled', async () => {
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+    const vm = vmOf(wrapper);
+    const file = makeFile('a.png', 100);
+    await pickFiles(wrapper, [file]);
+    vm.draft = '';
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find('.agent-dock__send').attributes('disabled')).toBeUndefined();
+
+    mockSupportChat.send.mockResolvedValueOnce(true);
+    await vm.submit();
+
+    expect(mockSupportChat.send).toHaveBeenCalledWith('', [file]);
   });
 });

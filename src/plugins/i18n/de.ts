@@ -935,10 +935,13 @@ export default {
   'support.unavailable.notice': 'Live-Chat ist für diesen Wallet-Typ noch nicht verfügbar. Hilfe bekommst du unter support.gerowallet.io.',
   'support.agentFallbackName': 'Gero Support',
   'support.placeholder': 'Nachricht an den Support...',
+  'support.attach.button': 'Datei anhängen',
   'support.auth.title': 'Wallet bestätigen',
   'support.auth.body': 'Bestätige einmalig, damit der Support dich anonym wiedererkennt. Deine Wallet signiert eine einmalige Nachricht. Es wird keine Transaktion erstellt und es werden keine Mittel bewegt.',
   'support.error.unavailable': 'Live-Chat ist vorübergehend nicht verfügbar. Bitte versuche es später erneut.',
   'support.error.sendFailed': 'Deine Nachricht konnte nicht gesendet werden. Bitte versuche es erneut.',
+  'support.error.fileTooLarge': 'Dateien müssen kleiner als 20 MB sein.',
+  'support.error.tooManyFiles': 'Du kannst bis zu 5 Dateien pro Nachricht anhängen.',
   // --- Cross-Device-Signierung ---
   'crossDevice.signOnAnotherDevice': 'Auf einem anderen Gerät signieren',
   'crossDevice.requestExpired': 'Die Signieranfrage ist abgelaufen. Bitte versuchen Sie es erneut.',
