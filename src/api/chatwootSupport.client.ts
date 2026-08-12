@@ -156,17 +156,21 @@ function toEpochMs(value: number | string | undefined): number {
 
 /**
  * Map raw Chatwoot attachments to the frozen UI shape, dropping any entry the
- * player cannot render (no `data_url`). Returns undefined — never an empty
- * array — so callers can omit the field entirely when there is nothing to show.
+ * UI cannot render or key on: no `data_url`, or a non-numeric `id` (the UI keys
+ * bubbles on id — an undefined/duplicate id would collide). `file_type` defaults
+ * to `'file'` when it isn't a string, rather than being dropped. Returns
+ * undefined — never an empty array — so callers can omit the field entirely
+ * when there is nothing to show.
  */
 function normalizeAttachments(raw: RawChatwootAttachment[] | undefined): SupportAttachment[] | undefined {
   if (!Array.isArray(raw) || raw.length === 0) return undefined;
   const mapped: SupportAttachment[] = [];
   for (const item of raw) {
     if (!item || typeof item.data_url !== 'string' || !item.data_url) continue;
+    if (typeof item.id !== 'number') continue;
     const attachment: SupportAttachment = {
-      id: item.id as number,
-      fileType: item.file_type as string,
+      id: item.id,
+      fileType: typeof item.file_type === 'string' ? item.file_type : 'file',
       dataUrl: item.data_url,
     };
     if (item.thumb_url) attachment.thumbUrl = item.thumb_url;

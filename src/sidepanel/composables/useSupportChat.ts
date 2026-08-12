@@ -50,6 +50,10 @@ import {
   type SupportIdentityCache,
 } from '@/services/support/identityCache';
 
+// Re-exported so the UI's file-picker validation imports the SAME caps/type this
+// module enforces, rather than a local mirror that could drift out of sync.
+export { SUPPORT_MAX_FILE_BYTES, SUPPORT_MAX_FILES_PER_MESSAGE, type SupportAttachment } from '@/api/chatwootSupport.client';
+
 export type SupportConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
 
 export interface SupportMessage {
@@ -80,7 +84,12 @@ export interface SupportChat {
   unread: Ref<number>;
   /** False when the wallet has no signable stake key (hardware / non-Cardano). */
   isAvailable: Ref<boolean>;
-  /** i18n KEY only — the UI renders it. `support.error.unavailable` | `support.error.sendFailed`. */
+  /**
+   * i18n KEY only — the UI renders it. One of `support.error.unavailable`,
+   * `support.error.sendFailed`, `support.error.fileTooLarge` (a file exceeds
+   * {@link SUPPORT_MAX_FILE_BYTES}), or `support.error.tooManyFiles` (more than
+   * {@link SUPPORT_MAX_FILES_PER_MESSAGE} files in one send).
+   */
   errorKey: Ref<string | null>;
   /** Idempotent: load history (only if an identity is cached) and connect the cable. */
   enter(): Promise<void>;

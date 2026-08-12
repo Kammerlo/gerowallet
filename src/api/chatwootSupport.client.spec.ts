@@ -211,7 +211,7 @@ describe('chatwoot support client', () => {
   });
 
   describe('normalizeChatwootMessage() — attachments', () => {
-    it('maps attachments snake_case to camelCase, skipping entries missing data_url', async () => {
+    it('maps attachments snake_case to camelCase, skipping entries missing data_url or a numeric id, and defaulting fileType to "file"', async () => {
       const mod = await import('./chatwootSupport.client');
       const msg = mod.normalizeChatwootMessage({
         id: 10,
@@ -228,10 +228,13 @@ describe('chatwoot support client', () => {
             file_size: 2048,
             extension: 'png',
           },
-          { id: 101, file_type: 'file', data_url: '' },
-          { id: 102, file_type: 'file' },
+          { id: 101, file_type: 'file', data_url: '' }, // missing data_url -> skipped
+          { id: 102, file_type: 'file' }, // missing data_url -> skipped
+          { id: 103, data_url: 'https://cdn.example.test/no-filetype.bin' }, // no file_type -> defaults to 'file'
+          { file_type: 'file', data_url: 'https://cdn.example.test/no-id.bin' }, // missing id -> skipped
+          { id: 'not-a-number', file_type: 'file', data_url: 'https://cdn.example.test/bad-id.bin' }, // non-numeric id -> skipped
         ],
-      });
+      } as never);
       expect(msg?.attachments).toEqual([
         {
           id: 100,
@@ -241,6 +244,7 @@ describe('chatwoot support client', () => {
           fileSize: 2048,
           extension: 'png',
         },
+        { id: 103, fileType: 'file', dataUrl: 'https://cdn.example.test/no-filetype.bin' },
       ]);
     });
 
