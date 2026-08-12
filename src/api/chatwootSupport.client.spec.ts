@@ -153,4 +153,90 @@ describe('chatwoot support client', () => {
     const msgs = await mod.chatwootSupportApi.listMessages('src-1', 42);
     expect(msgs.map((m) => m.id)).toEqual([9]);
   });
+
+  describe('normalizeChatwootMessage() — attachments', () => {
+    it('maps attachments snake_case to camelCase, skipping entries missing data_url', async () => {
+      const mod = await import('./chatwootSupport.client');
+      const msg = mod.normalizeChatwootMessage({
+        id: 10,
+        content: 'see attached',
+        message_type: 1,
+        created_at: 1700000000,
+        sender: { name: 'Ada' },
+        attachments: [
+          {
+            id: 100,
+            file_type: 'image',
+            data_url: 'https://cdn.example.test/img.png',
+            thumb_url: 'https://cdn.example.test/thumb.png',
+            file_size: 2048,
+            extension: 'png',
+          },
+          { id: 101, file_type: 'file', data_url: '' },
+          { id: 102, file_type: 'file' },
+        ],
+      });
+      expect(msg?.attachments).toEqual([
+        {
+          id: 100,
+          fileType: 'image',
+          dataUrl: 'https://cdn.example.test/img.png',
+          thumbUrl: 'https://cdn.example.test/thumb.png',
+          fileSize: 2048,
+          extension: 'png',
+        },
+      ]);
+    });
+
+    it('does NOT drop a message with empty content when it has at least one attachment', async () => {
+      const mod = await import('./chatwootSupport.client');
+      const msg = mod.normalizeChatwootMessage({
+        id: 11,
+        content: '',
+        message_type: 0,
+        created_at: 1700000001,
+        attachments: [{ id: 200, file_type: 'image', data_url: 'https://cdn.example.test/a.png' }],
+      });
+      expect(msg).not.toBeNull();
+      expect(msg?.text).toBe('');
+      expect(msg?.attachments).toEqual([
+        { id: 200, fileType: 'image', dataUrl: 'https://cdn.example.test/a.png' },
+      ]);
+    });
+
+    it('still drops a message with empty content and no attachments', async () => {
+      const mod = await import('./chatwootSupport.client');
+      const msg = mod.normalizeChatwootMessage({
+        id: 12,
+        content: '',
+        message_type: 0,
+        created_at: 1700000002,
+      });
+      expect(msg).toBeNull();
+    });
+
+    it('still drops a message with empty content when every attachment lacks data_url', async () => {
+      const mod = await import('./chatwootSupport.client');
+      const msg = mod.normalizeChatwootMessage({
+        id: 13,
+        content: '',
+        message_type: 0,
+        created_at: 1700000003,
+        attachments: [{ id: 300, file_type: 'file' }],
+      });
+      expect(msg).toBeNull();
+    });
+
+    it('omits the attachments field entirely when the payload has none', async () => {
+      const mod = await import('./chatwootSupport.client');
+      const msg = mod.normalizeChatwootMessage({
+        id: 14,
+        content: 'no files here',
+        message_type: 0,
+        created_at: 1700000004,
+      });
+      expect(msg).not.toBeNull();
+      expect('attachments' in (msg as object)).toBe(false);
+    });
+  });
 });

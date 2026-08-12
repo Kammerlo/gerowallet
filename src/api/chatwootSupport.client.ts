@@ -80,11 +80,37 @@ export interface SupportApiMessage {
   text: string;
   agentName?: string;
   createdAt: number;
+  attachments?: SupportAttachment[];
 }
+
+/** Normalized file attachment on a message — matches the frozen UI contract. */
+export interface SupportAttachment {
+  id: number;
+  /** Chatwoot `file_type`: 'image' | 'file' | 'audio' | 'video' | ... */
+  fileType: string;
+  dataUrl: string;
+  thumbUrl?: string;
+  fileSize?: number;
+  extension?: string;
+}
+
+/** Per-message cap enforced client-side before any upload is attempted. */
+export const SUPPORT_MAX_FILE_BYTES = 20 * 1024 * 1024;
+export const SUPPORT_MAX_FILES_PER_MESSAGE = 5;
 
 /** Chatwoot `message_type`: 0 incoming (from the user), 1 outgoing (agent), 2 activity. */
 const MESSAGE_TYPE_INCOMING = 0;
 const MESSAGE_TYPE_OUTGOING = 1;
+
+/** Raw Chatwoot attachment payload, as built by Attachment records server-side. */
+export interface RawChatwootAttachment {
+  id?: number;
+  file_type?: string;
+  data_url?: string;
+  thumb_url?: string;
+  file_size?: number;
+  extension?: string;
+}
 
 /** Raw Chatwoot message payload — identical over REST and over the ActionCable stream. */
 export interface RawChatwootMessage {
@@ -96,6 +122,7 @@ export interface RawChatwootMessage {
   private?: boolean;
   /** Present on cable broadcasts; used to scope a frame to the active conversation. */
   conversation_id?: number;
+  attachments?: RawChatwootAttachment[];
 }
 
 function statusOf(error: unknown): number | undefined {
@@ -128,8 +155,33 @@ function toEpochMs(value: number | string | undefined): number {
 }
 
 /**
+ * Map raw Chatwoot attachments to the frozen UI shape, dropping any entry the
+ * player cannot render (no `data_url`). Returns undefined — never an empty
+ * array — so callers can omit the field entirely when there is nothing to show.
+ */
+function normalizeAttachments(raw: RawChatwootAttachment[] | undefined): SupportAttachment[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const mapped: SupportAttachment[] = [];
+  for (const item of raw) {
+    if (!item || typeof item.data_url !== 'string' || !item.data_url) continue;
+    const attachment: SupportAttachment = {
+      id: item.id as number,
+      fileType: item.file_type as string,
+      dataUrl: item.data_url,
+    };
+    if (item.thumb_url) attachment.thumbUrl = item.thumb_url;
+    if (typeof item.file_size === 'number') attachment.fileSize = item.file_size;
+    if (item.extension) attachment.extension = item.extension;
+    mapped.push(attachment);
+  }
+  return mapped.length > 0 ? mapped : undefined;
+}
+
+/**
  * Normalize a raw Chatwoot message. Returns null for anything the chat must not
- * render: activity events (message_type 2), private agent notes, and empty bodies.
+ * render: activity events (message_type 2), private agent notes, and messages
+ * with neither text nor a renderable attachment (an attachment-only message —
+ * empty `content` with ≥1 attachment — is NOT dropped).
  */
 export function normalizeChatwootMessage(
   raw: RawChatwootMessage | null | undefined,
@@ -139,15 +191,18 @@ export function normalizeChatwootMessage(
   const type = raw.message_type;
   if (type !== MESSAGE_TYPE_INCOMING && type !== MESSAGE_TYPE_OUTGOING) return null;
   const text = typeof raw.content === 'string' ? raw.content : '';
-  if (!text) return null;
+  const attachments = normalizeAttachments(raw.attachments);
+  if (!text && !attachments) return null;
   const isAgent = type === MESSAGE_TYPE_OUTGOING;
-  return {
+  const message: SupportApiMessage = {
     id: raw.id,
     role: isAgent ? 'agent' : 'user',
     text,
     agentName: isAgent ? raw.sender?.name || undefined : undefined,
     createdAt: toEpochMs(raw.created_at),
   };
+  if (attachments) message.attachments = attachments;
+  return message;
 }
 
 /** The contact body Chatwoot needs on BOTH the create and the update call. */
