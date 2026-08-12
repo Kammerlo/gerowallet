@@ -55,6 +55,7 @@ interface MockDock {
 }
 interface FlagsHolder {
   isLiveChatEnabled: () => boolean;
+  isCopilotEnabled: () => boolean;
 }
 interface SheetVisibility {
   isAnySheetOpen: { value: boolean };
@@ -90,7 +91,10 @@ const { mockSupportChat, mockDock, flagsHolder, sheetVisibility } = vi.hoisted((
     // AgentDock's `liveChatEnabled` computed would cache its first read forever and
     // never notice setLiveChatEnabled() flipping it later (this bit a real test:
     // asserting a runtime flag-flip while already in Support mode).
-    flagsHolder: { isLiveChatEnabled: () => true } as FlagsHolder,
+    // isCopilotEnabled defaults true (see below) so every pre-existing test that
+    // never touches it keeps exercising the same Assistant-enabled path it did
+    // before this flag existed.
+    flagsHolder: { isLiveChatEnabled: () => true, isCopilotEnabled: () => true } as FlagsHolder,
     sheetVisibility: {} as SheetVisibility,
   };
 });
@@ -103,7 +107,10 @@ vi.mock('@/sidepanel/composables/useSupportChat', () => ({
 }));
 
 vi.mock('@/stores/featureFlagsStore', () => ({
-  featureFlagsStore: { isLiveChatEnabled: () => flagsHolder.isLiveChatEnabled() },
+  featureFlagsStore: {
+    isLiveChatEnabled: () => flagsHolder.isLiveChatEnabled(),
+    isCopilotEnabled: () => flagsHolder.isCopilotEnabled(),
+  },
 }));
 
 vi.mock('@/sidepanel/composables/useAgentDock', () => ({
@@ -141,6 +148,13 @@ flagsHolder.isLiveChatEnabled = () => liveChatEnabledRef.value;
 
 function setLiveChatEnabled(on: boolean): void {
   liveChatEnabledRef.value = on;
+}
+
+const copilotEnabledRef = ref(true);
+flagsHolder.isCopilotEnabled = () => copilotEnabledRef.value;
+
+function setCopilotEnabled(on: boolean): void {
+  copilotEnabledRef.value = on;
 }
 
 // `ref` is also used to back the other mocked collaborators — attach the real reactive
@@ -243,6 +257,7 @@ async function pickFiles(wrapper: Wrapper<Vue>, files: File[]): Promise<void> {
 
 beforeEach(() => {
   setLiveChatEnabled(true);
+  setCopilotEnabled(true);
 
   mockDock.isOpen.value = true;
   mockDock.busy.value = false;
@@ -321,21 +336,22 @@ describe('AgentDock — flag off (isLiveChatEnabled: false)', () => {
 });
 
 describe('AgentDock — Support (live chat) UI', () => {
-  it('toggle switches the visible thread from Copilot to Support and back', async () => {
+  it('toggle switches the visible thread from Support (the default) to Assistant and back', async () => {
     const wrapper = mountDock();
-    expect(wrapper.text()).toContain('copilot.greeting.line1');
-
-    await clickSupportToggle(wrapper);
     expect(wrapper.text()).toContain('support.intro.title');
-    expect(wrapper.text()).not.toContain('copilot.greeting.line1');
 
     await clickCopilotToggle(wrapper);
     expect(wrapper.text()).toContain('copilot.greeting.line1');
     expect(wrapper.text()).not.toContain('support.intro.title');
+
+    await clickSupportToggle(wrapper);
+    expect(wrapper.text()).toContain('support.intro.title');
+    expect(wrapper.text()).not.toContain('copilot.greeting.line1');
   });
 
-  it('the escalation chip in the Copilot empty state switches to Support', async () => {
+  it('the escalation chip in the Assistant empty state switches to Support', async () => {
     const wrapper = mountDock();
+    await clickCopilotToggle(wrapper);
     const chips = wrapper.findAll('.chip');
     expect(chips.length).toBe(4);
     await chips.at(3).trigger('click');
@@ -357,8 +373,26 @@ describe('AgentDock — Support (live chat) UI', () => {
     expect(mockSupportChat.enter).toHaveBeenCalledTimes(2);
   });
 
-  it('marks the support thread as seen once it becomes the visible content', async () => {
+  it('marks the support thread as seen when the dock opens directly into Support (the default) — no click needed', async () => {
+    mockDock.isOpen.value = false;
     const wrapper = mountDock();
+    expect(mockSupportChat.markSeen).not.toHaveBeenCalled();
+
+    // Simulates the FAB click that opens the dock (dock.isOpen false -> true) —
+    // Support is already the active tab, so this alone must mark it seen.
+    mockDock.isOpen.value = true;
+    await wrapper.vm.$nextTick();
+
+    expect(mockSupportChat.markSeen).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks the support thread as seen when switching into it from Assistant mode', async () => {
+    const wrapper = mountDock();
+    // Support is already the default on mount, so bounce through Assistant first
+    // to exercise a genuine mode transition — assigning a ref to its current
+    // value ('support' -> 'support') is a Vue no-op and would not itself
+    // re-trigger the watcher this behavior depends on.
+    await clickCopilotToggle(wrapper);
     expect(mockSupportChat.markSeen).not.toHaveBeenCalled();
     await clickSupportToggle(wrapper);
     expect(mockSupportChat.markSeen).toHaveBeenCalledTimes(1);
@@ -366,6 +400,10 @@ describe('AgentDock — Support (live chat) UI', () => {
 
   it('marks the thread as seen again when the dock is closed and reopened while still in Support mode', async () => {
     const wrapper = mountDock();
+    // Establish the "seen once" baseline via a genuine transition into Support
+    // (see the test above for why a redundant click on the already-active
+    // Support tab would not do this on its own).
+    await clickCopilotToggle(wrapper);
     await clickSupportToggle(wrapper);
     expect(mockSupportChat.markSeen).toHaveBeenCalledTimes(1);
 
@@ -446,14 +484,15 @@ describe('AgentDock — Support send behavior', () => {
 });
 
 describe('AgentDock — input placeholder', () => {
-  it('switches between the copilot and support placeholder text per mode', async () => {
+  it('switches between the support and copilot placeholder text per mode', async () => {
     const wrapper = mountDock();
     // Real i18n singleton values (inputPlaceholder calls i18n.t() directly, not
-    // the mocked template $t) — see us.ts for both source strings.
-    expect(wrapper.find('.agent-dock__input input').attributes('placeholder')).toBe('Ask Gero anything...');
-
-    await clickSupportToggle(wrapper);
+    // the mocked template $t) — see us.ts for both source strings. Support is
+    // the default tab, so its placeholder is what shows right after mount.
     expect(wrapper.find('.agent-dock__input input').attributes('placeholder')).toBe('Message support...');
+
+    await clickCopilotToggle(wrapper);
+    expect(wrapper.find('.agent-dock__input input').attributes('placeholder')).toBe('Ask Gero anything...');
   });
 });
 
@@ -467,9 +506,10 @@ describe('AgentDock — wallets support chat cannot serve', () => {
     expect(wrapper.text()).toContain('support.unavailable.notice');
   });
 
-  it('shows the normal input again in Copilot mode even when support is availability-gated', async () => {
+  it('shows the normal input again in Assistant mode even when support is availability-gated', async () => {
     mockSupportChat.isAvailable.value = false;
     const wrapper = mountDock();
+    await clickCopilotToggle(wrapper);
     expect(wrapper.find('.agent-dock__input input').exists()).toBe(true);
   });
 });
@@ -489,15 +529,21 @@ describe('AgentDock — unread indicators', () => {
     expect(wrapper.find('.agent-dock__fab-dot').exists()).toBe(false);
   });
 
-  it('shows a dot on the Support toggle segment while unread and viewing Copilot', () => {
+  it('shows a dot on the Support toggle segment while unread and viewing Assistant', async () => {
     mockSupportChat.unread.value = 1;
     const wrapper = mountDock();
+    // Support is the default tab, so switch into Assistant to view the case
+    // the dot is meant for: unread Support messages while looking elsewhere.
+    await clickCopilotToggle(wrapper);
     expect(wrapper.find('.agent-dock__unread-dot').exists()).toBe(true);
   });
 
   it('hides the Support segment dot once the user has switched into Support mode', async () => {
     mockSupportChat.unread.value = 1;
     const wrapper = mountDock();
+    await clickCopilotToggle(wrapper);
+    expect(wrapper.find('.agent-dock__unread-dot').exists()).toBe(true);
+
     await clickSupportToggle(wrapper);
     expect(wrapper.find('.agent-dock__unread-dot').exists()).toBe(false);
   });
@@ -521,10 +567,11 @@ describe('AgentDock — status line mapping', () => {
     });
   }
 
-  it('shows copilot thinking/ready status while in Copilot mode, independent of connectionState', () => {
+  it('shows copilot thinking/ready status while in Assistant mode, independent of connectionState', async () => {
     mockSupportChat.connectionState.value = 'unavailable';
     mockDock.busy.value = true;
     const wrapper = mountDock();
+    await clickCopilotToggle(wrapper);
     expect(wrapper.find('.agent-dock__status').text()).toBe('copilot.status.thinking');
   });
 });
@@ -801,6 +848,9 @@ describe('AgentDock — attachment picker and pending chips', () => {
 
   it('renders the attach button and hidden file input only in Support mode', async () => {
     const wrapper = mountDock();
+    // Support is the default tab, so the attach button is already present —
+    // switch away to Assistant to prove it's Support-only, not just present.
+    await clickCopilotToggle(wrapper);
     expect(wrapper.find('.agent-dock__attach-btn').exists()).toBe(false);
 
     await clickSupportToggle(wrapper);
@@ -946,5 +996,86 @@ describe('AgentDock — support send with attachments', () => {
     await vm.submit();
 
     expect(mockSupportChat.send).toHaveBeenCalledWith('', [file]);
+  });
+});
+
+// Gero Companion: support is the primary experience, the Assistant (AI chat +
+// proactive feed) is secondary and gated by its own flag independent of
+// isLiveChatEnabled — see AgentDock.vue's `activeMode` computed and
+// featureFlagsStore.isCopilotEnabled's doc block for the full matrix.
+describe('AgentDock — Companion gating (isCopilotEnabled)', () => {
+  it('live-on + copilot-off: opens directly in Support with no click needed', () => {
+    setCopilotEnabled(false);
+    const wrapper = mountDock();
+
+    expect(wrapper.text()).toContain('support.intro.title');
+    expect(wrapper.text()).not.toContain('copilot.greeting.line1');
+  });
+
+  it('live-on + copilot-off: the Assistant segment renders disabled (attr + aria)', () => {
+    setCopilotEnabled(false);
+    const wrapper = mountDock();
+
+    const assistantBtn = findModeButton(wrapper, 'copilot');
+    expect(assistantBtn.attributes('disabled')).toBeDefined();
+    expect(assistantBtn.attributes('aria-disabled')).toBe('true');
+
+    const supportBtn = findModeButton(wrapper, 'support');
+    expect(supportBtn.attributes('disabled')).toBeUndefined();
+  });
+
+  it('live-on + copilot-off: clicking the disabled Assistant segment does nothing', async () => {
+    setCopilotEnabled(false);
+    const wrapper = mountDock();
+
+    await findModeButton(wrapper, 'copilot').trigger('click');
+
+    expect(wrapper.text()).toContain('support.intro.title');
+    expect(wrapper.text()).not.toContain('copilot.greeting.line1');
+    expect(mockSupportChat.enter).not.toHaveBeenCalled();
+  });
+
+  it('live-on + copilot-on: both segments enabled, default is Support, and DOM order is Support then Assistant', () => {
+    const wrapper = mountDock();
+    const buttons = wrapper.findAll('.agent-dock__mode-btn');
+
+    expect(buttons.length).toBe(2);
+    expect(buttons.at(0).text()).toContain('support.toggle.support');
+    expect(buttons.at(1).text()).toContain('support.toggle.copilot');
+    expect(buttons.at(0).attributes('disabled')).toBeUndefined();
+    expect(buttons.at(1).attributes('disabled')).toBeUndefined();
+    expect(buttons.at(1).attributes('aria-disabled')).toBe('false');
+
+    expect(wrapper.text()).toContain('support.intro.title');
+  });
+});
+
+describe('AgentDock — FAB icon (Gero Companion mark)', () => {
+  it('renders the Gero logo mark image on the closed FAB, not the mdi-robot icon', () => {
+    mockDock.isOpen.value = false;
+    const wrapper = mountDock();
+
+    const icon = wrapper.find('.agent-dock__fab-icon');
+    expect(icon.exists()).toBe(true);
+    expect(icon.element.tagName).toBe('IMG');
+    expect(icon.attributes('alt')).toBe('');
+    expect(wrapper.find('.agent-dock__fab').text()).not.toContain('mdi-robot-outline');
+  });
+
+  it('keeps the unread dot rendering above the logo mark on the closed FAB', () => {
+    mockDock.isOpen.value = false;
+    mockSupportChat.unread.value = 1;
+    const wrapper = mountDock();
+
+    expect(wrapper.find('.agent-dock__fab-icon').exists()).toBe(true);
+    expect(wrapper.find('.agent-dock__fab-dot').exists()).toBe(true);
+  });
+
+  it('still renders mdi-close (not the logo mark) once the dock is open', () => {
+    mockDock.isOpen.value = true;
+    const wrapper = mountDock();
+
+    expect(wrapper.find('.agent-dock__fab-icon').exists()).toBe(false);
+    expect(wrapper.find('.agent-dock__fab').text()).toContain('mdi-close');
   });
 });

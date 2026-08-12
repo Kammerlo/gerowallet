@@ -8,7 +8,12 @@
       :tabindex="isAnySheetOpen ? -1 : 0"
       @click="dock.toggle()"
     >
-      <v-icon v-if="!dock.isOpen.value" size="22" color="var(--g-accent)">mdi-robot-outline</v-icon>
+      <img
+        v-if="!dock.isOpen.value"
+        :src="geroMark"
+        alt=""
+        class="agent-dock__fab-icon"
+      />
       <v-icon v-else size="22" color="var(--g-accent)">mdi-close</v-icon>
       <span
         v-if="liveChatEnabled && !dock.isOpen.value && supportChat.unread.value > 0"
@@ -25,16 +30,12 @@
             <span class="agent-dock__status">{{ $t(statusKey) }}</span>
           </div>
 
+          <!-- Support-first: Support is the default/leftmost tab (see `mode`'s
+               initial value below); Assistant is second and disabled whenever
+               copilotEnabled is off — visible so the capability is discoverable,
+               but neither clickable (real `disabled`) nor announced as
+               actionable (`aria-disabled`) to assistive tech. -->
           <div v-if="liveChatEnabled" class="agent-dock__mode-toggle" role="tablist">
-            <button
-              type="button"
-              class="agent-dock__mode-btn"
-              :class="{ 'is-active': mode === 'copilot' }"
-              role="tab"
-              :aria-selected="mode === 'copilot'"
-              aria-controls="agent-dock-thread"
-              @click="enterCopilotMode()"
-            >{{ $t('support.toggle.copilot') }}</button>
             <button
               type="button"
               class="agent-dock__mode-btn"
@@ -51,6 +52,17 @@
                 aria-hidden="true"
               ></span>
             </button>
+            <button
+              type="button"
+              class="agent-dock__mode-btn"
+              :class="{ 'is-active': mode === 'copilot' }"
+              role="tab"
+              :aria-selected="mode === 'copilot'"
+              aria-controls="agent-dock-thread"
+              :disabled="!copilotEnabled"
+              :aria-disabled="String(!copilotEnabled)"
+              @click="enterCopilotMode()"
+            >{{ $t('support.toggle.copilot') }}</button>
           </div>
 
           <button
@@ -137,10 +149,11 @@
             </div>
           </template>
 
-          <!-- Support (live chat) thread: same bubble layout as Copilot, but plain text
-               only (no markdown, no intent cards) and agent bubbles carry an agentName
-               caption. Only reachable when liveChatEnabled — see the header toggle and
-               escalation chip above, the only two ways `mode` becomes 'support'. -->
+          <!-- Support (live chat) thread: same bubble layout as Assistant, but plain
+               text only (no markdown, no intent cards) and agent bubbles carry an
+               agentName caption. Only reachable when liveChatEnabled — `mode`
+               defaults to 'support' (see below), and otherwise only ever moves
+               there via the header toggle or the escalation chip above. -->
           <template v-else>
             <div
               v-if="supportChat.messages.value.length === 0 && !supportChat.busy.value"
@@ -316,6 +329,12 @@ import SwapCard from '@/sidepanel/components/agent/SwapCard.vue';
 import StakingCard from '@/sidepanel/components/agent/StakingCard.vue';
 import AllowanceCard from '@/sidepanel/components/agent/AllowanceCard.vue';
 import SupportAuthPrompt from '@/sidepanel/components/SupportAuthPrompt.vue';
+// The text-free Gero mark (antler icon, no wordmark) — same asset
+// NavigationDrawer.vue uses for its small-size logo rendering. Chosen over
+// gero-logo.svg (also mark-only, but a heavier raster PNG embedded in an SVG
+// wrapper) because it is a single scalable vector path, which stays crisp at
+// the FAB's ~22px render size and costs a fraction of the bytes.
+import geroMark from '@/assets/svg/gero-notext.svg';
 
 type DockMode = 'copilot' | 'support';
 
@@ -430,10 +449,31 @@ export default defineComponent({
     // identical to before this feature existed, and makes a mid-session flip
     // incapable of leaving the dock half-rendered in support state.
     const liveChatEnabled = computed(() => featureFlagsStore.isLiveChatEnabled());
-    const mode = ref<DockMode>('copilot');
-    const activeMode = computed<DockMode>(() => (liveChatEnabled.value ? mode.value : 'copilot'));
+    // Gates the Assistant (AI chat + proactive feed) tab, independent of
+    // liveChatEnabled — see featureFlagsStore.isCopilotEnabled's doc block for
+    // the full mount-gate matrix this and liveChatEnabled together produce.
+    const copilotEnabled = computed(() => featureFlagsStore.isCopilotEnabled());
+    // Support-first: the dock opens on the Support tab by default whenever the
+    // toggle exists. `mode` only ever moves to 'copilot' through UI activeMode
+    // gates when copilotEnabled is off (the toggle renders that segment
+    // disabled), so a copilot-off session can never actually land there.
+    const mode = ref<DockMode>('support');
+    // Live-chat-off is byte-identical to the dock's pre-support-chat existence:
+    // always 'copilot', regardless of `mode`/copilotEnabled. Live-chat-on with
+    // the Assistant tab off (copilotEnabled false) forces 'support' even if
+    // `mode` is latently 'copilot' from a prior copilotEnabled=true session, so
+    // a runtime flag drop can't strand the dock on a now-disabled tab.
+    const activeMode = computed<DockMode>(() => {
+      if (!liveChatEnabled.value) return 'copilot';
+      return copilotEnabled.value ? mode.value : 'support';
+    });
 
     function enterCopilotMode(): void {
+      // Belt-and-suspenders alongside the toggle button's real `disabled`
+      // attribute: a disabled native button already blocks user-driven clicks,
+      // but this guard keeps the guarantee even if something else ever calls
+      // this function directly (e.g. a future keyboard shortcut).
+      if (!copilotEnabled.value) return;
       mode.value = 'copilot';
     }
 
@@ -604,6 +644,8 @@ export default defineComponent({
       mode,
       activeMode,
       liveChatEnabled,
+      copilotEnabled,
+      geroMark,
       supportChat,
       statusKey,
       sendDisabled,
@@ -689,6 +731,13 @@ export default defineComponent({
   opacity: 0;
   pointer-events: none;
   transition: opacity 150ms ease;
+}
+
+/* Matches the mdi icon's former size="22" so the FAB's footprint is unchanged. */
+.agent-dock__fab-icon {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
 }
 
 .agent-dock__fab-dot {
@@ -797,6 +846,14 @@ export default defineComponent({
 .agent-dock__mode-btn.is-active {
   color: var(--g-accent);
   background: var(--accent-14);
+}
+
+/* Assistant segment when copilotEnabled is off: visible (discoverable) but not
+   interactive — same opacity/cursor pairing as the send/attach buttons' own
+   :disabled state above, not a new value. */
+.agent-dock__mode-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .agent-dock__unread-dot {

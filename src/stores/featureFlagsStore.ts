@@ -31,10 +31,11 @@ export interface FeatureFlags {
   // the chat plumbing itself is inert until something calls into it, so hiding
   // the entry point is what holds or kills the feature without a client release.
   //
-  // DEPENDS ON isCopilotEnabled: the only entry point is the Agent Dock, which
-  // both options/App.vue and sidepanel/App.vue mount behind isCopilotEnabled. So
-  // this flag is INERT on its own — a rollout has to flip BOTH, and turning
-  // copilot off takes live chat down with it.
+  // MOUNTS THE DOCK ON ITS OWN: the Agent Dock ("Gero Companion") is mounted by
+  // both options/App.vue and sidepanel/App.vue behind
+  // `isCopilotEnabled() || isLiveChatEnabled()`, so this flag alone is enough to
+  // bring the dock up as a support-only Companion (the Assistant toggle segment
+  // renders visible but disabled until isCopilotEnabled also flips on).
   isLiveChatEnabled: boolean;
   // Master gate for WalletConnect v2 pairing/signing. Default OFF: even with a
   // VITE_WALLETCONNECT_PROJECT_ID configured, the background skips WalletKit init
@@ -327,10 +328,15 @@ export const featureFlagsStore = {
   },
 
   /**
-   * Check if the Gero Copilot agent (chat dock + proactive feed) is enabled.
-   * Ships DARK (default false): when off, the AgentDock is not mounted and the
-   * feed routes / nav entries are hidden on both the dashboard and mini-gero, so
-   * gero-sync can hold or kill the whole agent without a client release.
+   * Check if the Gero Companion Assistant (AI chat + proactive feed) is enabled.
+   * Ships DARK (default false). The Agent Dock ("Gero Companion") itself mounts
+   * whenever EITHER this flag OR {@link isLiveChatEnabled} is on — see
+   * options/App.vue and sidepanel/App.vue. With this flag off and live chat on,
+   * the dock still mounts, support-only: the Assistant toggle segment renders
+   * visible but disabled. With this flag on, the Assistant segment is enabled
+   * (and, when live chat is off, the dock falls back to the legacy copilot-only
+   * experience). The feed routes / nav entries on the dashboard and mini-gero
+   * stay gated on this flag alone.
    */
   isCopilotEnabled(): boolean {
     return featureFlagsState.flags.isCopilotEnabled;
@@ -377,10 +383,12 @@ export const featureFlagsStore = {
    * Chatwoot or Nexus traffic is generated. Lets gero-sync hold or kill live chat
    * without a client release.
    *
-   * NOT sufficient on its own — it also requires {@link isCopilotEnabled}. The
-   * support entry point lives in the Agent Dock, and both options/App.vue and
-   * sidepanel/App.vue mount that dock behind isCopilotEnabled, so a rollout must
-   * flip BOTH flags and turning copilot off also takes live chat down.
+   * SUFFICIENT ON ITS OWN to mount the Agent Dock ("Gero Companion") — both
+   * options/App.vue and sidepanel/App.vue mount it behind
+   * `isCopilotEnabled() || isLiveChatEnabled()`. With {@link isCopilotEnabled}
+   * off, that dock is support-only: it opens straight into Support and the
+   * Assistant toggle segment renders visible but disabled. Flipping
+   * isCopilotEnabled on as well enables the Assistant segment for that dock.
    */
   isLiveChatEnabled(): boolean {
     return featureFlagsState.flags.isLiveChatEnabled;

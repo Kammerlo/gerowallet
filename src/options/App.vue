@@ -68,7 +68,11 @@ const isLoading = computed(() => {
 });
 
 const isAgentVisible = computed(() => {
-  return featureFlagsStore.isCopilotEnabled() && !!walletStore.loggedWallet && !walletStore.isLocked;
+  // Gero Companion mounts on EITHER flag: isCopilotEnabled alone (legacy
+  // copilot-only dock) or isLiveChatEnabled alone (support-only dock, Assistant
+  // tab visible but disabled) — see featureFlagsStore's doc blocks for both.
+  return (featureFlagsStore.isCopilotEnabled() || featureFlagsStore.isLiveChatEnabled())
+    && !!walletStore.loggedWallet && !walletStore.isLocked;
 });
 
 // Check auto-lock immediately when page loads/becomes visible

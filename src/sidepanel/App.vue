@@ -40,7 +40,7 @@
         @wallet-switch="showWalletSwitcher = true"
         @settings="openDashboardSettings"
       />
-      <AgentDock v-if="isCopilotEnabled" />
+      <AgentDock v-if="isAgentDockVisible" />
     </template>
 
     <!-- Approval overlay: rendered whenever a signable session exists, above AgentDock -->
@@ -97,7 +97,10 @@ const pendingSwitchWallet = ref<Wallet | null>(null);
 const hasWallets = computed(() => Object.keys(geroStore.wallets || {}).length > 0);
 const hasActiveWallet = computed(() => !!walletStore.loggedWallet);
 const isLocked = computed(() => walletStore.isLocked);
-const isCopilotEnabled = computed(() => featureFlagsStore.isCopilotEnabled());
+// Gero Companion mounts on EITHER flag: isCopilotEnabled alone (legacy
+// copilot-only dock) or isLiveChatEnabled alone (support-only dock, Assistant
+// tab visible but disabled) — see featureFlagsStore's doc blocks for both.
+const isAgentDockVisible = computed(() => featureFlagsStore.isCopilotEnabled() || featureFlagsStore.isLiveChatEnabled());
 
 // Watch locale changes from geroStore
 const vmProxy = getCurrentInstance()!.proxy;
