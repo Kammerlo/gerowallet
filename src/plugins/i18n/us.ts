@@ -863,6 +863,10 @@ export default {
   'crossDevice.settings.trustedOn': 'Paired {date}',
   'crossDevice.settings.unnamed': 'Unnamed device',
   'crossDevice.settings.securityNote': 'Both devices hold the same keys, so this is an approval step, not multisig. It doesn\'t replace your recovery phrase.',
+  'crossDevice.settings.serveProofs': 'Prove for your phone',
+  'crossDevice.settings.serveProofsHint': 'Your phone can\'t generate Midnight proofs on its own, so it sends them to the cloud. Turn this on and this computer proves them instead — the transaction details never leave your devices.',
+  'crossDevice.settings.serveProofsRequirement': 'Needs your proof server running: {command}',
+  'crossDevice.settings.serveThisDevice': 'Prove for this device',
   'crossDevice.settings.enableAuthTitle': 'Confirm remote signing',
   'crossDevice.settings.enableAuthBody': 'Sign a one-time proof that links this device to your wallet. It is stored locally and lets your trusted devices confirm that signing requests really come from you.',
   'crossDevice.settings.enableConfirm': 'Confirm and enable',
@@ -2228,6 +2232,7 @@ export default {
   'staking.signAndWithdraw': 'Sign & Withdraw',
   'staking.spendingPassword': 'Spending Password',
   'staking.stakeWithGero': 'Stake with GERO',
+  'staking.delegationPending': 'Delegation pending',
   'staking.staking': 'Staking',
   'staking.stakingAllowsPassiveIncome': 'Staking allows you to earn passive income on your holdings',
   'staking.submit': 'Submit',
@@ -3012,6 +3017,7 @@ export default {
 
   // Security - PassKey PRF Extension
   'security.passKeyPrfNotSupported': 'PassKey registration succeeded but PRF extension is not supported. PassKey autofill requires Chrome, Edge, or Firefox with a compatible authenticator.',
+  'security.passKeyUnsupportedBrowser': "This browser or device doesn't support PassKey wallets. Try Chrome or Edge, or go back and create a password-protected wallet instead.",
   'security.passKeyPrfUnavailable': 'PRF extension not supported in this browser. PassKey autofill requires Chrome, Edge, or Firefox.',
   'security.passKeyLegacyDetected': 'Your existing PassKey does not support the new secure PRF encryption method. Please delete and re-register your PassKey to continue using autofill.',
   'security.passKeyPrfRequired': 'PassKey autofill requires a browser with WebAuthn PRF support (Chrome, Edge, or Firefox)',
