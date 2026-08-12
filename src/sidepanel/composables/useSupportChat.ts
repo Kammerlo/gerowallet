@@ -30,7 +30,10 @@ import { debugLog } from '@/utils/debug';
 import {
   ChatAuthError,
   chatwootSupportApi,
+  SUPPORT_MAX_FILE_BYTES,
+  SUPPORT_MAX_FILES_PER_MESSAGE,
   type SupportApiMessage,
+  type SupportAttachment,
   type SupportContact,
   type SupportContactIdentity,
 } from '@/api/chatwootSupport.client';
@@ -65,6 +68,7 @@ export interface SupportMessage {
   agentName?: string;
   /** epoch ms */
   createdAt: number;
+  attachments?: SupportAttachment[];
 }
 
 export interface SupportChat {
@@ -80,8 +84,8 @@ export interface SupportChat {
   errorKey: Ref<string | null>;
   /** Idempotent: load history (only if an identity is cached) and connect the cable. */
   enter(): Promise<void>;
-  /** false = not sent (auth cancelled/failed) → the UI keeps the draft. */
-  send(text: string): Promise<boolean>;
+  /** false = not sent (auth cancelled/failed/invalid) → the UI keeps the draft. */
+  send(text: string, files?: File[]): Promise<boolean>;
   markSeen(): void;
 }
 
@@ -106,7 +110,12 @@ export interface SupportChatApi {
   ensureContact(identity: SupportContactIdentity): Promise<SupportContact>;
   createConversation(sourceId: string): Promise<number>;
   listMessages(sourceId: string, conversationId: number): Promise<SupportApiMessage[]>;
-  sendMessage(sourceId: string, conversationId: number, content: string): Promise<SupportApiMessage | null>;
+  sendMessage(
+    sourceId: string,
+    conversationId: number,
+    content: string,
+    files?: File[],
+  ): Promise<SupportApiMessage | null>;
 }
 
 export interface SupportChatDeps {
@@ -511,9 +520,13 @@ export function createSupportChat(deps: SupportChatDeps = {}): SupportChat {
     connectCable(session);
   }
 
-  async function deliver(text: string, session: ThreadSession): Promise<void> {
+  async function deliver(text: string, session: ThreadSession, files?: File[]): Promise<void> {
     const target = await ensureConversation(session);
-    const sent = await api.sendMessage(target.sourceId as string, target.conversationId as number, text);
+    // Call with exactly 3 args when there are no files — keeps the call shape
+    // byte-identical to the pre-attachments API for callers/mocks that assert on it.
+    const sent = files
+      ? await api.sendMessage(target.sourceId as string, target.conversationId as number, text, files)
+      : await api.sendMessage(target.sourceId as string, target.conversationId as number, text);
     assertOwn(session); // the POST landed in the OLD thread; don't paint it into the new one
     // Reconcile the optimistic echo with the server's id/timestamp immediately.
     // The cable is not necessarily subscribed yet on a first send, so waiting for
@@ -522,10 +535,24 @@ export function createSupportChat(deps: SupportChatDeps = {}): SupportChat {
     if (sent) ingest(sent);
   }
 
-  async function send(text: string): Promise<boolean> {
+  async function send(text: string, files?: File[]): Promise<boolean> {
+    // Validated FIRST, before any network call or handshake — an oversized or
+    // over-count attachment is a client-side mistake the user can fix without
+    // ever touching the wallet's signing flow.
+    const fileList = files && files.length > 0 ? files : undefined;
+    if (fileList && fileList.length > SUPPORT_MAX_FILES_PER_MESSAGE) {
+      setError('support.error.tooManyFiles');
+      return false;
+    }
+    if (fileList && fileList.some((file) => file.size > SUPPORT_MAX_FILE_BYTES)) {
+      setError('support.error.fileTooLarge');
+      return false;
+    }
+
     syncWallet();
     const trimmed = (text || '').trim();
-    if (!trimmed || busy.value) return false;
+    if (!trimmed && !fileList) return false;
+    if (busy.value) return false;
     const session = beginSession();
     if (!session || !isAvailable.value) return false;
 
@@ -542,14 +569,20 @@ export function createSupportChat(deps: SupportChatDeps = {}): SupportChat {
         return false;
       }
 
-      // The negative id doubles as the stable client key: `ingest` carries it onto
-      // the reconciled message, so the bubble is never re-keyed mid-send.
-      const localId = -nextLocalId++;
-      optimistic = { id: localId, clientId: localId, role: 'user', text: trimmed, createdAt: Date.now() };
-      messages.value.push(optimistic);
+      // Files present: skip the optimistic echo entirely (`busy` covers the UX
+      // while the upload is in flight) so no negative-id bubble is ever shown —
+      // the server response, with its real id and server-built attachments, is
+      // what lands via `ingest` below.
+      if (!fileList) {
+        // The negative id doubles as the stable client key: `ingest` carries it
+        // onto the reconciled message, so the bubble is never re-keyed mid-send.
+        const localId = -nextLocalId++;
+        optimistic = { id: localId, clientId: localId, role: 'user', text: trimmed, createdAt: Date.now() };
+        messages.value.push(optimistic);
+      }
 
       try {
-        await deliver(trimmed, session);
+        await deliver(trimmed, session, fileList);
         delivered = true;
       } catch (error) {
         if (!(error instanceof ChatAuthError)) throw error;
@@ -560,7 +593,7 @@ export function createSupportChat(deps: SupportChatDeps = {}): SupportChat {
           return false;
         }
         try {
-          await deliver(trimmed, session);
+          await deliver(trimmed, session, fileList);
           delivered = true;
         } catch (retryError) {
           if (retryError instanceof StaleSessionError) throw retryError;

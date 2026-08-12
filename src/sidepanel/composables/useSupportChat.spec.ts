@@ -3,7 +3,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import Vue from 'vue';
 import { nextTick } from 'vue';
 import { createSupportChat, type SupportChatDeps, type SupportWalletSnapshot } from './useSupportChat';
-import { ChatAuthError, type SupportApiMessage } from '@/api/chatwootSupport.client';
+import {
+  ChatAuthError,
+  SUPPORT_MAX_FILE_BYTES,
+  SUPPORT_MAX_FILES_PER_MESSAGE,
+  type SupportApiMessage,
+} from '@/api/chatwootSupport.client';
 import type { SupportChatIdentity } from '@/services/support/identityCache';
 import type { SupportCableOptions } from '@/services/support/actionCable';
 
@@ -330,6 +335,96 @@ describe('useSupportChat', () => {
       expect(await h.chat.send('   ')).toBe(false);
       expect(h.promptAuth).not.toHaveBeenCalled();
       expect(h.chat.messages.value).toEqual([]);
+    });
+  });
+
+  describe('send() with files', () => {
+    function makeFile(name: string, size: number): File {
+      const file = new File([new Uint8Array(1)], name);
+      Object.defineProperty(file, 'size', { value: size });
+      return file;
+    }
+
+    it('rejects more than SUPPORT_MAX_FILES_PER_MESSAGE files with no network call', async () => {
+      const h = makeHarness();
+      const files = Array.from({ length: SUPPORT_MAX_FILES_PER_MESSAGE + 1 }, (_, i) => makeFile(`f${i}.png`, 10));
+      const ok = await h.chat.send('', files);
+      expect(ok).toBe(false);
+      expect(h.chat.errorKey.value).toBe('support.error.tooManyFiles');
+      expect(h.promptAuth).not.toHaveBeenCalled();
+      expect(h.requestIdentity).not.toHaveBeenCalled();
+      expect(h.api.sendMessage).not.toHaveBeenCalled();
+      expect(h.chat.messages.value).toEqual([]);
+      expect(h.chat.busy.value).toBe(false);
+    });
+
+    it('rejects a file over SUPPORT_MAX_FILE_BYTES with no network call', async () => {
+      const h = makeHarness();
+      const files = [makeFile('big.bin', SUPPORT_MAX_FILE_BYTES + 1)];
+      const ok = await h.chat.send('', files);
+      expect(ok).toBe(false);
+      expect(h.chat.errorKey.value).toBe('support.error.fileTooLarge');
+      expect(h.promptAuth).not.toHaveBeenCalled();
+      expect(h.requestIdentity).not.toHaveBeenCalled();
+      expect(h.api.sendMessage).not.toHaveBeenCalled();
+      expect(h.chat.messages.value).toEqual([]);
+      expect(h.chat.busy.value).toBe(false);
+    });
+
+    it('sends files-only with no negative-id optimistic entry ever appearing', async () => {
+      const h = makeHarness();
+      h.store[1] = cached();
+      const file = makeFile('a.png', 10);
+      h.api.sendMessage.mockImplementation(async () => {
+        // Mid-flight: no optimistic bubble should exist while the upload is in flight.
+        expect(h.chat.messages.value.some((m) => m.id < 0)).toBe(false);
+        return {
+          id: 50,
+          role: 'user',
+          text: '',
+          createdAt: 50000,
+          attachments: [{ id: 1, fileType: 'image', dataUrl: 'https://cdn.example.test/y.png' }],
+        };
+      });
+
+      const ok = await h.chat.send('', [file]);
+
+      expect(ok).toBe(true);
+      expect(h.chat.messages.value.some((m) => m.id < 0)).toBe(false);
+      expect(h.chat.messages.value).toHaveLength(1);
+      expect(h.chat.messages.value[0]).toMatchObject({
+        id: 50,
+        attachments: [{ id: 1, fileType: 'image', dataUrl: 'https://cdn.example.test/y.png' }],
+      });
+      expect(h.api.sendMessage).toHaveBeenCalledWith('src-1', 42, '', [file]);
+    });
+
+    it('runs the handshake on the first-ever send when files are attached', async () => {
+      const h = makeHarness();
+      const file = makeFile('a.png', 10);
+      h.api.sendMessage.mockResolvedValue({ id: 51, role: 'user', text: 'here', createdAt: 51000 });
+
+      const ok = await h.chat.send('here', [file]);
+
+      expect(ok).toBe(true);
+      expect(h.promptAuth).toHaveBeenCalledTimes(1);
+      expect(h.api.ensureContact).toHaveBeenCalledTimes(1);
+      expect(h.api.createConversation).toHaveBeenCalledTimes(1);
+      expect(h.api.sendMessage).toHaveBeenCalledWith('src-1', 42, 'here', [file]);
+    });
+
+    it('a files send failure keeps existing sendFailed semantics, with no orphan bubble', async () => {
+      const h = makeHarness();
+      h.store[1] = cached();
+      const file = makeFile('a.png', 10);
+      h.api.sendMessage.mockRejectedValue(new Error('network down'));
+
+      const ok = await h.chat.send('', [file]);
+
+      expect(ok).toBe(false);
+      expect(h.chat.errorKey.value).toBe('support.error.sendFailed');
+      expect(h.chat.messages.value).toEqual([]);
+      expect(h.chat.busy.value).toBe(false);
     });
   });
 
