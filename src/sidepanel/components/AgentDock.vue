@@ -163,7 +163,35 @@
                   <span v-if="m.role === 'agent'" class="agent-dock__agent-name">
                     {{ m.agentName || $t('support.agentFallbackName') }}
                   </span>
-                  <p class="agent-dock__text">{{ m.text }}</p>
+                  <p v-if="m.text" class="agent-dock__text">{{ m.text }}</p>
+                  <div v-if="m.attachments && m.attachments.length" class="agent-dock__attachments">
+                    <div v-for="a in m.attachments" :key="a.id">
+                      <a
+                        v-if="a.fileType === 'image' && !attachmentFailed(m.id, a.id)"
+                        :href="a.dataUrl"
+                        target="_blank"
+                        rel="noopener"
+                      >
+                        <img
+                          class="agent-dock__attach-img"
+                          :src="a.thumbUrl ?? a.dataUrl"
+                          alt=""
+                          @error="onAttachImgError(m.id, a.id)"
+                        />
+                      </a>
+                      <a
+                        v-else
+                        class="agent-dock__attach-file"
+                        :href="a.dataUrl"
+                        target="_blank"
+                        rel="noopener"
+                      >
+                        <v-icon size="14" color="var(--g-accent)">mdi-paperclip</v-icon>
+                        <span class="agent-dock__attach-name">{{ attachmentLabel(a) }}</span>
+                        <span v-if="a.fileSize" class="agent-dock__attach-size">{{ formatAttachmentSize(a.fileSize) }}</span>
+                      </a>
+                    </div>
+                  </div>
                 </div>
               </div>
             </transition-group>
@@ -179,14 +207,39 @@
           </template>
         </div>
 
-        <!-- Kept outside the scrollable thread so a new error is never scrolled out of
-             view by the busy→false scroll-to-bottom watcher. -->
+        <!-- Kept outside the scrollable thread so a new error/notice is never
+             scrolled out of view by the busy→false scroll-to-bottom watcher.
+             One slot for two sources: the composable's own errorKey (server-
+             side failures) and the too-many-files cap below, which is a
+             purely local, UI-side notice — it never touches errorKey. -->
         <div
-          v-if="activeMode === 'support' && supportChat.errorKey.value"
+          v-if="activeMode === 'support' && noticeKey"
           class="agent-dock__notice"
           role="alert"
         >
-          {{ $t(supportChat.errorKey.value) }}
+          {{ $t(noticeKey) }}
+        </div>
+
+        <div
+          v-if="activeMode === 'support' && pendingFiles.length"
+          class="agent-dock__pending"
+        >
+          <div
+            v-for="(file, idx) in pendingFiles"
+            :key="file.name + file.size + file.lastModified"
+            class="agent-dock__pending-chip"
+          >
+            <span class="agent-dock__pending-name">{{ middleTruncate(file.name) }}</span>
+            <span class="agent-dock__pending-size">{{ formatAttachmentSize(file.size) }}</span>
+            <button
+              type="button"
+              class="agent-dock__pending-remove"
+              :aria-label="$t('common.remove')"
+              @click="removePendingFile(idx)"
+            >
+              <v-icon size="12" color="var(--g-text-2)">mdi-close</v-icon>
+            </button>
+          </div>
         </div>
 
         <footer
@@ -196,10 +249,33 @@
           <p class="agent-dock__unavailable">{{ $t('support.unavailable.notice') }}</p>
         </footer>
         <footer v-else class="agent-dock__input">
+          <button
+            v-if="activeMode === 'support'"
+            type="button"
+            class="agent-dock__attach-btn"
+            :disabled="sendDisabled"
+            :aria-label="$t('support.attach.button')"
+            @click="triggerFilePicker()"
+          >
+            <v-icon size="16" color="var(--g-text-2)">mdi-paperclip</v-icon>
+          </button>
           <input
             v-model="draft"
             :placeholder="inputPlaceholder"
             @keyup.enter="submit()"
+          />
+          <!-- Kept AFTER the draft input (not just visually via the attach
+               button above) so `.agent-dock__input input` still resolves to
+               the draft field first — several pre-existing tests query it by
+               that generic selector. -->
+          <input
+            v-if="activeMode === 'support'"
+            ref="fileInputRef"
+            type="file"
+            multiple
+            accept="image/*,.pdf,.txt,.log,.json,.csv,.zip"
+            class="agent-dock__file-input"
+            @change="onFilesPicked"
           />
           <button
             class="agent-dock__send"
@@ -239,6 +315,27 @@ import SupportAuthPrompt from '@/sidepanel/components/SupportAuthPrompt.vue';
 
 type DockMode = 'copilot' | 'support';
 
+// Mirrors `SupportAttachment` from the frozen support-chat contract — a
+// sibling PR adds this field for real onto `SupportMessage` in
+// useSupportChat.ts. Declared locally (not imported) so this component never
+// depends on that PR landing first; both sides are built to the same shape,
+// so they line up once merged.
+interface SupportAttachment {
+  id: number;
+  fileType: string;
+  dataUrl: string;
+  thumbUrl?: string;
+  fileSize?: number;
+  extension?: string;
+  fileName?: string;
+}
+
+// Mirrors SUPPORT_MAX_FILES_PER_MESSAGE in useSupportChat.ts (frozen
+// contract, same reasoning as SupportAttachment above). Only the COUNT cap is
+// this component's job — the size cap is enforced by the composable itself
+// and surfaces through supportChat.errorKey.
+const MAX_PENDING_FILES = 5;
+
 export default defineComponent({
   name: 'AgentDock',
   components: { ChartCard, SwapCard, StakingCard, AllowanceCard, SupportAuthPrompt },
@@ -247,6 +344,94 @@ export default defineComponent({
     const dock = agentDock;
     const scroll = ref<HTMLElement | null>(null);
     const { isAnySheetOpen } = useSheetVisibility();
+
+    // ── Support attachments: pending picker state + sent-attachment bubbles ──
+    const pendingFiles = ref<File[]>([]);
+    const fileInputRef = ref<HTMLInputElement | null>(null);
+    // Attachment ids whose thumbnail failed to load (signed URLs can expire) —
+    // those bubbles fall back to the generic file row instead. Keyed
+    // `${messageId}:${attachmentId}`, not the bare attachment id: ids arriving
+    // from optimistic echoes are not guaranteed unique across messages, so a
+    // bare-id key could make one message's failure hide another's thumbnail.
+    const attachErrored = ref<string[]>([]);
+    // Local, UI-side notice for the file-count cap. Deliberately separate from
+    // supportChat.errorKey — that ref belongs to the composable and this
+    // component only ever reads it, never writes it.
+    const tooManyFilesNotice = ref(false);
+
+    function attachKey(messageId: number, attachmentId: number): string {
+      return `${messageId}:${attachmentId}`;
+    }
+
+    function attachmentFailed(messageId: number, attachmentId: number): boolean {
+      return attachErrored.value.includes(attachKey(messageId, attachmentId));
+    }
+
+    function onAttachImgError(messageId: number, attachmentId: number): void {
+      const key = attachKey(messageId, attachmentId);
+      if (!attachErrored.value.includes(key)) attachErrored.value.push(key);
+    }
+
+    function middleTruncate(name: string, max = 24): string {
+      if (name.length <= max) return name;
+      const keep = max - 1; // reserve one char for the ellipsis
+      const head = Math.ceil(keep / 2);
+      const tail = keep - head;
+      return `${name.slice(0, head)}…${name.slice(name.length - tail)}`;
+    }
+
+    // Prefers the real filename (added to the frozen contract after this was
+    // first built) over the derived extension/fileType label, since it's more
+    // useful and matches what a native file picker would show. Falls back to
+    // the extension/fileType derivation when fileName is absent — some
+    // sources (e.g. older Chatwoot attachments) never had one.
+    function attachmentLabel(a: SupportAttachment): string {
+      if (a.fileName) return middleTruncate(a.fileName);
+      const ext = (a.extension || '').replace(/^\./, '').toUpperCase();
+      return ext || a.fileType;
+    }
+
+    // A shared `humanFileSize` filter already exists (src/shared/utils/filters.ts,
+    // used by TransactionDetails.vue) but is deliberately not reused here: it
+    // defaults to SI units (1000-based kB/MB/...) and renders '—' for a null
+    // value. Attachment sizes want binary units (1024-based KB/MB, matching
+    // what OS file pickers show) and a missing fileSize is simply omitted
+    // (`v-if="a.fileSize"`), never shown as an em-dash — different enough
+    // rendering that reusing it would change behavior, not just call sites.
+    function formatAttachmentSize(bytes?: number): string {
+      if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return '';
+      if (bytes < 1024) return `${bytes} B`;
+      const kb = bytes / 1024;
+      // Roll over at >= 1000 of the CURRENT unit, not at the raw 1024*1024
+      // byte boundary — otherwise e.g. 1048575 B (1 byte short of 1 MiB)
+      // renders as "1024.0 KB" instead of "1.0 MB".
+      if (kb < 1000) return `${kb.toFixed(1)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    function triggerFilePicker(): void {
+      fileInputRef.value?.click();
+    }
+
+    function onFilesPicked(event: Event): void {
+      const input = event.target as HTMLInputElement;
+      const picked = input.files ? Array.from(input.files) : [];
+      input.value = ''; // allow re-picking the same file(s) later
+      if (!picked.length) return;
+      const combined = [...pendingFiles.value, ...picked];
+      if (combined.length > MAX_PENDING_FILES) {
+        pendingFiles.value = combined.slice(0, MAX_PENDING_FILES);
+        tooManyFilesNotice.value = true;
+      } else {
+        pendingFiles.value = combined;
+        tooManyFilesNotice.value = false;
+      }
+    }
+
+    function removePendingFile(index: number): void {
+      pendingFiles.value.splice(index, 1);
+      tooManyFilesNotice.value = false;
+    }
 
     // Everything support-related is gated behind the live-chat flag: `mode` can
     // only ever flip to 'support' via UI this flag hides (the header toggle and
@@ -313,6 +498,17 @@ export default defineComponent({
       activeMode.value === 'support' ? supportChat.busy.value : dock.busy.value,
     );
 
+    // Single source for the notice banner: the composable's own errorKey
+    // (server-side failures) takes priority since it's the more authoritative
+    // signal, falling back to the local too-many-files notice. Read (never
+    // written) here — see tooManyFilesNotice above for why the count-cap
+    // notice stays local instead of writing into errorKey.
+    const noticeKey = computed<string | null>(() => {
+      if (supportChat.errorKey.value) return supportChat.errorKey.value;
+      if (tooManyFilesNotice.value) return 'support.error.tooManyFiles';
+      return null;
+    });
+
     const inputPlaceholder = computed(() =>
       activeMode.value === 'support'
         ? (i18n.t('support.placeholder') as string)
@@ -337,19 +533,31 @@ export default defineComponent({
     async function submit(): Promise<void> {
       if (activeMode.value === 'support') {
         const text = draft.value;
-        if (!text.trim() || supportChat.busy.value) return;
-        // The composable owns the draft on failure: only clear it once send()
-        // confirms the message actually went out, so a dropped connection never
-        // silently discards what the user typed. A throwing contract impl is
-        // treated the same as a resolved-false send (draft kept, no unhandled
-        // rejection) — the failure still surfaces via supportChat.errorKey.
+        const files = pendingFiles.value;
+        if ((!text.trim() && files.length === 0) || supportChat.busy.value) return;
+        // The composable owns the draft (and the pending files) on failure:
+        // only clear either once send() confirms the message actually went
+        // out, so a dropped connection never silently discards what the user
+        // typed or attached. A throwing contract impl is treated the same as
+        // a resolved-false send (draft+files kept, no unhandled rejection) —
+        // the failure still surfaces via supportChat.errorKey.
+        //
+        // Called with ONE argument when there are no pending files (not a
+        // second `undefined` arg) — send(text) and send(text, undefined) are
+        // equivalent to the composable, but keeping the text-only call shape
+        // exactly as it was before attachments existed avoids changing the
+        // call signature for every existing text-only send.
         let sent = false;
         try {
-          sent = await supportChat.send(text);
+          sent = files.length ? await supportChat.send(text, [...files]) : await supportChat.send(text);
         } catch (err) {
           debugWarn('[AgentDock] supportChat.send() threw', err);
         }
-        if (sent) draft.value = '';
+        if (sent) {
+          draft.value = '';
+          pendingFiles.value = [];
+          tooManyFilesNotice.value = false;
+        }
         return;
       }
       const text = draft.value;
@@ -416,6 +624,17 @@ export default defineComponent({
       enterCopilotMode,
       enterSupportMode,
       agentInitial,
+      noticeKey,
+      pendingFiles,
+      fileInputRef,
+      attachmentFailed,
+      onAttachImgError,
+      attachmentLabel,
+      formatAttachmentSize,
+      middleTruncate,
+      triggerFilePicker,
+      onFilesPicked,
+      removePendingFile,
     };
   },
 });
@@ -823,6 +1042,48 @@ export default defineComponent({
   padding-top: 8px;
 }
 
+/* ── Support attachment bubbles ───────────────────────────────────────── */
+.agent-dock__attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.agent-dock__attach-img {
+  display: block;
+  max-width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+  border-radius: var(--g-r-chip);
+  border: 1px solid var(--g-hairline-2);
+}
+
+.agent-dock__attach-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--g-r-chip);
+  background: var(--g-raised);
+  border: 1px solid var(--g-hairline-2);
+  color: var(--text-primary);
+  text-decoration: none;
+  font-size: 12px;
+}
+
+.agent-dock__attach-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+
+.agent-dock__attach-size {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
 /* ── Thinking indicator ───────────────────────────────────────────────── */
 .agent-dock__busy {
   display: flex;
@@ -1008,6 +1269,84 @@ export default defineComponent({
 
 .agent-dock__send:hover:not(:disabled) {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--g-accent) 25%, transparent);
+}
+
+/* ── Attach picker (Support mode only) ───────────────────────────────── */
+.agent-dock__attach-btn {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--g-r-control);
+  border: 1px solid var(--input-border);
+  background: transparent;
+  cursor: pointer;
+  transition: border-color var(--g-dur-fast) ease;
+}
+
+.agent-dock__attach-btn:hover:not(:disabled) {
+  border-color: var(--accent-60);
+}
+
+.agent-dock__attach-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.agent-dock__file-input {
+  display: none;
+}
+
+/* ── Pending attachment chips ─────────────────────────────────────────── */
+.agent-dock__pending {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 12px 8px;
+}
+
+.agent-dock__pending-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px 5px 10px;
+  border-radius: var(--g-r-chip);
+  background: var(--g-raised);
+  border: 1px solid var(--g-hairline-2);
+  font-size: 11px;
+  color: var(--text-primary);
+}
+
+/* Truncation is done in JS (middleTruncate — deterministic and
+   extension-preserving); no CSS overflow/max-width here, or the two would
+   fight and the chip could double-truncate an already-short string. */
+.agent-dock__pending-name {
+  white-space: nowrap;
+}
+
+.agent-dock__pending-size {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.agent-dock__pending-remove {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.agent-dock__pending-remove:hover {
+  background: var(--accent-14);
 }
 
 /* ── Disclaimer ───────────────────────────────────────────────────────── */
