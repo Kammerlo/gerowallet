@@ -127,9 +127,18 @@ function buildCSP(dev: boolean): string {
 
   const styleSrc = ['*', "'unsafe-inline'", "'self'", 'blob:'];
 
-  const imgSrc = dev
-    ? ["'self'", 'http:', 'https:', 'data:']
-    : ["'self'", 'https:', 'data:'];
+  const imgSrc = [
+    "'self'",
+    ...(dev ? ['http:'] : []),
+    'https:',
+    'data:',
+    // Live support chat (self-hosted Chatwoot): inline attachment images load from
+    // the support origin and its ActiveStorage-backed object storage. Listed
+    // explicitly — 'https:' above already covers both — so the intent is visible
+    // here, matching the connect-src entry for the same feature.
+    'https://support.gerowallet.io',
+    'https://storage.googleapis.com',
+  ];
 
   const frameSrc = [
     ...(dev ? ['http://localhost:*'] : ['https://api.gerowallet.io/', 'https://guardarian.com/']),
