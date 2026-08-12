@@ -28,6 +28,7 @@ interface SupportAttachment {
   thumbUrl?: string;
   fileSize?: number;
   extension?: string;
+  fileName?: string;
 }
 interface SupportMessage {
   id: number;
@@ -189,6 +190,8 @@ const $t = (key: string): string => key;
 interface AgentDockVm {
   draft: string;
   submit: () => Promise<void>;
+  mode: 'copilot' | 'support';
+  pendingFiles: File[];
 }
 
 // Tracked so afterEach can destroy() it: AgentDock's own watchers (e.g. the
@@ -438,6 +441,14 @@ describe('AgentDock — Support send behavior', () => {
     const sendBtn = wrapper.find('.agent-dock__send');
     expect(sendBtn.attributes('disabled')).toBeDefined();
   });
+
+  it('disables the attach button while supportChat.busy is true, same as the send button', async () => {
+    mockSupportChat.busy.value = true;
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+    const attachBtn = wrapper.find('.agent-dock__attach-btn');
+    expect(attachBtn.attributes('disabled')).toBeDefined();
+  });
 });
 
 describe('AgentDock — input placeholder', () => {
@@ -595,6 +606,8 @@ describe('AgentDock — support attachment bubbles', () => {
     expect(imgs.length).toBe(2);
     expect(imgs.at(0).attributes('src')).toBe('https://cdn.example/thumb.png');
     expect(imgs.at(1).attributes('src')).toBe('https://cdn.example/full2.png');
+    // Decorative — the wrapping <a> is the actionable element, not the image.
+    expect(imgs.at(0).attributes('alt')).toBe('');
 
     const link = imgs.at(0).element.closest('a');
     expect(link?.getAttribute('href')).toBe('https://cdn.example/full.png');
@@ -666,9 +679,132 @@ describe('AgentDock — support attachment bubbles', () => {
     expect(fallback.exists()).toBe(true);
     expect(fallback.attributes('href')).toBe('https://cdn.example/full.png');
   });
+
+  it('scopes the thumbnail-error fallback to its own message: a failure in one message does not hide another message\'s identical attachment id', async () => {
+    mockSupportChat.messages.value = [
+      {
+        id: 5,
+        role: 'agent',
+        text: 'first',
+        agentName: 'Alex',
+        createdAt: 5,
+        attachments: [{ id: 999, fileType: 'image', dataUrl: 'https://cdn.example/a-full.png', thumbUrl: 'https://cdn.example/a-thumb.png' }],
+      },
+      {
+        id: 6,
+        role: 'agent',
+        text: 'second',
+        agentName: 'Alex',
+        createdAt: 6,
+        // Same attachment id (999) as the message above — ids are not
+        // guaranteed globally unique across messages (optimistic echoes).
+        attachments: [{ id: 999, fileType: 'image', dataUrl: 'https://cdn.example/b-full.png', thumbUrl: 'https://cdn.example/b-thumb.png' }],
+      },
+    ];
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+
+    await wrapper.findAll('.agent-dock__attach-img').at(0).trigger('error');
+
+    const imgs = wrapper.findAll('.agent-dock__attach-img');
+    expect(imgs.length).toBe(1);
+    expect(imgs.at(0).attributes('src')).toBe('https://cdn.example/b-thumb.png');
+    expect(wrapper.findAll('.agent-dock__attach-file').length).toBe(1);
+  });
+
+  it('prefers fileName over the extension/fileType label, falling back when fileName is missing', async () => {
+    mockSupportChat.messages.value = [
+      {
+        id: 7,
+        role: 'agent',
+        text: '',
+        agentName: 'Alex',
+        createdAt: 7,
+        attachments: [
+          { id: 301, fileType: 'file', dataUrl: 'https://cdn.example/1', extension: 'pdf', fileName: 'invoice-march.pdf' },
+          { id: 302, fileType: 'file', dataUrl: 'https://cdn.example/2', extension: 'pdf', fileName: 'invoice-april.pdf' },
+          { id: 303, fileType: 'file', dataUrl: 'https://cdn.example/3', extension: 'pdf', fileName: 'invoice-may.pdf' },
+          { id: 304, fileType: 'file', dataUrl: 'https://cdn.example/4', extension: 'pdf' },
+        ],
+      },
+    ];
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+
+    const names = wrapper.findAll('.agent-dock__attach-name').wrappers.map((w) => w.text());
+    expect(names).toEqual(['invoice-march.pdf', 'invoice-april.pdf', 'invoice-may.pdf', 'PDF']);
+  });
+
+  it('falls back to the raw fileType when there is no fileName or extension', async () => {
+    mockSupportChat.messages.value = [
+      {
+        id: 8,
+        role: 'agent',
+        text: '',
+        agentName: 'Alex',
+        createdAt: 8,
+        attachments: [{ id: 305, fileType: 'archive', dataUrl: 'https://cdn.example/blob' }],
+      },
+    ];
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+
+    expect(wrapper.find('.agent-dock__attach-name').text()).toBe('archive');
+  });
+
+  it('strips a leading dot from the extension when there is no fileName', async () => {
+    mockSupportChat.messages.value = [
+      {
+        id: 9,
+        role: 'agent',
+        text: '',
+        agentName: 'Alex',
+        createdAt: 9,
+        attachments: [{ id: 306, fileType: 'file', dataUrl: 'https://cdn.example/x', extension: '.pdf' }],
+      },
+    ];
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+
+    expect(wrapper.find('.agent-dock__attach-name').text()).toBe('PDF');
+  });
+
+  it('rolls the size over to the next unit at >= 1000 of the current one, instead of "1024.0 KB"', async () => {
+    mockSupportChat.messages.value = [
+      {
+        id: 10,
+        role: 'agent',
+        text: '',
+        agentName: 'Alex',
+        createdAt: 10,
+        attachments: [{ id: 307, fileType: 'file', dataUrl: 'https://cdn.example/big', extension: 'zip', fileSize: 1048575 }],
+      },
+    ];
+    const wrapper = mountDock();
+    await clickSupportToggle(wrapper);
+
+    expect(wrapper.find('.agent-dock__attach-size').text()).toBe('1.0 MB');
+  });
 });
 
 describe('AgentDock — attachment picker and pending chips', () => {
+  it('hides the attach button, hidden file input, and pending chips when the live-chat flag is off — even with mode latently support and files pending', async () => {
+    setLiveChatEnabled(false);
+    const wrapper = mountDock();
+    const vm = vmOf(wrapper);
+    // `mode` can only reach 'support' through UI the flag hides (the header
+    // toggle / escalation chip), but this proves the gate is `activeMode`
+    // (flag-aware), not a bare `mode === 'support'` check — see AgentDock.vue.
+    vm.mode = 'support';
+    vm.pendingFiles = [makeFile('a.png', 100)];
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find('.agent-dock__attach-btn').exists()).toBe(false);
+    expect(wrapper.find('input[type="file"]').exists()).toBe(false);
+    expect(wrapper.find('.agent-dock__pending').exists()).toBe(false);
+    expect(wrapper.find('.agent-dock__pending-chip').exists()).toBe(false);
+  });
+
   it('renders the attach button and hidden file input only in Support mode', async () => {
     const wrapper = mountDock();
     expect(wrapper.find('.agent-dock__attach-btn').exists()).toBe(false);

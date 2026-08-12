@@ -165,9 +165,9 @@
                   </span>
                   <p v-if="m.text" class="agent-dock__text">{{ m.text }}</p>
                   <div v-if="m.attachments && m.attachments.length" class="agent-dock__attachments">
-                    <div v-for="a in m.attachments" :key="a.id" class="agent-dock__attach">
+                    <div v-for="a in m.attachments" :key="a.id">
                       <a
-                        v-if="a.fileType === 'image' && !attachmentFailed(a.id)"
+                        v-if="a.fileType === 'image' && !attachmentFailed(m.id, a.id)"
                         :href="a.dataUrl"
                         target="_blank"
                         rel="noopener"
@@ -175,7 +175,8 @@
                         <img
                           class="agent-dock__attach-img"
                           :src="a.thumbUrl ?? a.dataUrl"
-                          @error="onAttachImgError(a.id)"
+                          alt=""
+                          @error="onAttachImgError(m.id, a.id)"
                         />
                       </a>
                       <a
@@ -225,7 +226,7 @@
         >
           <div
             v-for="(file, idx) in pendingFiles"
-            :key="idx"
+            :key="file.name + file.size + file.lastModified"
             class="agent-dock__pending-chip"
           >
             <span class="agent-dock__pending-name">{{ middleTruncate(file.name) }}</span>
@@ -252,6 +253,7 @@
             v-if="activeMode === 'support'"
             type="button"
             class="agent-dock__attach-btn"
+            :disabled="sendDisabled"
             :aria-label="$t('support.attach.button')"
             @click="triggerFilePicker()"
           >
@@ -325,6 +327,7 @@ interface SupportAttachment {
   thumbUrl?: string;
   fileSize?: number;
   extension?: string;
+  fileName?: string;
 }
 
 // Mirrors SUPPORT_MAX_FILES_PER_MESSAGE in useSupportChat.ts (frozen
@@ -346,37 +349,27 @@ export default defineComponent({
     const pendingFiles = ref<File[]>([]);
     const fileInputRef = ref<HTMLInputElement | null>(null);
     // Attachment ids whose thumbnail failed to load (signed URLs can expire) —
-    // those bubbles fall back to the generic file row instead.
-    const attachErrored = ref<number[]>([]);
+    // those bubbles fall back to the generic file row instead. Keyed
+    // `${messageId}:${attachmentId}`, not the bare attachment id: ids arriving
+    // from optimistic echoes are not guaranteed unique across messages, so a
+    // bare-id key could make one message's failure hide another's thumbnail.
+    const attachErrored = ref<string[]>([]);
     // Local, UI-side notice for the file-count cap. Deliberately separate from
     // supportChat.errorKey — that ref belongs to the composable and this
     // component only ever reads it, never writes it.
     const tooManyFilesNotice = ref(false);
 
-    function attachmentFailed(id: number): boolean {
-      return attachErrored.value.includes(id);
+    function attachKey(messageId: number, attachmentId: number): string {
+      return `${messageId}:${attachmentId}`;
     }
 
-    function onAttachImgError(id: number): void {
-      if (!attachErrored.value.includes(id)) attachErrored.value.push(id);
+    function attachmentFailed(messageId: number, attachmentId: number): boolean {
+      return attachErrored.value.includes(attachKey(messageId, attachmentId));
     }
 
-    // No filename in the frozen attachment contract — label from what IS
-    // there (extension, else the raw fileType), not a hardcoded UI string.
-    function attachmentLabel(a: SupportAttachment): string {
-      const ext = (a.extension || '').replace(/^\./, '').toUpperCase();
-      return ext || a.fileType;
-    }
-
-    // No bytes formatter exists in src/shared/utils/format.ts (checked before
-    // writing this) — that file's fork-tracking only covers
-    // formatPrice/formatBalance/formatUsd, so this small local helper is not
-    // a tracked fork. Shared by sent-attachment bubbles and pending chips.
-    function formatAttachmentSize(bytes?: number): string {
-      if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return '';
-      if (bytes < 1024) return `${bytes} B`;
-      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    function onAttachImgError(messageId: number, attachmentId: number): void {
+      const key = attachKey(messageId, attachmentId);
+      if (!attachErrored.value.includes(key)) attachErrored.value.push(key);
     }
 
     function middleTruncate(name: string, max = 24): string {
@@ -385,6 +378,35 @@ export default defineComponent({
       const head = Math.ceil(keep / 2);
       const tail = keep - head;
       return `${name.slice(0, head)}…${name.slice(name.length - tail)}`;
+    }
+
+    // Prefers the real filename (added to the frozen contract after this was
+    // first built) over the derived extension/fileType label, since it's more
+    // useful and matches what a native file picker would show. Falls back to
+    // the extension/fileType derivation when fileName is absent — some
+    // sources (e.g. older Chatwoot attachments) never had one.
+    function attachmentLabel(a: SupportAttachment): string {
+      if (a.fileName) return middleTruncate(a.fileName);
+      const ext = (a.extension || '').replace(/^\./, '').toUpperCase();
+      return ext || a.fileType;
+    }
+
+    // A shared `humanFileSize` filter already exists (src/shared/utils/filters.ts,
+    // used by TransactionDetails.vue) but is deliberately not reused here: it
+    // defaults to SI units (1000-based kB/MB/...) and renders '—' for a null
+    // value. Attachment sizes want binary units (1024-based KB/MB, matching
+    // what OS file pickers show) and a missing fileSize is simply omitted
+    // (`v-if="a.fileSize"`), never shown as an em-dash — different enough
+    // rendering that reusing it would change behavior, not just call sites.
+    function formatAttachmentSize(bytes?: number): string {
+      if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return '';
+      if (bytes < 1024) return `${bytes} B`;
+      const kb = bytes / 1024;
+      // Roll over at >= 1000 of the CURRENT unit, not at the raw 1024*1024
+      // byte boundary — otherwise e.g. 1048575 B (1 byte short of 1 MiB)
+      // renders as "1024.0 KB" instead of "1.0 MB".
+      if (kb < 1000) return `${kb.toFixed(1)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     }
 
     function triggerFilePicker(): void {
@@ -1261,11 +1283,16 @@ export default defineComponent({
   border: 1px solid var(--input-border);
   background: transparent;
   cursor: pointer;
-  transition: border-color 150ms ease;
+  transition: border-color var(--g-dur-fast) ease;
 }
 
-.agent-dock__attach-btn:hover {
+.agent-dock__attach-btn:hover:not(:disabled) {
   border-color: var(--accent-60);
+}
+
+.agent-dock__attach-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .agent-dock__file-input {
@@ -1293,11 +1320,11 @@ export default defineComponent({
   color: var(--text-primary);
 }
 
+/* Truncation is done in JS (middleTruncate — deterministic and
+   extension-preserving); no CSS overflow/max-width here, or the two would
+   fight and the chip could double-truncate an already-short string. */
 .agent-dock__pending-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 120px;
 }
 
 .agent-dock__pending-size {
