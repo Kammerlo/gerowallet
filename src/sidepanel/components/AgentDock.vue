@@ -39,15 +39,15 @@
             <button
               type="button"
               class="agent-dock__mode-btn"
-              :class="{ 'is-active': mode === 'support' }"
+              :class="{ 'is-active': activeMode === 'support' }"
               role="tab"
-              :aria-selected="mode === 'support'"
+              :aria-selected="activeMode === 'support'"
               aria-controls="agent-dock-thread"
               @click="enterSupportMode()"
             >
               {{ $t('support.toggle.support') }}
               <span
-                v-if="mode === 'copilot' && supportChat.unread.value > 0"
+                v-if="activeMode === 'copilot' && supportChat.unread.value > 0"
                 class="agent-dock__unread-dot"
                 aria-hidden="true"
               ></span>
@@ -55,9 +55,9 @@
             <button
               type="button"
               class="agent-dock__mode-btn"
-              :class="{ 'is-active': mode === 'copilot' }"
+              :class="{ 'is-active': activeMode === 'copilot' }"
               role="tab"
-              :aria-selected="mode === 'copilot'"
+              :aria-selected="activeMode === 'copilot'"
               aria-controls="agent-dock-thread"
               :disabled="!copilotEnabled"
               :aria-disabled="String(!copilotEnabled)"
@@ -322,6 +322,8 @@ import {
   type SupportAttachment,
 } from '@/sidepanel/composables/useSupportChat';
 import { featureFlagsStore } from '@/stores/featureFlagsStore';
+import { walletStore } from '@/stores/walletStore';
+import { Blockchain } from '@/models/types';
 import { debugWarn } from '@/utils/debug';
 import i18n from '@/plugins/i18n';
 import ChartCard from '@/sidepanel/components/agent/ChartCard.vue';
@@ -329,12 +331,16 @@ import SwapCard from '@/sidepanel/components/agent/SwapCard.vue';
 import StakingCard from '@/sidepanel/components/agent/StakingCard.vue';
 import AllowanceCard from '@/sidepanel/components/agent/AllowanceCard.vue';
 import SupportAuthPrompt from '@/sidepanel/components/SupportAuthPrompt.vue';
-// The text-free Gero mark (antler icon, no wordmark) — same asset
-// NavigationDrawer.vue uses for its small-size logo rendering. Chosen over
-// gero-logo.svg (also mark-only, but a heavier raster PNG embedded in an SVG
-// wrapper) because it is a single scalable vector path, which stays crisp at
-// the FAB's ~22px render size and costs a fraction of the bytes.
-import geroMark from '@/assets/svg/gero-notext.svg';
+// The text-free Gero mark (antler icon, no wordmark) — same three-way asset
+// NavigationDrawer.vue uses for its own small-size logo rendering
+// (geroNoText/geroNoTextApex/geroNoTextMidnight). Chosen over gero-logo.svg
+// (also mark-only, but a heavier raster PNG embedded in an SVG wrapper)
+// because it is a single scalable vector path per variant, which stays crisp
+// at the FAB's ~22px render size and costs a fraction of the bytes. Each
+// variant bakes its own fixed gradient (the default is Cardano cyan/blue),
+// so which one renders has to track the active chain via the isApex/isMidnight
+// computeds below, mirroring NavigationDrawer.vue's derivation exactly.
+import assets from '@/utils/assets';
 
 type DockMode = 'copilot' | 'support';
 
@@ -350,6 +356,21 @@ export default defineComponent({
     const dock = agentDock;
     const scroll = ref<HTMLElement | null>(null);
     const { isAnySheetOpen } = useSheetVisibility();
+
+    // Mirrors NavigationDrawer.vue's isApex/isMidnight derivation exactly (same
+    // walletStore.loggedWallet?.chain source, same Blockchain members) so the
+    // FAB always shows the same chain-accented mark the nav drawer does. Each
+    // gero-notext*.svg variant bakes its own fixed gradient rather than
+    // reading --g-accent, so picking the wrong one shows the wrong brand
+    // color — e.g. Cardano cyan on an Apex or Midnight wallet.
+    const isApex = computed(() =>
+      walletStore.loggedWallet?.chain === Blockchain.APEX_PRIME
+      || walletStore.loggedWallet?.chain === Blockchain.APEX_VECTOR,
+    );
+    const isMidnight = computed(() => walletStore.loggedWallet?.chain === Blockchain.MIDNIGHT);
+    const geroMark = computed(() =>
+      isApex.value ? assets.geroNoTextApex : isMidnight.value ? assets.geroNoTextMidnight : assets.geroNoText,
+    );
 
     // ── Support attachments: pending picker state + sent-attachment bubbles ──
     const pendingFiles = ref<File[]>([]);
@@ -478,13 +499,15 @@ export default defineComponent({
     }
 
     function enterSupportMode(): void {
+      // The auto-enter watcher below is the SOLE supportChat.enter() trigger —
+      // it reacts to this assignment (activeMode flips to 'support') and
+      // covers this click along with every other path into Support. This
+      // function does not call enter() itself: it used to, but that made a
+      // single click call enter() twice (this direct call plus the watcher),
+      // and the composable's idempotency guard can't short-circuit a call
+      // that's still mid-flight from the first one — so every toggle click
+      // was firing a redundant loadHistory REST round-trip.
       mode.value = 'support';
-      if (activeMode.value === 'support') {
-        // enter() failures surface to the user via supportChat.errorKey/connectionState
-        // already; swallow here only so a throwing contract impl can't produce an
-        // unhandled promise rejection.
-        void supportChat.enter().catch((err: unknown) => debugWarn('[AgentDock] supportChat.enter() failed', err));
-      }
     }
 
     // The support thread counts as "seen" whenever it is the visible content of
@@ -516,12 +539,13 @@ export default defineComponent({
     // true` covers the case where the dock is already open in Support the
     // moment this component mounts; the reactive watch covers the FAB later
     // opening into that same default, a runtime flag flip, and toggle/chip
-    // switches. enterSupportMode()'s own call stays (below) — supportChat.enter()
-    // is idempotent by contract (see useSupportChat.ts), so the two calls a
-    // single toggle click can produce (this watcher plus that direct call) are
-    // safe, not wasted work. Guarded exactly like the markSeen watcher above:
-    // no supportChat ref is read here, so flag-off never reads into the
-    // singleton either.
+    // switches. This is the ONLY supportChat.enter() trigger — enterSupportMode()
+    // above deliberately does not call it too: enter()'s idempotency guard
+    // (see useSupportChat.ts) can't short-circuit a call that's still
+    // mid-flight from a first one, so a direct call alongside this watcher
+    // was firing loadHistory twice per toggle click, not harmlessly deduping.
+    // Guarded exactly like the markSeen watcher above: no supportChat ref is
+    // read here, so flag-off never reads into the singleton either.
     watch(
       () => [activeMode.value, dock.isOpen.value],
       () => {
@@ -874,10 +898,14 @@ export default defineComponent({
 }
 
 /* Assistant segment when copilotEnabled is off: visible (discoverable) but not
-   interactive — same opacity/cursor pairing as the send/attach buttons' own
-   :disabled state above, not a new value. */
+   interactive. Deliberately a higher opacity than the send/attach buttons'
+   own :disabled state (0.35) — this is a TEXT LABEL rather than an icon, and
+   0.35 over --g-overlay landed at ~1.6:1 contrast, nearly illegible, which
+   fought the "visible so it's discoverable" intent. 0.55 keeps it legible
+   while still reading as clearly non-interactive; verified this doesn't move
+   scripts/design/audit.mjs's lowAlphaText metric or fail contrast.mjs. */
 .agent-dock__mode-btn:disabled {
-  opacity: 0.35;
+  opacity: 0.55;
   cursor: default;
 }
 

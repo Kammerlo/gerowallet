@@ -26,7 +26,7 @@ const FLUXPOINT_BASE: string =
   import.meta.env['VITE_FLUXPOINT_BASE_URL'] || 'https://api-v3.fluxpointstudios.com';
 
 const FLUXPOINT_PERSONA =
-  'You are Gero Copilot, a concise, friendly Cardano wallet assistant. ' +
+  "You are Gero Companion's assistant, a concise, friendly Cardano wallet assistant. " +
   'Keep replies short and clear. You provide information only and never give financial advice.';
 
 const fluxpointAxiosInstance: AxiosInstance = axios.create({

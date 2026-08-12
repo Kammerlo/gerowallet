@@ -60,6 +60,16 @@ interface FlagsHolder {
 interface SheetVisibility {
   isAnySheetOpen: { value: boolean };
 }
+// Mirrors the one property NavigationDrawer.vue's own isApex/isMidnight
+// derivation reads (walletStore.loggedWallet?.chain) — a plain mutable
+// object, not a ref: the chain-accent tests below only need to set it BEFORE
+// each fresh mountDock() call (a new component instance re-evaluates its
+// computed from scratch), not react to it changing on an already-mounted
+// instance, so the ref-based reactivity flagsHolder needed above is
+// unnecessary machinery here.
+interface MockWalletStore {
+  loggedWallet?: { chain?: string };
+}
 
 // vi.mock(...) factories are hoisted above every import in this file — including
 // `import ... from 'vue'` — so referencing plain top-level `const` bindings (or `ref()`
@@ -73,7 +83,7 @@ interface SheetVisibility {
 // vi.hoisted only "works" if nothing forces it to resolve before that `const` runs,
 // which is a fragile accident of file order, not a guarantee.
 // See https://vitest.dev/api/vi.html#vi-hoisted.
-const { mockSupportChat, mockDock, flagsHolder, sheetVisibility } = vi.hoisted(() => {
+const { mockSupportChat, mockDock, flagsHolder, sheetVisibility, mockWalletStore } = vi.hoisted(() => {
   return {
     mockSupportChat: {
       enter: vi.fn().mockResolvedValue(undefined),
@@ -96,6 +106,11 @@ const { mockSupportChat, mockDock, flagsHolder, sheetVisibility } = vi.hoisted((
     // before this flag existed.
     flagsHolder: { isLiveChatEnabled: () => true, isCopilotEnabled: () => true } as FlagsHolder,
     sheetVisibility: {} as SheetVisibility,
+    // Undefined by default — AgentDock's isApex/isMidnight both read this via
+    // optional chaining, so no logged wallet falls through to the default
+    // (Cardano) mark, matching every pre-existing test that doesn't care about
+    // chain at all.
+    mockWalletStore: { loggedWallet: undefined } as MockWalletStore,
   };
 });
 
@@ -121,6 +136,14 @@ vi.mock('@/sidepanel/composables/useSheetVisibility', () => ({
   useSheetVisibility: () => sheetVisibility,
 }));
 
+// Real walletStore drags in chrome.storage, auto-lock timers, and Dexie —
+// mocked for the same isolation reason as useSupportChat/useAgentDock above.
+// AgentDock only ever reads walletStore.loggedWallet?.chain (for the FAB's
+// chain-accent mark), so the mock's surface is that one property.
+vi.mock('@/stores/walletStore', () => ({
+  walletStore: mockWalletStore,
+}));
+
 // The spending-auth dialog is stubbed out wholesale rather than stubbed at mount:
 // its real module graph reaches PassKeyAuthButton -> webauthn-prf and
 // PassKeyPasswordField -> Dexie, none of which this dock-only spec should load.
@@ -131,6 +154,19 @@ vi.mock('@/sidepanel/components/SupportAuthPrompt.vue', () => ({
 }));
 
 import Vue, { ref } from 'vue';
+// Real imports (not mocked): both are pure, side-effect-free constant/asset
+// data — the same category as renderMarkdown/i18n below, not a collaborator
+// like useSupportChat that needs isolating. Importing the real Blockchain
+// enum keeps the mocked chain values (Blockchain.APEX_PRIME, etc.) pinned to
+// whatever AgentDock.vue itself compares against, instead of drifting string
+// literals; importing the real assets barrel lets the chain-accent tests
+// assert against the actual asset.geroNoText*/URL values the component uses.
+import { Blockchain } from '@/models/types';
+import assets from '@/utils/assets';
+
+function setWalletChain(chain?: string): void {
+  mockWalletStore.loggedWallet = chain ? { chain } : undefined;
+}
 
 // AgentDock.vue renders raw <v-icon> (Vuetify isn't installed/registered in this
 // test's Vue instance) — ignore it as a custom element so Vue doesn't warn on every
@@ -258,6 +294,7 @@ async function pickFiles(wrapper: Wrapper<Vue>, files: File[]): Promise<void> {
 beforeEach(() => {
   setLiveChatEnabled(true);
   setCopilotEnabled(true);
+  setWalletChain(undefined);
 
   mockDock.isOpen.value = true;
   mockDock.busy.value = false;
@@ -360,10 +397,13 @@ describe('AgentDock — Support (live chat) UI', () => {
 
   it('calls supportChat.enter() when clicking into support mode', async () => {
     const wrapper = mountDock();
-    // Support is the default tab, so mounting already auto-connects (see the
-    // dedicated "Support connection" describe block below) — clear that call
-    // so this test isolates the click's own effect.
+    // Move off Support first: mounting already auto-connects into the default
+    // Support tab, and enterSupportMode() no longer calls enter() directly
+    // (the auto-enter watcher is the sole trigger — see AgentDock.vue), so a
+    // click on an already-active Support tab is now a genuine reactive no-op.
+    await clickCopilotToggle(wrapper);
     mockSupportChat.enter.mockClear();
+
     await clickSupportToggle(wrapper);
     expect(mockSupportChat.enter).toHaveBeenCalled();
   });
@@ -1115,11 +1155,35 @@ describe('AgentDock — Support connection (auto-enter)', () => {
     await clickCopilotToggle(wrapper);
     mockSupportChat.enter.mockClear();
 
+    // Before the flip: Assistant is the active, aria-selected tab. Vue 2 drops
+    // a non-enumerated aria-* attribute entirely when its bound expression is
+    // false (it is not in the isEnumeratedAttr list that gets a literal
+    // "false" string, unlike the Assistant button's own aria-disabled, which
+    // is deliberately wrapped in String(...) below for exactly that reason) —
+    // so the not-selected tab has no aria-selected attribute at all, not one
+    // set to "false".
+    expect(findModeButton(wrapper, 'copilot').classes()).toContain('is-active');
+    expect(findModeButton(wrapper, 'copilot').attributes('aria-selected')).toBe('true');
+    expect(findModeButton(wrapper, 'support').classes()).not.toContain('is-active');
+    expect(findModeButton(wrapper, 'support').attributes('aria-selected')).toBeUndefined();
+
     setCopilotEnabled(false);
     await wrapper.vm.$nextTick();
 
     expect(wrapper.text()).toContain('support.intro.title');
     expect(mockSupportChat.enter).toHaveBeenCalled();
+
+    // The toggle's is-active/aria-selected state is bound to `activeMode`, not
+    // the latent `mode` (still 'copilot' internally, since only activeMode
+    // collapsed) — otherwise the now-disabled Assistant tab would stay marked
+    // active/selected while Support is what's actually rendering.
+    const supportBtn = findModeButton(wrapper, 'support');
+    const assistantBtn = findModeButton(wrapper, 'copilot');
+    expect(supportBtn.classes()).toContain('is-active');
+    expect(supportBtn.attributes('aria-selected')).toBe('true');
+    expect(assistantBtn.classes()).not.toContain('is-active');
+    expect(assistantBtn.attributes('aria-selected')).toBeUndefined();
+    expect(assistantBtn.attributes('disabled')).toBeDefined();
   });
 });
 
@@ -1150,5 +1214,43 @@ describe('AgentDock — FAB icon (Gero Companion mark)', () => {
 
     expect(wrapper.find('.agent-dock__fab-icon').exists()).toBe(false);
     expect(wrapper.find('.agent-dock__fab').text()).toContain('mdi-close');
+  });
+
+  // Each gero-notext*.svg variant bakes its own fixed gradient — the wrong
+  // one shows the wrong brand color on an Apex or Midnight wallet. Mirrors
+  // NavigationDrawer.vue's own isApex/isMidnight -> asset switch exactly, so
+  // these assert against the same `assets` barrel values that component uses.
+  it('uses the default (Cardano) mark when no chain-specific wallet is logged in', () => {
+    mockDock.isOpen.value = false;
+    const wrapper = mountDock();
+    expect(wrapper.find('.agent-dock__fab-icon').attributes('src')).toBe(assets.geroNoText);
+  });
+
+  it('switches to the Apex mark for an Apex Fusion Prime wallet', () => {
+    setWalletChain(Blockchain.APEX_PRIME);
+    mockDock.isOpen.value = false;
+    const wrapper = mountDock();
+    expect(wrapper.find('.agent-dock__fab-icon').attributes('src')).toBe(assets.geroNoTextApex);
+  });
+
+  it('switches to the Apex mark for an Apex Fusion Vector wallet too', () => {
+    setWalletChain(Blockchain.APEX_VECTOR);
+    mockDock.isOpen.value = false;
+    const wrapper = mountDock();
+    expect(wrapper.find('.agent-dock__fab-icon').attributes('src')).toBe(assets.geroNoTextApex);
+  });
+
+  it('switches to the Midnight mark for a Midnight wallet', () => {
+    setWalletChain(Blockchain.MIDNIGHT);
+    mockDock.isOpen.value = false;
+    const wrapper = mountDock();
+    expect(wrapper.find('.agent-dock__fab-icon').attributes('src')).toBe(assets.geroNoTextMidnight);
+  });
+
+  it('falls back to the default (Cardano) mark for a Cardano or Bitcoin wallet', () => {
+    setWalletChain(Blockchain.BITCOIN);
+    mockDock.isOpen.value = false;
+    const wrapper = mountDock();
+    expect(wrapper.find('.agent-dock__fab-icon').attributes('src')).toBe(assets.geroNoText);
   });
 });

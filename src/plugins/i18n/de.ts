@@ -789,7 +789,7 @@ export default {
   'common.year': 'Jahr',
   'common.yes': 'Ja',
   'copilot.title': 'Gero Companion',
-  'copilot.open': 'Gero Companion oeffnen',
+  'copilot.open': 'Gero Companion öffnen',
   'copilot.close': 'Schliessen',
   'copilot.send': 'Senden',
   'copilot.placeholder': 'Frag Gero alles...',
