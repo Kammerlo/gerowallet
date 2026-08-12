@@ -353,7 +353,7 @@
                     x-small
                     color="#007DFF"
                     style="margin-left: 1px; margin-bottom: 1px"
-                    >{{ $t('transactions.swap') }}</v-chip
+                    >{{ $t('transactions.dexhunter') }}</v-chip
                   >
                   <v-chip
                     v-if="isMinswap(item)"
@@ -873,6 +873,13 @@ const addFundTransferStatus = (item: StoredTransaction, statuses: string[]): voi
   if (isCardanoTx(item) && item.body?.certificates && item.body.certificates.length > 0) {
     return;
   }
+  // A detected DEX interaction (swap / add-remove liquidity) reads wrong as
+  // "Sent Funds". Title it "DEX Order" — accurate whichever pool op it is; the
+  // venue chip (Minswap, etc.) names the platform.
+  if (isDexTransaction(item)) {
+    statuses.push(t('transactions.dexOrder'));
+    return;
+  }
   const hasReceivedFunds = item.receivedAmount - item.sentAmount > 0;
   const hasSentFunds = item.receivedAmount - item.sentAmount < 0;
   const receivedTokenCount = item.assets?.filter((asset) => asset.unit !== 'lovelace' && asset.quantity > 0).length ?? 0;
@@ -1311,6 +1318,10 @@ const isDustRegistration = (item: StoredTransaction): boolean => {
 // TODO: add aggregator swap-tx heuristic (order/fee address or metadata) once the
 // Gero aggregator's on-chain order/fee address is confirmed, so newly created
 // aggregator swaps are also tagged here.
+// Any recognised DEX/aggregator interaction — used to title the tx "DEX Order".
+const isDexTransaction = (item: StoredTransaction): boolean =>
+  isMinswap(item) || isSundaeSwap(item) || isSplash(item) || isDexHunter(item);
+
 const isDexHunter = (item: StoredTransaction): boolean => {
   if (!isCardanoTx(item)) return false;
   // Check for DexHunter order contract address (primary indicator)
@@ -1345,20 +1356,24 @@ const isMinswap = (item: StoredTransaction): boolean => {
   const MINSWAP_V2_ORDER_ADDRESS =
     'addr1zxn9efv2f6w82hagxqtn62ju4m293tqvw0uhmdl64ch8uw6j2c79gy9l76sdg0xwhd7r0c0kna0tycz4y5s6mlenh8pq6s3z70';
 
-  // Check for Minswap order contract addresses (indicates DEX interaction)
+  // Minswap V2 pool script address — a pool operation (swap/deposit/withdraw)
+  // spends the pool UTxO, so this address appears as a tx input. Some pool txs
+  // carry no 674 metadata and no locally-stored datums, so the order-address /
+  // metadata / datum checks below miss them; matching the pool address catches
+  // them without false-positiving on plain Minswap-LP-token transfers.
+  const MINSWAP_V2_POOL_ADDRESS = 'addr1w9e7ft4rrdd4rkdseguxr9hudfxyytm5ckh2qy0yhz7lfeg9lvhq7';
+
+  const MINSWAP_CONTRACT_ADDRESSES = [
+    MINSWAP_V1_MARKET_ORDER_ADDRESS,
+    MINSWAP_V1_LIMIT_ORDER_ADDRESS,
+    MINSWAP_V2_ORDER_ADDRESS,
+    MINSWAP_V2_POOL_ADDRESS,
+  ];
+
+  // Check for Minswap contract addresses (indicates DEX interaction)
   const hasMinswapOrderAddress =
-    item.utxo?.inputs?.some(
-      (input) =>
-        input.address === MINSWAP_V1_MARKET_ORDER_ADDRESS ||
-        input.address === MINSWAP_V1_LIMIT_ORDER_ADDRESS ||
-        input.address === MINSWAP_V2_ORDER_ADDRESS
-    ) ||
-    item.body?.outputs?.some(
-      (output) =>
-        output.address === MINSWAP_V1_MARKET_ORDER_ADDRESS ||
-        output.address === MINSWAP_V1_LIMIT_ORDER_ADDRESS ||
-        output.address === MINSWAP_V2_ORDER_ADDRESS
-    );
+    item.utxo?.inputs?.some((input) => !!input.address && MINSWAP_CONTRACT_ADDRESSES.includes(input.address)) ||
+    item.body?.outputs?.some((output) => !!output.address && MINSWAP_CONTRACT_ADDRESSES.includes(output.address));
 
   // Check for Minswap metadata message (indicates platform interaction)
   const msg = item.auxiliaryData?.blob?.[674]?.msg;
