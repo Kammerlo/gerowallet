@@ -243,8 +243,14 @@ describe('chatwoot support client', () => {
           thumbUrl: 'https://cdn.example.test/thumb.png',
           fileSize: 2048,
           extension: 'png',
+          fileName: 'img.png',
         },
-        { id: 103, fileType: 'file', dataUrl: 'https://cdn.example.test/no-filetype.bin' },
+        {
+          id: 103,
+          fileType: 'file',
+          dataUrl: 'https://cdn.example.test/no-filetype.bin',
+          fileName: 'no-filetype.bin',
+        },
       ]);
     });
 
@@ -260,7 +266,7 @@ describe('chatwoot support client', () => {
       expect(msg).not.toBeNull();
       expect(msg?.text).toBe('');
       expect(msg?.attachments).toEqual([
-        { id: 200, fileType: 'image', dataUrl: 'https://cdn.example.test/a.png' },
+        { id: 200, fileType: 'image', dataUrl: 'https://cdn.example.test/a.png', fileName: 'a.png' },
       ]);
     });
 
@@ -297,6 +303,79 @@ describe('chatwoot support client', () => {
       });
       expect(msg).not.toBeNull();
       expect('attachments' in (msg as object)).toBe(false);
+    });
+  });
+
+  describe('normalizeChatwootMessage() — attachment fileName', () => {
+    it('uses file_name verbatim when present', async () => {
+      const mod = await import('./chatwootSupport.client');
+      const msg = mod.normalizeChatwootMessage({
+        id: 20,
+        content: 'x',
+        message_type: 0,
+        created_at: 1700000020,
+        attachments: [
+          { id: 1, file_type: 'file', data_url: 'https://cdn.example.test/abc123.pdf', file_name: 'Q3 report.pdf' },
+        ],
+      } as never);
+      expect(msg?.attachments?.[0].fileName).toBe('Q3 report.pdf');
+    });
+
+    it('falls back to filename (no underscore) when file_name is absent', async () => {
+      const mod = await import('./chatwootSupport.client');
+      const msg = mod.normalizeChatwootMessage({
+        id: 21,
+        content: 'x',
+        message_type: 0,
+        created_at: 1700000021,
+        attachments: [{ id: 2, file_type: 'file', data_url: 'https://cdn.example.test/abc.pdf', filename: 'invoice.pdf' }],
+      } as never);
+      expect(msg?.attachments?.[0].fileName).toBe('invoice.pdf');
+    });
+
+    it('extracts + decodes the data_url basename, handling an encoded space, when no name field is present', async () => {
+      const mod = await import('./chatwootSupport.client');
+      const msg = mod.normalizeChatwootMessage({
+        id: 22,
+        content: 'x',
+        message_type: 0,
+        created_at: 1700000022,
+        attachments: [{ id: 3, file_type: 'image', data_url: 'https://cdn.example.test/path/My%20Screenshot.png' }],
+      });
+      expect(msg?.attachments?.[0].fileName).toBe('My Screenshot.png');
+    });
+
+    it('strips the query string before extracting the basename', async () => {
+      const mod = await import('./chatwootSupport.client');
+      const msg = mod.normalizeChatwootMessage({
+        id: 23,
+        content: 'x',
+        message_type: 0,
+        created_at: 1700000023,
+        attachments: [
+          {
+            id: 4,
+            file_type: 'file',
+            data_url: 'https://storage.googleapis.com/bucket/report.pdf?X-Goog-Signature=abc123&Expires=999',
+          },
+        ],
+      });
+      expect(msg?.attachments?.[0].fileName).toBe('report.pdf');
+    });
+
+    it('leaves fileName undefined when neither a name field nor a usable basename exists', async () => {
+      const mod = await import('./chatwootSupport.client');
+      const msg = mod.normalizeChatwootMessage({
+        id: 24,
+        content: 'x',
+        message_type: 0,
+        created_at: 1700000024,
+        attachments: [
+          // basename over the 120-char sanity cap -> treated as unusable noise, not a real name
+          { id: 5, file_type: 'file', data_url: `https://cdn.example.test/${'a'.repeat(130)}` },
+        ],
+      });
+      expect(msg?.attachments?.[0].fileName).toBeUndefined();
     });
   });
 });

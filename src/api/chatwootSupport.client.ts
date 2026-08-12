@@ -92,6 +92,8 @@ export interface SupportAttachment {
   thumbUrl?: string;
   fileSize?: number;
   extension?: string;
+  /** Best-effort display name — the payload's own name field, or a data_url basename. */
+  fileName?: string;
 }
 
 /** Per-message cap enforced client-side before any upload is attempted. */
@@ -110,6 +112,9 @@ export interface RawChatwootAttachment {
   thumb_url?: string;
   file_size?: number;
   extension?: string;
+  /** Chatwoot versions vary on which of these two carries the original file name. */
+  file_name?: string;
+  filename?: string;
 }
 
 /** Raw Chatwoot message payload — identical over REST and over the ActionCable stream. */
@@ -155,6 +160,34 @@ function toEpochMs(value: number | string | undefined): number {
 }
 
 /**
+ * Best-effort display name for an attachment. Precedence:
+ *   1. The payload's own `file_name` or `filename` (Chatwoot versions vary on
+ *      which is present), if a non-empty string.
+ *   2. The `data_url` basename: the path segment after the last `/`, with any
+ *      query string stripped first and the result `decodeURIComponent`-ed.
+ *      Used only if non-empty and not implausibly long (a hashed storage key
+ *      masquerading as a name) — a basic length sanity cap of 120.
+ *   3. Otherwise undefined; the UI falls back to the file type.
+ */
+function extractFileName(item: RawChatwootAttachment, dataUrl: string): string | undefined {
+  const named = item.file_name || item.filename;
+  if (typeof named === 'string' && named) return named;
+
+  const withoutQuery = dataUrl.split('?')[0];
+  const lastSlash = withoutQuery.lastIndexOf('/');
+  const raw = lastSlash === -1 ? withoutQuery : withoutQuery.slice(lastSlash + 1);
+  if (!raw) return undefined;
+
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    return undefined; // malformed percent-encoding — not a usable name
+  }
+  return decoded && decoded.length <= 120 ? decoded : undefined;
+}
+
+/**
  * Map raw Chatwoot attachments to the frozen UI shape, dropping any entry the
  * UI cannot render or key on: no `data_url`, or a non-numeric `id` (the UI keys
  * bubbles on id — an undefined/duplicate id would collide). `file_type` defaults
@@ -176,6 +209,8 @@ function normalizeAttachments(raw: RawChatwootAttachment[] | undefined): Support
     if (item.thumb_url) attachment.thumbUrl = item.thumb_url;
     if (typeof item.file_size === 'number') attachment.fileSize = item.file_size;
     if (item.extension) attachment.extension = item.extension;
+    const fileName = extractFileName(item, item.data_url);
+    if (fileName) attachment.fileName = fileName;
     mapped.push(attachment);
   }
   return mapped.length > 0 ? mapped : undefined;
