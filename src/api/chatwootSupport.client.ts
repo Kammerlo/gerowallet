@@ -299,13 +299,32 @@ export const chatwootSupportApi = {
     }
   },
 
-  /** Post a user message into the conversation. */
-  async sendMessage(sourceId: string, conversationId: number, content: string): Promise<SupportApiMessage | null> {
+  /**
+   * Post a user message into the conversation. With `files`, the body is sent as
+   * multipart/form-data (Chatwoot reads `params[:attachments]` as uploaded files
+   * on this same endpoint) instead of the JSON body used otherwise.
+   */
+  async sendMessage(
+    sourceId: string,
+    conversationId: number,
+    content: string,
+    files?: File[],
+  ): Promise<SupportApiMessage | null> {
+    const url = `/contacts/${encodeURIComponent(sourceId)}/conversations/${conversationId}/messages`;
     try {
-      const { data } = await supportChatAxiosInstance.post<RawChatwootMessage>(
-        `/contacts/${encodeURIComponent(sourceId)}/conversations/${conversationId}/messages`,
-        { content },
-      );
+      if (files && files.length > 0) {
+        const formData = new FormData();
+        if (content) formData.append('content', content);
+        for (const file of files) formData.append('attachments[]', file, file.name);
+        // The axios instance defaults Content-Type to application/json; setting it
+        // to undefined here (rather than omitting the header) removes that default
+        // so the browser sets the multipart boundary itself.
+        const { data } = await supportChatAxiosInstance.post<RawChatwootMessage>(url, formData, {
+          headers: { 'Content-Type': undefined },
+        });
+        return normalizeChatwootMessage(data);
+      }
+      const { data } = await supportChatAxiosInstance.post<RawChatwootMessage>(url, { content });
       return normalizeChatwootMessage(data);
     } catch (error) {
       throw asRequestError(error, 'Support message send');

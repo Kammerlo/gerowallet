@@ -154,6 +154,62 @@ describe('chatwoot support client', () => {
     expect(msgs.map((m) => m.id)).toEqual([9]);
   });
 
+  describe('sendMessage() — multipart with files', () => {
+    it('builds FormData with content + attachments[] per file and does not force Content-Type', async () => {
+      const mod = await import('./chatwootSupport.client');
+      const post = vi.spyOn(mod.supportChatAxiosInstance, 'post').mockResolvedValue({
+        data: { id: 8, content: 'see attached', message_type: 0, created_at: 1700000010 },
+      } as never);
+      const file1 = new File(['a'], 'a.png', { type: 'image/png' });
+      const file2 = new File(['b'], 'b.pdf', { type: 'application/pdf' });
+
+      const msg = await mod.chatwootSupportApi.sendMessage('src-1', 42, 'see attached', [file1, file2]);
+
+      expect(post).toHaveBeenCalledTimes(1);
+      const [url, body, config] = post.mock.calls[0];
+      expect(url).toBe('/contacts/src-1/conversations/42/messages');
+      expect(body).toBeInstanceOf(FormData);
+      const formData = body as FormData;
+      expect(formData.get('content')).toBe('see attached');
+      const attachmentEntries = formData.getAll('attachments[]');
+      expect(attachmentEntries).toHaveLength(2);
+      expect((attachmentEntries[0] as File).name).toBe('a.png');
+      expect((attachmentEntries[1] as File).name).toBe('b.pdf');
+      expect((config as { headers?: Record<string, unknown> } | undefined)?.headers).toMatchObject({
+        'Content-Type': undefined,
+      });
+      expect(msg?.id).toBe(8);
+    });
+
+    it('omits the content field from FormData when content is empty', async () => {
+      const mod = await import('./chatwootSupport.client');
+      const post = vi.spyOn(mod.supportChatAxiosInstance, 'post').mockResolvedValue({
+        data: { id: 9, content: '', message_type: 0, created_at: 1700000011 },
+      } as never);
+      const file = new File(['a'], 'a.png', { type: 'image/png' });
+
+      await mod.chatwootSupportApi.sendMessage('src-1', 42, '', [file]);
+
+      const [, body] = post.mock.calls[0];
+      const formData = body as FormData;
+      expect(formData.has('content')).toBe(false);
+      expect(formData.getAll('attachments[]')).toHaveLength(1);
+    });
+
+    it('keeps the JSON body path byte-identical when files is undefined or empty', async () => {
+      const mod = await import('./chatwootSupport.client');
+      const post = vi.spyOn(mod.supportChatAxiosInstance, 'post').mockResolvedValue({
+        data: { id: 7, content: 'hi', message_type: 0, created_at: 1700000000 },
+      } as never);
+
+      await mod.chatwootSupportApi.sendMessage('src-1', 42, 'hi');
+      expect(post).toHaveBeenNthCalledWith(1, '/contacts/src-1/conversations/42/messages', { content: 'hi' });
+
+      await mod.chatwootSupportApi.sendMessage('src-1', 42, 'hi', []);
+      expect(post).toHaveBeenNthCalledWith(2, '/contacts/src-1/conversations/42/messages', { content: 'hi' });
+    });
+  });
+
   describe('normalizeChatwootMessage() — attachments', () => {
     it('maps attachments snake_case to camelCase, skipping entries missing data_url', async () => {
       const mod = await import('./chatwootSupport.client');
