@@ -507,6 +507,31 @@ export default defineComponent({
       },
     );
 
+    // Kicks off (or resumes) the live connection whenever Support is the
+    // ACTIVE, VISIBLE content of an OPEN dock — not just on an explicit toggle
+    // click. Support-first means a returning user can land here without ever
+    // clicking anything (the default `mode`, or a runtime copilotEnabled drop
+    // forcing `activeMode` to 'support'), and without this watcher that user's
+    // history would never load until they happened to interact. `immediate:
+    // true` covers the case where the dock is already open in Support the
+    // moment this component mounts; the reactive watch covers the FAB later
+    // opening into that same default, a runtime flag flip, and toggle/chip
+    // switches. enterSupportMode()'s own call stays (below) — supportChat.enter()
+    // is idempotent by contract (see useSupportChat.ts), so the two calls a
+    // single toggle click can produce (this watcher plus that direct call) are
+    // safe, not wasted work. Guarded exactly like the markSeen watcher above:
+    // no supportChat ref is read here, so flag-off never reads into the
+    // singleton either.
+    watch(
+      () => [activeMode.value, dock.isOpen.value],
+      () => {
+        if (activeMode.value === 'support' && dock.isOpen.value) {
+          void supportChat.enter().catch((err: unknown) => debugWarn('[AgentDock] supportChat.enter() failed', err));
+        }
+      },
+      { immediate: true },
+    );
+
     // Single source for the header status text (and the support empty-state's
     // status line, which shows the same connection state) — copilot's
     // thinking/ready pair outside support mode, the live-chat connection state inside it.

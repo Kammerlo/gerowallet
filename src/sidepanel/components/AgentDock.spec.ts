@@ -358,19 +358,30 @@ describe('AgentDock — Support (live chat) UI', () => {
     expect(wrapper.text()).toContain('support.intro.title');
   });
 
-  it('calls supportChat.enter() when entering support mode', async () => {
+  it('calls supportChat.enter() when clicking into support mode', async () => {
     const wrapper = mountDock();
-    expect(mockSupportChat.enter).not.toHaveBeenCalled();
+    // Support is the default tab, so mounting already auto-connects (see the
+    // dedicated "Support connection" describe block below) — clear that call
+    // so this test isolates the click's own effect.
+    mockSupportChat.enter.mockClear();
     await clickSupportToggle(wrapper);
-    expect(mockSupportChat.enter).toHaveBeenCalledTimes(1);
+    expect(mockSupportChat.enter).toHaveBeenCalled();
   });
 
   it('enter() is idempotent-friendly: re-entering support mode calls enter() again (composable owns dedupe)', async () => {
     const wrapper = mountDock();
+    // Move off Support first — mounting already auto-connects into the
+    // default Support tab, so start from a clean slate for this test.
+    await clickCopilotToggle(wrapper);
+    mockSupportChat.enter.mockClear();
+
     await clickSupportToggle(wrapper);
+    const afterFirstEntry = mockSupportChat.enter.mock.calls.length;
+    expect(afterFirstEntry).toBeGreaterThan(0);
+
     await clickCopilotToggle(wrapper);
     await clickSupportToggle(wrapper);
-    expect(mockSupportChat.enter).toHaveBeenCalledTimes(2);
+    expect(mockSupportChat.enter.mock.calls.length).toBeGreaterThan(afterFirstEntry);
   });
 
   it('marks the support thread as seen when the dock opens directly into Support (the default) — no click needed', async () => {
@@ -1027,12 +1038,16 @@ describe('AgentDock — Companion gating (isCopilotEnabled)', () => {
   it('live-on + copilot-off: clicking the disabled Assistant segment does nothing', async () => {
     setCopilotEnabled(false);
     const wrapper = mountDock();
+    // Landing on the forced Support tab already auto-connects once (see the
+    // dedicated "Support connection" describe block below) — the click itself
+    // must not add to that.
+    const callsBeforeClick = mockSupportChat.enter.mock.calls.length;
 
     await findModeButton(wrapper, 'copilot').trigger('click');
 
     expect(wrapper.text()).toContain('support.intro.title');
     expect(wrapper.text()).not.toContain('copilot.greeting.line1');
-    expect(mockSupportChat.enter).not.toHaveBeenCalled();
+    expect(mockSupportChat.enter.mock.calls.length).toBe(callsBeforeClick);
   });
 
   it('live-on + copilot-on: both segments enabled, default is Support, and DOM order is Support then Assistant', () => {
@@ -1047,6 +1062,64 @@ describe('AgentDock — Companion gating (isCopilotEnabled)', () => {
     expect(buttons.at(1).attributes('aria-disabled')).toBe('false');
 
     expect(wrapper.text()).toContain('support.intro.title');
+  });
+});
+
+// Support is the default/primary tab, so a returning user must not have to
+// click anything for their history to load — supportChat.enter() has to fire
+// the instant Support becomes the active, visible content of an open dock,
+// not only from the toggle/chip click handlers. See the watcher in
+// AgentDock.vue placed right after the markSeen watcher.
+describe('AgentDock — Support connection (auto-enter)', () => {
+  it('calls supportChat.enter() when the dock opens with Support as the default — no interaction needed', () => {
+    // beforeEach already sets isOpen=true with liveChatEnabled/copilotEnabled
+    // both true — i.e. exactly "the dock opens with Support as the default."
+    mountDock();
+    expect(mockSupportChat.enter).toHaveBeenCalled();
+  });
+
+  it('calls supportChat.enter() when copilot-off forces Support on mount', () => {
+    setCopilotEnabled(false);
+    mountDock();
+    expect(mockSupportChat.enter).toHaveBeenCalled();
+  });
+
+  it('does not call supportChat.enter() while the dock is closed', () => {
+    mockDock.isOpen.value = false;
+    mountDock();
+    expect(mockSupportChat.enter).not.toHaveBeenCalled();
+  });
+
+  it('never calls supportChat.enter() when the live-chat flag is off, regardless of dock open state', () => {
+    setLiveChatEnabled(false);
+    mockDock.isOpen.value = true;
+    mountDock();
+    expect(mockSupportChat.enter).not.toHaveBeenCalled();
+  });
+
+  it('calls supportChat.enter() again after switching to Assistant and back to Support', async () => {
+    const wrapper = mountDock();
+    const callsAtMount = mockSupportChat.enter.mock.calls.length;
+    expect(callsAtMount).toBeGreaterThan(0);
+
+    await clickCopilotToggle(wrapper);
+    await clickSupportToggle(wrapper);
+
+    expect(mockSupportChat.enter.mock.calls.length).toBeGreaterThan(callsAtMount);
+  });
+
+  it('calls supportChat.enter() when a runtime copilotEnabled drop forces Support while the dock is already open', async () => {
+    const wrapper = mountDock();
+    // Move off Support first so the flag flip below is a genuine transition,
+    // not a no-op on an already-active tab.
+    await clickCopilotToggle(wrapper);
+    mockSupportChat.enter.mockClear();
+
+    setCopilotEnabled(false);
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.text()).toContain('support.intro.title');
+    expect(mockSupportChat.enter).toHaveBeenCalled();
   });
 });
 
