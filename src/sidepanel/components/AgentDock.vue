@@ -303,7 +303,11 @@ import { computed, defineComponent, nextTick, ref, watch } from 'vue';
 import { agentDock } from '@/sidepanel/composables/useAgentDock';
 import { renderMarkdown } from '@/services/agent/renderMarkdown';
 import { useSheetVisibility } from '@/sidepanel/composables/useSheetVisibility';
-import { supportChat } from '@/sidepanel/composables/useSupportChat';
+import {
+  supportChat,
+  SUPPORT_MAX_FILES_PER_MESSAGE,
+  type SupportAttachment,
+} from '@/sidepanel/composables/useSupportChat';
 import { featureFlagsStore } from '@/stores/featureFlagsStore';
 import { debugWarn } from '@/utils/debug';
 import i18n from '@/plugins/i18n';
@@ -315,26 +319,9 @@ import SupportAuthPrompt from '@/sidepanel/components/SupportAuthPrompt.vue';
 
 type DockMode = 'copilot' | 'support';
 
-// Mirrors `SupportAttachment` from the frozen support-chat contract — a
-// sibling PR adds this field for real onto `SupportMessage` in
-// useSupportChat.ts. Declared locally (not imported) so this component never
-// depends on that PR landing first; both sides are built to the same shape,
-// so they line up once merged.
-interface SupportAttachment {
-  id: number;
-  fileType: string;
-  dataUrl: string;
-  thumbUrl?: string;
-  fileSize?: number;
-  extension?: string;
-  fileName?: string;
-}
-
-// Mirrors SUPPORT_MAX_FILES_PER_MESSAGE in useSupportChat.ts (frozen
-// contract, same reasoning as SupportAttachment above). Only the COUNT cap is
-// this component's job — the size cap is enforced by the composable itself
-// and surfaces through supportChat.errorKey.
-const MAX_PENDING_FILES = 5;
+// Only the COUNT cap is this component's job — the size cap is enforced by
+// the composable itself and surfaces through supportChat.errorKey.
+const MAX_PENDING_FILES = SUPPORT_MAX_FILES_PER_MESSAGE;
 
 export default defineComponent({
   name: 'AgentDock',

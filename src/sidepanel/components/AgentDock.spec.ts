@@ -16,20 +16,11 @@
 // imports.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mount, type Wrapper } from '@vue/test-utils';
+// Type-only import: erased at compile time, so it is unaffected by the
+// vi.mock of this module below and keeps the spec pinned to the REAL contract.
+import type { SupportAttachment } from '@/sidepanel/composables/useSupportChat';
 
 type SupportConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
-// Mirrors the frozen `SupportAttachment` contract (Task B's sibling adds this
-// for real in useSupportChat.ts) — declared locally like every other mock
-// shape in this file, so this spec never depends on that PR landing first.
-interface SupportAttachment {
-  id: number;
-  fileType: string;
-  dataUrl: string;
-  thumbUrl?: string;
-  fileSize?: number;
-  extension?: string;
-  fileName?: string;
-}
 interface SupportMessage {
   id: number;
   // Optional stable key the real composable is expected to attach so an
@@ -106,6 +97,9 @@ const { mockSupportChat, mockDock, flagsHolder, sheetVisibility } = vi.hoisted((
 
 vi.mock('@/sidepanel/composables/useSupportChat', () => ({
   supportChat: mockSupportChat,
+  // The component imports this VALUE from the mocked module — it must exist
+  // here or the pick-time count cap silently disappears in tests.
+  SUPPORT_MAX_FILES_PER_MESSAGE: 5,
 }));
 
 vi.mock('@/stores/featureFlagsStore', () => ({
