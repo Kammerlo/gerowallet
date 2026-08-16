@@ -74,7 +74,7 @@
     <!-- Navigation (footer — outside the scroll region above) -->
     <div class="onboarding-actions d-flex" style="gap: 12px;">
       <v-spacer />
-      <v-btn class="onb-btn" depressed color="primary" :disabled="!selectedMethod" @click="onContinue()">{{ $t('common.continue') }}</v-btn>
+      <v-btn class="onb-btn onb-continue" depressed color="primary" :disabled="!selectedMethod" @click="onContinue()">{{ $t('common.continue') }}</v-btn>
     </div>
   </div>
 </template>

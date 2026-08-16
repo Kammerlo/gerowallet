@@ -346,6 +346,20 @@ onUnmounted(() => {
 }
 
 /* CONTENT */
+/* Translucent card: let the animated network background show through the glass.
+   Higher specificity + !important to beat the global `.v-card.liquid-glass`
+   background; the blur/saturate backdrop is inherited from `.liquid-glass`. */
+.v-card.onboarding-content {
+  background: rgb(from var(--g-raised) r g b / 0.78) !important;
+}
+
+/* Continue CTA (every step): black label on gradient/teal, incl. disabled.
+   Hoisted here from the 11 step components so the rule exists once. */
+.onboarding-content ::v-deep .onb-continue.v-btn,
+.onboarding-content ::v-deep .onb-continue.v-btn.v-btn--disabled {
+  color: var(--g-canvas) !important;
+}
+
 .onboarding-content {
   width: 100%;
   min-width: 0;

@@ -73,6 +73,7 @@
       <v-btn text @click="$emit('back')">{{ $t('common.back') }}</v-btn>
       <v-spacer />
       <v-btn
+        class="onb-continue"
         color="primary"
         :loading="creatingWalletLoader"
         :disabled="!valid3 || creatingWalletLoader"
@@ -180,6 +181,7 @@ const walletCreationStep3 = async (): Promise<void> => {
 </script>
 
 <style scoped lang="scss">
+/* Continue/CREATE CTA: black label on gradient/accent, incl. disabled */
 .wallet-name-field {
   ::v-deep input {
     font-size: 14px;

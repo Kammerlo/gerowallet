@@ -173,6 +173,7 @@
       <v-btn text @click="$emit('back')">{{ $t('common.back') }}</v-btn>
       <v-spacer />
       <v-btn
+        class="onb-continue"
         color="primary"
         :disabled="!canContinue || resetting"
         :loading="creating"

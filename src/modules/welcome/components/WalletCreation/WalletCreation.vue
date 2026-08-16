@@ -22,19 +22,20 @@
         <div v-if="hasWallets" class="welcome-subtitle">{{ $t('welcome.chooseAWallet') }}</div>
       </div>
 
-      <WalletsListLogin :hide-header="true" class="wallet-list-block" @network-change="onNetworkChange" />
+      <!-- The zero-wallet case never reaches this panel: Welcome.vue swaps the
+           whole left column for the centered onboarding hero instead. -->
+      <WalletsListLogin v-if="hasWallets" :hide-header="true" class="wallet-list-block" @network-change="onNetworkChange" />
     </div>
 
     <div class="footer-left">&#169; {{ new Date().getFullYear() }} {{ $t('welcome.adLabs') }}</div>
   </div>
 </template>
 <script setup lang="ts">
-import { computed, toRefs } from 'vue';
+import { computed } from 'vue';
 import { geroDashboardApex, geroDashboardPrime, geroDashboardVector, geroDashboardBitcoin, geroDashboard } from '@/utils/assets';
 import WalletsListLogin from '@/options/modules/welcome/components/WalletsListLogin.vue';
-import networks, { NetworkInfo } from '@/utils/networks';
-import { geroStore } from '@/stores/geroStore';
-import { Wallet, WalletType } from '@/models/types';
+import { NetworkInfo } from '@/utils/networks';
+import { useAvailableWallets } from '@/shared/composables/useAvailableWallets';
 
 const props = defineProps<{
   selectedNetwork: NetworkInfo;
@@ -48,16 +49,9 @@ const onNetworkChange = (n: NetworkInfo): void => {
   emit('network-change', n);
 };
 
-// Mirrors WalletsListLogin's `availableWallets` filter so the heading stays in
-// sync with what the list actually renders (same store + network/google rules).
-const { wallets } = toRefs(geroStore);
-const hasWallets = computed<boolean>(() =>
-  (Object.values(wallets.value) as Wallet[]).some(
-    (wallet: Wallet) =>
-      !!networks.resolveNetwork(wallet?.chain, wallet?.network)
-      && (wallet.type !== WalletType.Google || wallet.encryptionMethod === 'mpc'),
-  ),
-);
+// Shared eligibility rule, so the heading stays in sync with what the list
+// actually renders.
+const { hasWallets } = useAvailableWallets();
 
 // Logo reacts to the selected network's brand colors.
 const logo = computed(() => {

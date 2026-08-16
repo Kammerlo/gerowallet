@@ -87,7 +87,7 @@
 <script setup lang="ts">
 import assets from '@/utils/assets';
 import { Wallet, WalletType } from '@/models/types';
-import { computed, ref, toRefs, getCurrentInstance, watch, onMounted } from 'vue';
+import { ref, toRefs, getCurrentInstance, watch, onMounted } from 'vue';
 import networks, { NetworkInfo } from '@/utils/networks';
 import { Messaging } from '@/chrome/messaging';
 import { MessageTypes } from '@/models/MessageTypes';
@@ -95,6 +95,7 @@ import { geroStore } from '@/stores/geroStore';
 import { walletStore } from '@/stores/walletStore';
 import { debugLog } from '@/utils/debug';
 import UnlockWalletDialog from '@/modules/dashboard/dialogs/UnlockWalletDialog.vue';
+import { useAvailableWallets } from '@/shared/composables/useAvailableWallets';
 
 const selectedWallet = ref<string | null>(null);
 const showUnlockDialog = ref<boolean>(false);
@@ -110,18 +111,9 @@ const { loggedWallet, isLocked } = toRefs(walletStore);
 
 const { wallets } = toRefs(geroStore);
 
-const availableWallets = computed<Wallet[]>(() => {
-  return (Object.values(wallets.value) as Wallet[])
-    .filter((wallet: Wallet) => {
-      // Legacy "Google" wallets (non-mpc) are handled separately and stay off
-      // this list. MPC "Sign in with Google" wallets (Plan D,
-      // `encryptionMethod === 'mpc'`) are also `type: Google` but behave like
-      // any other wallet here — login goes through the normal pre-login unlock
-      // gate below.
-      return networks.resolveNetwork(wallet?.chain, wallet?.network)
-        && (wallet.type != WalletType.Google || wallet.encryptionMethod === 'mpc');
-    });
-});
+// Shared eligibility rule (see useAvailableWallets for the Google/MPC nuance):
+// login for MPC Google wallets still goes through the pre-login unlock gate.
+const { availableWallets } = useAvailableWallets();
 
 const resolveNetworkIcon = (item: Wallet): string => {
   const network = networks.resolveNetwork(item.chain, item.network);
@@ -474,7 +466,7 @@ const handleLoggedOut = async (): Promise<void> => {
 }
 
 .wallet-row {
-  background: var(--g-raised) !important;
+  background: rgb(from var(--g-raised) r g b / 0.55) !important;
   border: 1px solid var(--g-hairline-1) !important;
   border-radius: var(--g-r-control) !important;
   margin: 4px 0 !important;
@@ -484,7 +476,7 @@ const handleLoggedOut = async (): Promise<void> => {
 }
 
 .wallet-row:hover {
-  background: var(--g-raised) !important;
+  background: rgb(from var(--g-raised) r g b / 0.72) !important;
   border-color: var(--g-accent) !important;
   transform: translateY(-1px) !important;
 }
@@ -503,12 +495,12 @@ const handleLoggedOut = async (): Promise<void> => {
 /* Logged in wallet styling (teal/cyan) */
 .wallet-locked {
   border-color: var(--g-accent) !important;
-  background: var(--g-raised) !important;
+  background: rgb(from var(--g-raised) r g b / 0.6) !important;
 }
 
 .wallet-locked:hover {
   border-color: var(--g-accent) !important;
-  background: var(--g-raised) !important;
+  background: rgb(from var(--g-raised) r g b / 0.72) !important;
 }
 
 /* Fallback for browsers without backdrop-filter support */

@@ -37,8 +37,10 @@
 
     <!-- Main container -->
     <div class="welcome-container">
-      <!-- Left column - logo + existing wallet list -->
-      <div class="welcome-left-column">
+      <!-- Left column - logo + existing wallet list. With zero wallets there
+           is nothing to sign in to, so the whole panel yields to the
+           centered onboarding hero. -->
+      <div v-if="hasWallets" class="welcome-left-column">
         <WalletCreation
           :selectedNetwork="selectedNetwork"
           @network-change="onWalletListNetwork"
@@ -46,30 +48,18 @@
       </div>
 
       <!-- Right column - intro hero → onboarding (revealed on Get Started) -->
-      <div class="welcome-right-column">
+      <div class="welcome-right-column" :class="{ 'welcome-right-column--full': !hasWallets }">
         <div class="right-content">
           <transition name="onboarding-reveal" mode="out-in">
-            <!-- Intro: showcase hero + Get Started CTA -->
+            <!-- Intro: the same showcase hero in both states. First-run leads
+                 with logo + Welcome! + create CTA; the storefront variant
+                 (wallets exist, signed out) leads with the product pitch,
+                 since the left sign-in panel already carries the branding. -->
             <div v-if="!started" key="intro" class="right-panel">
-              <div class="welcome-intro">
-                <NoWalletsWelcomeCard />
-                <!-- Positioning lives on the wrapper, not the button: the global
-                     `.v-btn:active { transform: translateY(1px) }` press feedback
-                     would otherwise replace the centering transform on press,
-                     shifting the button out from under the cursor. -->
-                <div class="get-started-btn-wrap">
-                  <v-btn
-                    class="geroButton get-started-btn"
-                    rounded
-                    x-large
-                    depressed
-                    @click="started = true"
-                  >
-                    {{ $t('welcome.getStarted') }}
-                    <v-icon right>mdi-arrow-right</v-icon>
-                  </v-btn>
-                </div>
-              </div>
+              <OnboardingHero
+                :variant="hasWallets ? 'storefront' : 'first-run'"
+                @get-started="started = true"
+              />
             </div>
 
             <!-- Onboarding flow -->
@@ -93,7 +83,9 @@ import WalletOnboarding from '@/modules/welcome/components/WalletOnboarding/Wall
 import WalletCreation from '@/modules/welcome/components/WalletCreation/WalletCreation.vue';
 import LegalFooter from '@/modules/welcome/components/LegalFooter/LegalFooter.vue';
 import LanguageSelector from '@/modules/navigation/components/LanguageSelector.vue';
-import NoWalletsWelcomeCard from '@/options/modules/welcome/components/NoWalletsWelcomeCard.vue';
+import OnboardingHero from '@/modules/welcome/components/onboarding/OnboardingHero.vue';
+import { useAvailableWallets } from '@/shared/composables/useAvailableWallets';
+import { applyChainAccent } from '@/shared/composables/useChainAccent';
 
 const DEV_NETWORKS_KEY = 'gero:devNetworks';
 
@@ -101,11 +93,22 @@ const DEV_NETWORKS_KEY = 'gero:devNetworks';
 // the showcase hero rather than the full blockchain/method form.
 const started = ref<boolean>(false);
 const selectedNetwork = ref<NetworkInfo>(networks.networks[0]);
+
+// Shared eligibility rule: zero wallets flips the layout from the split
+// sign-in view to the full-width onboarding hero.
+const { hasWallets } = useAvailableWallets();
 const devMode = ref<boolean>(localStorage.getItem(DEV_NETWORKS_KEY) === 'true');
 
 watch(devMode, (val) => {
   localStorage.setItem(DEV_NETWORKS_KEY, String(val));
 });
+
+// Pre-login, useChainAccent is dormant (it keys on loggedWallet, and none is
+// signed in yet), so the chain accent slots stay at the Cardano default while
+// the welcome background already follows the previewed network. Drive the same
+// --g-* slots here from selectedNetwork so the Get Started CTA gradient and any
+// accent-tinted chrome match the chosen chain (teal Prime, orange Vector, …).
+watch(selectedNetwork, (n) => applyChainAccent(n?.blockchain), { immediate: true });
 
 const onOnboardingNetwork = (n: NetworkInfo): void => {
   selectedNetwork.value = n;
@@ -186,6 +189,11 @@ const onWalletListNetwork = (n: NetworkInfo): void => {
   background: transparent;
 }
 
+/* Zero wallets: the sign-in panel is gone, the hero owns the full width */
+.welcome-right-column--full {
+  width: 100%;
+}
+
 .right-content {
   width: 100%;
   height: 100%;
@@ -199,31 +207,9 @@ const onWalletListNetwork = (n: NetworkInfo): void => {
   display: flex;
   align-items: flex-start;
   justify-content: center;
-}
-
-/* Intro state: compact showcase hero with the Get Started CTA overlaid on it */
-.welcome-intro {
-  position: relative;
-  width: 100%;
-  max-width: 460px;
-  align-self: center; /* vertically centered within the right column */
-  margin: 0 auto;
-}
-
-.get-started-btn-wrap {
-  position: absolute;
-  left: 50%;
-  bottom: 0;
-  transform: translate(-50%, 50%); /* straddle the card's bottom edge */
-  z-index: 5;
-}
-
-.get-started-btn {
-  min-width: 176px;
-  height: 44px !important;
-  font-size: 14px;
-  font-weight: 700;
-  text-transform: none;
+  min-height: 0;
+  overflow-y: auto; /* the onboarding hero can exceed short viewports */
+  padding: 16px;
 }
 
 /* Reveal transition: only the intro fades OUT. The onboarding card mounts fully

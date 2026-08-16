@@ -32,6 +32,8 @@ import geroDashboard from '@/assets/svg/gero_dashboard.svg'
 import geroDashboardHorizontal from '@/assets/svg/gero_dashboard_horizontal.svg'
 import geroNoText from '@/assets/svg/gero-notext.svg'
 import geroNoTextApex from '@/assets/svg/gero-notext-apex.svg'
+import geroNoTextPrime from '@/assets/svg/gero-notext-prime.svg'
+import geroNoTextVector from '@/assets/svg/gero-notext-vector.svg'
 import geroNoTextMidnight from '@/assets/svg/gero-notext-midnight.svg'
 import nexusLogo from '@/assets/svg/nexus.svg'
 import geroDashboardApex from '@/assets/svg/gero_dashboard_apex.svg'
@@ -72,6 +74,8 @@ import walletConnectLogo from '@/assets/svg/walletconnect.svg'
 import cardanoShieldBigLogo from '@/assets/img/cardano-shield/logo.png'
 import geroLogo from '@/assets/svg/gero-logo.svg'
 import geroLogoApex from '@/assets/svg/gero-logo-apex.svg'
+import geroLogoPrime from '@/assets/svg/gero-logo-prime.svg'
+import geroLogoVector from '@/assets/svg/gero-logo-vector.svg'
 import geroDashboardText from '@/assets/gero-dashboard.svg'
 import geroText from '@/assets/svg/gero-text.svg'
 import apexBackground from '@/assets/background2.png'
@@ -182,6 +186,8 @@ export default {
   geroDashboardHorizontal,
   geroNoText,
   geroNoTextApex,
+  geroNoTextPrime,
+  geroNoTextVector,
   geroNoTextMidnight,
   nexusLogo,
   barChart,
@@ -215,6 +221,8 @@ export default {
   cardanoShieldBigLogo,
   geroLogo,
   geroLogoApex,
+  geroLogoPrime,
+  geroLogoVector,
   geroDashboardText,
   geroText,
   apexBackground,
@@ -245,6 +253,18 @@ export default {
       return cid.version; // 0, 1, or 2
     } catch (e) {
       return null; // Not a valid CID
+    }
+  },
+  // Gero brand logo tinted per chain (Apex Prime teal / Vector orange) —
+  // the single source for QR-center and similar per-chain logo picks.
+  resolveChainLogo(chain?: string): string {
+    switch (chain) {
+      case 'Apex Fusion Prime':
+        return geroLogoPrime;
+      case 'Apex Fusion Vector':
+        return geroLogoVector;
+      default:
+        return geroLogo;
     }
   },
   resolveIcon(icon: string): string {
@@ -390,6 +410,8 @@ export {
   geroDashboardHorizontal,
   geroNoText,
   geroNoTextApex,
+  geroNoTextPrime,
+  geroNoTextVector,
   geroNoTextMidnight,
   google,
 }

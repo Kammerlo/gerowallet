@@ -73,7 +73,7 @@
       <v-spacer />
       <v-btn
         v-if="existingWallet"
-        class="onb-btn"
+        class="onb-btn onb-continue"
         depressed
         color="primary"
         @click="openUnlockExisting()"
@@ -82,7 +82,7 @@
       </v-btn>
       <v-btn
         v-else-if="enrolledOnBackend"
-        class="onb-btn"
+        class="onb-btn onb-continue"
         depressed
         color="primary"
         @click="restoreExisting()"
@@ -91,7 +91,7 @@
       </v-btn>
       <v-btn
         v-else
-        class="onb-btn"
+        class="onb-btn onb-continue"
         depressed
         color="primary"
         :disabled="!email"

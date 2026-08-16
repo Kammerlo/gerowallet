@@ -156,6 +156,7 @@
       <v-btn text @click="$emit('back')">{{ $t('common.back') }}</v-btn>
       <v-spacer />
       <v-btn
+        class="onb-continue"
         color="primary"
         :disabled="!canCreate"
         :loading="creatingWalletLoader"
@@ -381,6 +382,7 @@ const walletCreationStep = async (): Promise<void> => {
 </script>
 
 <style scoped lang="scss">
+/* Continue/CREATE CTA: black label on gradient/accent, incl. disabled */
 // Terms link
 .terms-link {
   color: var(--v-primary-base);

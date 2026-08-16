@@ -79,7 +79,7 @@
     <div class="onboarding-actions d-flex" style="gap: 12px; text-align: initial;">
       <v-btn text @click="$emit('back')">{{ $t('common.back') }}</v-btn>
       <v-spacer />
-      <v-btn color="primary" @click="walletCreationStep2()">{{ $t('common.continue') }}</v-btn>
+      <v-btn class="onb-continue" color="primary" @click="walletCreationStep2()">{{ $t('common.continue') }}</v-btn>
     </div>
 
     <!-- The device prompt is mounted globally in options/App.vue and driven by
