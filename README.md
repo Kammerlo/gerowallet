@@ -49,6 +49,7 @@ Mini-Gero is a focused subset of the dashboard. Anything not in the side panel i
 - **Governance**: CIP-1694 DRep voting and delegation
 - **NFTs**: view, manage, and trade Cardano NFTs
 - **Native Tokens**: full support for Cardano native assets
+- **CIP-113 programmable tokens**: shown in the portfolio and badged; sending is blocked in Stage 1 — transfer via the issuing dApp
 
 **🔄 DeFi and Trading**
 - DEX aggregation for best swap rates (routed via Nexus)
@@ -137,6 +138,10 @@ VITE_SYNC_WS_URL=ws://localhost:8081/sync
 See [`.env.example`](.env.example) for the full list of optional variables
 (fiat on-ramp, feature-flag service, blog, etc.). Every entry ships with a safe
 placeholder — none are required to boot the extension against a local backend.
+
+CIP-113 programmable-token display is enabled per network by
+`VITE_CIP113_PROGRAMMABLE_LOGIC_BASE_*` (the deployment's `programmable_logic_base`
+script hash). An empty value disables it for that network; mainnet ships empty.
 
 ### 3. Start Gero Backend
 
