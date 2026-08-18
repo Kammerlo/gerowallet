@@ -788,21 +788,28 @@ const displayedTokens = computed(() => {
   // Apply verified / scam filters — but NEVER strip snek.fun tokens (bonding-curve
   // tokens are inherently unverified) or apply these on the snek.fun tab itself.
   // TODO(product): hideScam is verified-only after Xerberus removal.
+  // Programmable tokens are exempt for the same reason snek.fun ones are: legitimate
+  // holdings that are inherently unverified.
   if (activeView.value !== 'snekfun') {
     if (verifiedOnly.value) {
-      tokens = tokens.filter(tok => tok.verified || tok.isSnekFun);
+      tokens = tokens.filter(tok => tok.verified || tok.isSnekFun || tok.isProgrammable);
     }
     if (hideScam.value) {
-      tokens = tokens.filter(tok => tok.verified || tok.isSnekFun);
+      // Anyone can send an asset to that address, so being locked there is not
+      // evidence of legitimacy — hide-scam still wins.
+      tokens = tokens.filter(tok => tok.verified || tok.isSnekFun || (tok.isProgrammable && !tok.isScam));
     }
   }
 
   // Dedupe by unit — a token can appear in both the registered market list and the
   // snek.fun feed (and the snek feed can list the same token more than once).
+  // A unit can appear twice — spendable and locked — so key the dedupe by partition
+  // too, or the locked row is dropped and the balance reads short.
   const seen = new Set<string>();
   tokens = tokens.filter(t => {
-    if (seen.has(t.unit)) return false;
-    seen.add(t.unit);
+    const key = t.isProgrammable ? `${t.unit}#locked` : t.unit;
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 

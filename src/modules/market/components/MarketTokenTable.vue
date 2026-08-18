@@ -4,7 +4,7 @@
     class="transparent tokens-table market-token-table"
     :headers="activeHeaders"
     :items="paginatedTokens"
-    item-key="unit"
+    item-key="rowKey"
     :sort-by.sync="sortBy"
     :sort-desc.sync="sortDesc"
     :custom-sort="customSort"
@@ -62,8 +62,20 @@
             <img v-else-if="chainLogo" :src="chainLogo" :alt="`${item.ticker} Logo`" style="opacity: 0.5" />
             <v-icon v-else>mdi-circle-outline</v-icon>
           </v-avatar>
+          <v-tooltip v-if="item.isProgrammable" top :open-delay="300" content-class="custom-tooltip">
+            <template v-slot:activator="{ on, attrs }">
+              <v-icon
+                color="var(--g-warning)"
+                class="programmable-badge"
+                style="position: absolute; right: -3px; bottom: -3px; font-size: 13px; background: var(--g-surface); border-radius: 50%;"
+                v-bind="attrs"
+                v-on="on"
+              >mdi-lock-outline</v-icon>
+            </template>
+            {{ $t('programmableTokens.badgeTooltip') }}
+          </v-tooltip>
           <v-icon
-            v-if="item.isSnekFun"
+            v-else-if="item.isSnekFun"
             class="snek-badge"
             style="position: absolute; right: -4px; bottom: -4px; font-size: 14px; color: #A3E635; background: var(--g-surface); border-radius: 50%;"
             title="snek.fun"
@@ -81,6 +93,14 @@
           </template>
           {{ item.name }}
         </v-tooltip>
+        <v-chip
+          v-if="item.isProgrammable"
+          x-small label
+          class="ml-1 flex-shrink-0"
+          style="height: 16px; font-size: 10px; padding: 0 5px; color: var(--g-warning); background: var(--g-warning-fill); border: 1px solid var(--g-warning-line);"
+        >
+          {{ $t('programmableTokens.badge') }}
+        </v-chip>
         <v-chip
           v-if="showOwnedBadge && ownedUnits.has(item.unit)"
           x-small label

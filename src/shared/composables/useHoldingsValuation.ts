@@ -28,7 +28,7 @@ import { useCurrencyConverter } from '@/shared/composables/useCurrencyConverter'
 import { useNativeCurrency } from '@/modules/market/composables/useNativeCurrency';
 
 export function useHoldingsValuation() {
-  const { loggedWallet, utxos, collateral, tokens: walletTokens } = toRefs(walletStore);
+  const { loggedWallet, utxos, collateral, tokens: walletTokens, programmableTokens } = toRefs(walletStore);
   const { price } = toRefs(networkStore);
   const { allTokens } = useMarketData();
   const { usdToEurRate } = useCurrencyConverter();
@@ -70,7 +70,16 @@ export function useHoldingsValuation() {
     const dhTokens = tokenMetadataStore.tokens || {};
     const rows: MarketToken[] = [];
 
-    Object.entries(tokens).forEach(([unit, token]: [string, { quantity?: number | string; amount?: string; name?: string; policy_id?: string; metadata?: { name?: string; ticker?: string; decimals?: number } }]) => {
+    // Programmable tokens live in their own store map so nothing that selects
+    // transaction inputs can reach them; merged here because this composable is the
+    // one place both the dashboard and mini-Gero read holdings from.
+    type HoldingEntry = [string, { quantity?: number | string; amount?: string; name?: string; policy_id?: string; metadata?: { name?: string; ticker?: string; decimals?: number } }, boolean];
+    const entries: HoldingEntry[] = [
+      ...Object.entries(tokens).map(([unit, token]) => [unit, token, false] as HoldingEntry),
+      ...Object.entries(programmableTokens.value || {}).map(([unit, token]) => [unit, token, true] as HoldingEntry),
+    ];
+
+    entries.forEach(([unit, token, isProgrammable]: HoldingEntry) => {
       if (!token.quantity || Number(token.quantity) <= 0) return;
 
       const decimals = token.metadata?.decimals || 0;
@@ -94,12 +103,25 @@ export function useHoldingsValuation() {
         priceUsd = priceAda * adaPriceUsd;
       }
 
+      // Locked holdings are unpriced; counting them would inflate the total.
+      if (isProgrammable) {
+        priceUsd = 0;
+        priceAda = 0;
+      }
+
       const value = quantity * priceUsd;
 
       rows.push({
         unit,
         name: marketToken?.name || token.name || token.metadata?.name || (isNativeToken ? nativeCurrencyName.value : unit),
-        ticker: marketToken?.ticker || token.metadata?.ticker || (isNativeToken ? nativeCurrencyTicker.value : ''),
+        // The table renders `ticker` as the row label, so an empty one leaves a
+        // nameless row. Tokens with no registry entry and no market data have none,
+        // so fall back to the asset name resolveAsset() already decoded.
+        ticker: marketToken?.ticker
+          || token.metadata?.ticker
+          || (isNativeToken ? nativeCurrencyTicker.value : '')
+          || token.name
+          || '',
         img: marketToken?.img || (token as { img?: string }).img || '',
         verified: marketToken?.verified ?? dhToken?.verified ?? isNativeToken,
         // Graduated snek.fun tokens are unverified but legit — carry the market
@@ -107,6 +129,9 @@ export function useHoldingsValuation() {
         // badge renders (mirrors the market list). Missing here = held snek
         // tokens silently stripped by verified-only.
         isSnekFun: marketToken?.isSnekFun ?? false,
+        isProgrammable,
+        rowKey: isProgrammable ? `${unit}#locked` : unit,
+        isScam: (token as { isScam?: boolean }).isScam ?? false,
         price: priceUsd,
         priceAda,
         priceEur: marketToken?.priceEur ?? 0,

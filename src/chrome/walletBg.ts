@@ -23,6 +23,7 @@ import {
 } from '@/models/types';
 import {
   addrToSignWith,
+  classifyUtxoAddress,
   convertTransactionsForStorage,
   getAddress,
   getCcColdKey,
@@ -50,12 +51,13 @@ import WalletStore from '@/stores/walletStore';
 import NetworkStore, { isBitcoinTip } from '@/stores/networkStore';
 import {
   analyzeTransactionForSignatures,
+  cip68Label,
   findCollectionDescription,
   findCollectionName,
   longestCommonStartingSubstring,
   resolveAsset,
 } from '@/shared/utils/resolver';
-import { getDb } from '@/db/wallet-db';
+import { getDb, setWalletConfiguration } from '@/db/wallet-db';
 import MusicStore from '@/stores/musicStore';
 import SyncService from '@/services/sync.service';
 import { LoaderFactory } from '@/db/loaders';
@@ -72,6 +74,18 @@ import type { GroupedAddress } from '@/chrome/serialization';
 import { signDataCip8 } from '@/chrome/serialization';
 
 let blockchainDb: Dexie = null;
+
+/** Serialized UTxO row as written to the per-wallet `utxos` Dexie table. */
+interface StoredUtxoRow {
+  txId: Cardano.TransactionId;
+  index: number;
+  address: Cardano.PaymentAddress;
+  coins: string;
+  assets?: { unit: string; quantity: string }[];
+  datumHash?: Cardano.DatumHash;
+  datum?: Cardano.PlutusData;
+  scriptReference?: Cardano.Script;
+}
 
 export class WalletBg {
   api: Api;
@@ -112,6 +126,7 @@ export class WalletBg {
   /** Wallet record creation time (ISO). Lower bound for Midnight dust-registration age. */
   createdAt?: string;
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wallet record carries chain-specific runtime fields beyond the DB Wallet shape
   constructor(wallet: any, googleBaseAddress?: string) {
     this.id = wallet.id;
     this.name = wallet.name;
@@ -257,24 +272,50 @@ export class WalletBg {
    * Apply UTxOs: set on store, resolve assets, persist to DB.
    * Called on login (from DB) and when server UTxOs arrive.
    */
-  async applyUtxos(utxos: Cardano.Utxo[], persist = false) {
+  /**
+   * @param source 'cache' loads only carry the spendable partition, so they must not
+   *   touch programmable state — doing so would wipe the restored refusal index.
+   */
+  async applyUtxos(utxos: Cardano.Utxo[], persist = false, source: 'live' | 'cache' = 'live') {
     if (!utxos || utxos.length === 0) return;
 
     // Defense-in-depth: filter to only UTxOs matching wallet's payment credentials
     const myCredentials = new Set(this.derivePaymentCredentials());
-    const filtered = utxos.filter(([, txOut]) => {
-      try {
-        const addr = Cardano.Address.fromString(txOut.address as string);
-        const baseAddr = addr?.asBase();
-        if (!baseAddr) return true; // keep non-base addresses (enterprise, etc.)
-        const paymentCred = baseAddr.getPaymentCredential().hash;
-        return myCredentials.has(paymentCred);
-      } catch {
-        return true; // keep if we can't parse
+    // CIP-113 tokens sit at a shared script address whose stake slot names the owner:
+    // ours to display, never ours to spend. Divert rather than drop. The spendable
+    // branch is evaluated first and unchanged, so nothing spendable can be demoted.
+    const programmableBases = this.programmableBaseScriptHashes();
+    const programmableOwners = programmableBases.size > 0
+      ? this.programmableOwnerCredentials(myCredentials)
+      : new Set<string>();
+    const programmable: Cardano.Utxo[] = [];
+    // Tripwire: gero-sync scopes results to the subscribed stake address, so a
+    // non-zero count means we are being sent holdings that are not ours.
+    let programmableOther = 0;
+    const filtered = utxos.filter(utxo => {
+      const partition = classifyUtxoAddress(
+        utxo[1].address as string,
+        myCredentials,
+        programmableBases,
+        programmableOwners,
+      );
+      if (partition === 'programmable') {
+        programmable.push(utxo);
+      } else if (partition === 'programmable-other') {
+        programmableOther++;
       }
+      return partition === 'spendable';
     });
+    if (programmableOther > 0) {
+      // console.warn, not debugLog: debugLog is compiled out of normal builds and this
+      // is a trust-boundary violation that has to stay visible.
+      console.warn(
+        `CIP-113: dropped ${programmableOther} programmable UTxO(s) owned by other wallets — ` +
+        `gero-sync is returning holdings that are not ours`
+      );
+    }
     if (filtered.length !== utxos.length) {
-      debugLog(`🔒 Credential filter: ${utxos.length} → ${filtered.length} UTxOs (${utxos.length - filtered.length} Franken removed)`);
+      debugLog(`🔒 Credential filter: ${utxos.length} → ${filtered.length} UTxOs (${utxos.length - filtered.length} Franken removed, ${programmable.length} CIP-113)`);
     }
     utxos = filtered;
 
@@ -284,12 +325,33 @@ export class WalletBg {
         txOut.value.assets.keys().forEach((key: string) => uniqueAssets.add(key));
       }
     }
+    // Programmable tokens resolve their metadata through the same pipeline.
+    for (const [, txOut] of programmable) {
+      if (txOut.value.assets) {
+        txOut.value.assets.keys().forEach((key: string) => uniqueAssets.add(key));
+      }
+    }
 
-    debugLog(`📦 applyUtxos: ${utxos.length} UTxOs, ${uniqueAssets.size} assets, persist=${persist}`);
+    debugLog(
+      `📦 applyUtxos: ${utxos.length} UTxOs, ${uniqueAssets.size} assets, persist=${persist}` +
+      ` | CIP-113: matched=${programmable.length} otherOwners=${programmableOther}`
+    );
+
+    // Arm the signing guard before the syncAssets() await: until the set is installed
+    // findProgrammableInputs() reports clean, which is a window for an external transfer.
+    if (source === 'live') {
+      this.setProgrammableAssets(programmable);
+    }
 
     await this.syncService.syncAssets(Array.from(uniqueAssets));
     this.setAssets(utxos);
     WalletStore.setUtxos(utxos);
+
+    // Re-aggregate so metadata fetched above is picked up. Best-effort — syncAssets()
+    // does not await its write — but without it decimals/ticker stay stale forever.
+    if (source === 'live') {
+      this.setProgrammableAssets(programmable);
+    }
 
     // Persist to per-wallet DB so UTxOs survive logout
     if (persist) {
@@ -315,6 +377,134 @@ export class WalletBg {
     }
   }
 
+  // CIP-113 programmable tokens — display only. See docs/cip113-programmable-tokens-plan.md.
+
+  private programmableUtxos: Cardano.Utxo[] = [];
+
+  /** Empty when CIP-113 is not configured for this network, which disables the feature. */
+  private programmableBaseScriptHashes(): Set<string> {
+    return new Set(networks.resolveProgrammableLogicBaseScriptHashes(this.chain, this.network));
+  }
+
+  /**
+   * CIP-113 puts the owner in the address's stake slot. Which key goes there is a
+   * per-deployment convention — stake key for ordinary wallets, payment key for
+   * enterprise ones — so accept either.
+   */
+  private programmableOwnerCredentials(paymentCredentials: Set<string>): Set<string> {
+    const owners = new Set<string>(paymentCredentials);
+    try {
+      owners.add(getStakeKey(this.publicKey, 0).hash().hex());
+    } catch (e) {
+      debugLog('CIP-113: could not derive stake credential', e);
+    }
+    return owners;
+  }
+
+  /**
+   * Aggregate into a display-only map, deliberately NOT walletStore.utxos/tokens:
+   * every path that selects transaction inputs or discloses holdings reads those, so
+   * keeping these separate is what stops Gero spending or exposing them. No synthetic
+   * 'lovelace' entry — that min-ADA is locked, not spendable.
+   */
+  private setProgrammableAssets(utxos: Cardano.Utxo[]) {
+    this.programmableUtxos = utxos ?? [];
+    void this.persistProgrammableRefs();
+
+    const assets = {};
+    for (const utxo of this.programmableUtxos) {
+      if (!utxo[1].value.assets) continue;
+      for (const [key, quantity] of utxo[1].value.assets) {
+        const assetName: Cardano.AssetName = Cardano.AssetId.getAssetName(key);
+        // A CIP-68 reference token (label 100) carries the metadata for its paired
+        // 222/333 token, not value of its own. Listing it duplicates the holding.
+        if (cip68Label(assetName) === 100) continue;
+        if (!assets[key]) {
+          const policyId: Cardano.PolicyId = Cardano.AssetId.getPolicyId(key);
+          assets[key] = {
+            quantity: 0n,
+            unit: key,
+            policy_id: policyId,
+            asset_name: assetName,
+            fingerprint: Cardano.AssetFingerprint.fromParts(policyId, assetName),
+          };
+        }
+        assets[key].quantity += quantity;
+      }
+    }
+
+    // resolveAsset() handles CIP-68 labels 222/333, so metadata resolves for free.
+    const tokens = Object.fromEntries(
+      Object.entries(assets).map(([key, asset]) => [key, { ...resolveAsset(asset), isProgrammable: true }])
+    );
+
+    WalletStore.setProgrammableTokens(tokens);
+  }
+
+  /**
+   * `txId#index` refs the signing guard refuses. Persisted rather than derived on
+   * demand: an MV3 worker can restart at any time and loadCachedUtxos() restores only
+   * the spendable partition, so without this the guard reports clean after every
+   * restart. Stale entries can only cause a refusal, never a wrongful signature.
+   */
+  private programmableInputRefs: Set<string> = new Set();
+
+  private static readonly PROGRAMMABLE_REFS_CONFIG_KEY = 'cip113ProgrammableInputRefs';
+
+  /** Last value written to the config row, so a failed write is retried. */
+  private persistedProgrammableRefs: string | null = null;
+
+  private async persistProgrammableRefs() {
+    const refs = this.programmableUtxos.map(([txIn]) => `${txIn.txId}#${txIn.index}`);
+    // Replace, not merge, so a transferred or seized UTxO stops being refused. Updated
+    // before the write so the guard reflects the live snapshot even if the write fails.
+    this.programmableInputRefs = new Set(refs);
+
+    // Compare against what is on disk, not the in-memory set: applyUtxos aggregates
+    // twice per sync, so keying off memory would skip the retry after a failed write.
+    const serialized = JSON.stringify(refs);
+    if (serialized === this.persistedProgrammableRefs) return;
+    try {
+      await setWalletConfiguration(this.id, WalletBg.PROGRAMMABLE_REFS_CONFIG_KEY, serialized);
+      this.persistedProgrammableRefs = serialized;
+    } catch (e) {
+      debugLog('CIP-113: could not persist programmable input refs', e);
+    }
+  }
+
+  /** Restore the refusal index at login, before any sign request can arrive. */
+  public async loadProgrammableRefs() {
+    try {
+      const db = await this.getDb();
+      const row = await db.table('config').where({ key: WalletBg.PROGRAMMABLE_REFS_CONFIG_KEY }).first();
+      const stored = row?.value ? JSON.parse(row.value) : [];
+      if (Array.isArray(stored)) {
+        this.programmableInputRefs = new Set(stored.filter((r: unknown) => typeof r === 'string'));
+        this.persistedProgrammableRefs = row?.value ?? null;
+        debugLog(`🔒 CIP-113: restored ${this.programmableInputRefs.size} guarded input refs`);
+      }
+    } catch (e) {
+      debugLog('CIP-113: could not restore programmable input refs', e);
+    }
+  }
+
+  /**
+   * Inputs spending one of this wallet's programmable UTxOs. Non-empty means the
+   * transaction must not be witnessed — Gero cannot build a valid CIP-113 transfer,
+   * so such a transaction was necessarily built elsewhere.
+   */
+  findProgrammableInputs(transaction: Cardano.Tx): string[] {
+    if (this.programmableInputRefs.size === 0) return [];
+    const hits: string[] = [];
+    for (const input of transaction?.body?.inputs ?? []) {
+      const ref = `${input.txId}#${input.index}`;
+      if (this.programmableInputRefs.has(ref)) {
+        hits.push(ref);
+      }
+    }
+    return hits;
+  }
+
   /**
    * Load persisted UTxOs from per-wallet DB. Fast — no server needed.
    */
@@ -328,7 +518,7 @@ export class WalletBg {
       debugLog(`📦 Loading ${rows.length} persisted UTxOs from DB`);
 
       // Reconstruct Cardano.Utxo[] from serialized rows
-      const utxos: Cardano.Utxo[] = rows.map((row: any) => {
+      const utxos: Cardano.Utxo[] = rows.map((row: StoredUtxoRow) => {
         const assets = new Map<Cardano.AssetId, bigint>();
         if (row.assets) {
           for (const a of row.assets) {
@@ -351,7 +541,7 @@ export class WalletBg {
         ] as Cardano.Utxo;
       });
 
-      await this.applyUtxos(utxos);
+      await this.applyUtxos(utxos, false, 'cache');
     } catch (e) {
       debugLog('Failed to load cached UTxOs:', e);
     }
@@ -489,6 +679,7 @@ export class WalletBg {
       return;
     }
     const collections = {};
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- resolveAsset() output is an untyped bag; see the note on its return type
     Object.values(collectibles).forEach((collectible: any) => {
       let resolvedAsset;
       if (collectible.policy_id === '') {
@@ -606,6 +797,7 @@ export class WalletBg {
       });
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Dexie row for the provider-shaped account record
   async getAccountInfo(): Promise<any> {
     return this.getDb()
       .then(async db => {
@@ -618,6 +810,7 @@ export class WalletBg {
       });
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider-shaped account payload, merged field-by-field below
   async setAccountInfo(accountInfo): Promise<any> {
     const resAccount = await this.getAccountInfo();
     const acc = {
@@ -678,6 +871,7 @@ export class WalletBg {
     }
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider reward rows, stored verbatim
   async setAccountRewards(res): Promise<any[] | void> {
     return this.getDb()
       .then(db => {
@@ -697,6 +891,7 @@ export class WalletBg {
       });
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mixed chain tx records; consumers narrow per chain
   async setAccountTransactions(txs): Promise<any> {
     return this.getDb()
       .then(async db => {
@@ -752,6 +947,7 @@ export class WalletBg {
       });
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- protocol-parameter blob differs per provider and era
   async setEpochParams(epoch_params: any): Promise<void> {
     const blockchainDB: Dexie = await this.getBlockchainDb();
     const epochParamsTable = blockchainDB.table('epoch_params');
@@ -764,7 +960,9 @@ export class WalletBg {
     }
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- returns the heterogeneous key/path buckets consumed by the signing paths
   resolvePathsForMissingAddresses(usedAddresses: string[]): any {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- address+path+credential records assembled below
     const resolvedAddresses: any[] = [];
     let addressIndex: number = 0; // Start from the first address index
     let consecutiveUnused: number = 0; // Track consecutive unused addresses
@@ -910,8 +1108,12 @@ export class WalletBg {
         const parsed = Cardano.Address.fromString(addr);
         const baseAddr = parsed?.asBase();
         if (!baseAddr) continue;
-        const paymentCred = baseAddr.getPaymentCredential().hash;
-        if (!currentCreds.has(paymentCred)) {
+        const paymentCred = baseAddr.getPaymentCredential();
+        // Only KEY credentials are BIP44-derivable. Any script address sharing this
+        // wallet's stake credential can never be covered, and treating one as
+        // "not yet derived" spins the range to its cap and resyncs forever.
+        if (paymentCred.type === Cardano.CredentialType.ScriptHash) continue;
+        if (!currentCreds.has(paymentCred.hash)) {
           needsExpansion = true;
           break;
         }
@@ -922,9 +1124,31 @@ export class WalletBg {
 
     if (!needsExpansion) return null;
 
-    // Double the range and re-derive
-    this.credentialRange = Math.min(this.credentialRange * 2, 500);
+    // At the cap, returning a set makes the caller resubscribe from block 0 forever.
+    const grown = Math.min(this.credentialRange * 2, 500);
+    if (grown === this.credentialRange) {
+      debugLog(`🔑 Credential range already at cap (${this.credentialRange}); not resubscribing`);
+      return null;
+    }
+    this.credentialRange = grown;
     debugLog(`🔑 Expanding credential range to ${this.credentialRange} per chain`);
+    return this.subscriptionCredentials();
+  }
+
+  /**
+   * Credential list for the gero-sync SUBSCRIBE.
+   *
+   * A non-empty list is a strict allowlist: the server returns only UTxOs at addresses
+   * whose payment credential is in it, and it never matches the CIP-113 script address
+   * (adding the script hash returns nothing — verified against the live endpoint). An
+   * empty list disables the filter so the server resolves by stake address instead, and
+   * classifyUtxoAddress does the filtering client-side.
+   *
+   * Networks without a deployment keep the filter, so sync is unchanged there.
+   * Single source of truth: resubscribe() REPLACES the socket's credential set.
+   */
+  subscriptionCredentials(): string[] {
+    if (this.programmableBaseScriptHashes().size > 0) return [];
     return this.derivePaymentCredentials();
   }
 
@@ -974,12 +1198,12 @@ export class WalletBg {
         );
 
         return Bip32PrivateKey.fromBytes(privateKeyBytes);
-      } catch (error: any) {
+      } catch (error: unknown) {
         // User cancelled or PRF evaluation failed
-        if (error.message?.includes('cancelled')) {
+        if (error instanceof Error && error.message?.includes('cancelled')) {
           throw new Error('Biometric authentication was cancelled');
         }
-        throw new Error(`Failed to decrypt private key with PRF: ${error.message}`);
+        throw new Error(`Failed to decrypt private key with PRF: ${error instanceof Error ? error.message : String(error)}`);
       }
 
     } else {
@@ -1140,6 +1364,7 @@ export class WalletBg {
     );
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Esplora UTxO shape, normalised by the caller
   async fetchBitcoinUtxos(): Promise<any[]> {
     const { BitcoinApi } = await import('@/api/bitcoin-api');
     const { parseBitcoinUtxos } = await import('@/chains/bitcoin/bitcoinUtxoManager');
@@ -1154,6 +1379,7 @@ export class WalletBg {
       const addressToDerivation = new Map<string, { chain: number; index: number }>();
 
       // Fetch UTXOs for all discovered addresses, deduplicating by txHash:index
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Esplora UTxO shape, normalised by the caller
       const allUtxos: any[] = [];
       const utxoSeen = new Set<string>();
 
@@ -1162,6 +1388,7 @@ export class WalletBg {
         let idx = 0;
         while (consecutiveUnused < GAP_LIMIT) {
           const addr = deriveBtcAddr(this.publicKey, this.network, this.addressType || 'segwit', chain, idx);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Esplora UTxO shape, normalised by the caller
           let rawUtxos: any[] = [];
           try {
             rawUtxos = await bitcoinApi.getUtxos(addr);
@@ -1455,6 +1682,7 @@ export class WalletBg {
    */
   async signBitcoinDappPsbt(
     psbtHex: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BIP-322 signer options passed straight through to bitcoinjs-lib
     options?: { autoFinalized?: boolean; toSignInputs?: any[] },
     password?: string,
     prfSecret?: Uint8Array
@@ -1481,6 +1709,7 @@ export class WalletBg {
     const bitcoin = await import('bitcoinjs-lib');
     const bitcoinNetwork = getBitcoinNetwork(this.network);
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bitcoinjs-lib Psbt has no exported type surface for the fields used here
     let psbt: any;
     try {
       psbt = bitcoin.Psbt.fromHex(psbtHex, { network: bitcoinNetwork });
@@ -1592,6 +1821,7 @@ export class WalletBg {
 
     // Build to_sign PSBT spending to_spend
     const psbt = new bitcoin.Psbt({ network: bitcoinNetwork });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- setVersion is present at runtime but absent from bitcoinjs-lib's typings
     (psbt as any).setVersion(0);
     psbt.addInput({
       hash: toSpendHash,
@@ -1679,6 +1909,15 @@ export class WalletBg {
       transaction = txInput;
     }
 
+    // CIP-113 defence in depth. The dApp-facing handlers refuse these before the
+    // approval UI opens; this catches any caller that reaches the signer directly.
+    // Checked before the root key is decrypted.
+    const programmableInputs = this.findProgrammableInputs(transaction);
+    if (programmableInputs.length > 0) {
+      debugLog('CIP-113: refusing to sign, programmable inputs:', programmableInputs);
+      throw new Error('Gero cannot sign transfers of CIP-113 programmable tokens');
+    }
+
     // Get root private key
     let rootPrivateKey: Bip32PrivateKey;
     if (privateKeyBytes) {
@@ -1732,6 +1971,7 @@ export class WalletBg {
    * @param _utxos - UTXOs for transaction schema conversion
    * @returns Promise with transaction ID
    */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- unused legacy parameter kept for call-site compatibility
   async submitTx(txInput: string | Cardano.Tx, _utxos: any[]): Promise<string> {
     let txCbor: string;
 

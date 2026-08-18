@@ -496,7 +496,13 @@ export class WalletManager {
       // Load holdings from cached UTxOs, keys and account immediately — no need to wait for
       // transactions or gero-sync. The cached account keeps the balance/empty-state showing the
       // last-known value on login instead of flashing empty until the first sync.
-      await Promise.all([walletBg.loadCachedUtxos(), walletBg.loadCachedKeys(), walletBg.loadCachedAccount()]);
+      await Promise.all([
+        // Arms the CIP-113 signing guard before any sign request can arrive.
+        walletBg.loadProgrammableRefs(),
+        walletBg.loadCachedUtxos(),
+        walletBg.loadCachedKeys(),
+        walletBg.loadCachedAccount(),
+      ]);
 
       promises.push(
         walletBg.loadConfig(),
@@ -524,7 +530,9 @@ export class WalletManager {
     if (walletBg.chain !== Blockchain.BITCOIN && walletBg.chain !== Blockchain.MIDNIGHT) {
       const lastSyncInfo = await walletBg.getLastSyncInfo();
       const lastSyncedBlock = lastSyncInfo?.height || 0;
-      const credentials = walletBg.derivePaymentCredentials();
+      // See subscriptionCredentials(): empty where CIP-113 is configured, so gero-sync
+      // resolves by stake address and returns the programmable-token UTxOs too.
+      const credentials = walletBg.subscriptionCredentials();
 
       // Cross-device signing bridge (ships DARK behind isCrossDeviceSigningEnabled).
       // Returns null and does nothing when the flag is off, so the handlers below

@@ -49,6 +49,14 @@ export interface MarketToken {
   unrealizedPnl?: number | null;
   isNative?: boolean;
   isSnekFun?: boolean;
+  // Visible but not sendable. Carry it wherever isSnekFun travels — missing here
+  // means the verified-only filter silently strips the row.
+  isProgrammable?: boolean;
+  // Stable row identity: a unit can appear twice (spendable + locked), and `unit`
+  // alone collides as a v-data-table item-key.
+  rowKey?: string;
+  // Carried so the programmable exemption cannot override a hide-scam preference.
+  isScam?: boolean;
 }
 
 export interface CandlestickDataPoint {
@@ -116,6 +124,7 @@ function enrichWithStores(apiToken: TokenPriceResponse, sparklineMap?: Record<st
 
   return {
     unit: assetId,
+    rowKey: assetId,
     name: apiToken.name || dhToken?.name || apiToken.assetNameAscii || assetId,
     ticker: apiToken.ticker || dhToken?.ticker || apiToken.assetNameAscii || '',
     img: apiToken.logo || '',
@@ -247,6 +256,7 @@ async function fetchAllTokens(silent = false): Promise<void> {
     const nativeImg = networks.resolveCurrencyImage(chain, walletStore.loggedWallet?.network) || '';
     const nativeToken: MarketToken = {
       unit: 'lovelace',
+      rowKey: 'lovelace',
       name: nativeName,
       ticker: nativeTicker,
       img: nativeImg,

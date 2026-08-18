@@ -3,7 +3,7 @@ import Loading from '@/stores/loading';
 import { Messaging } from '@/chrome/messaging';
 import { getErrorMessage } from '@/shared/utils/errorHandler';
 import { isStakeKeyRegistered } from '@/shared/utils/stakeRegistration';
-import { APIError, BITCOIN_METHOD, MIDNIGHT_METHOD, MidnightErrorCode, METHOD, POPUP, SENDER, TARGET, TxSendError } from '@/chrome/config';
+import { APIError, BITCOIN_METHOD, MIDNIGHT_METHOD, MidnightErrorCode, METHOD, POPUP, SENDER, TARGET, TxSendError, TxSignError } from '@/chrome/config';
 import { bringInitBackground } from '@bringweb3/chrome-extension-kit';
 import {
   focusOrCreatePopup,
@@ -1168,6 +1168,34 @@ app.add(METHOD.signData, (request, sendResponse) => {
   }
 });
 
+/**
+ * CIP-113 preflight: refuse to sign a transaction spending one of this wallet's
+ * programmable UTxOs. Keeping them out of walletStore.utxos already stops Gero
+ * selecting or disclosing them, but a caller that derives the address itself can
+ * still hand over a complete transaction.
+ *
+ * Runs at REQUEST ENTRY, before the approval UI, so it covers every downstream signer
+ * for anything already known to be programmable. It is NOT a signature-time check: a
+ * UTxO first learned while the prompt is open is re-checked by WalletBg.signTx on the
+ * software path, but not by the hardware paths, which sign in document context.
+ *
+ * Returns a reason string when the transaction must be refused, else null.
+ */
+function refusalForProgrammableInputs(txCbor: unknown): string | null {
+  if (typeof txCbor !== 'string' || !txCbor) return null;
+  const wallet = walletManager.getWallet();
+  if (!wallet?.findProgrammableInputs) return null;
+  try {
+    const hits = wallet.findProgrammableInputs(deserializeCardanoJsSdkTx(txCbor));
+    if (hits.length === 0) return null;
+    return `CIP-113: refusing to sign, transaction spends programmable-token UTxOs ${hits.join(', ')}`;
+  } catch (e) {
+    // Unparseable here means the signer would fail anyway — don't refuse spuriously.
+    debugLog('CIP-113 preflight could not parse transaction:', e);
+    return null;
+  }
+}
+
 app.add(METHOD.signTx, async (request, sendResponse) => {
   const signTxReply = (opts: ReplyOpts) => {
     sendResponse({ id: request.id, ...opts, target: TARGET, sender: SENDER.extension });
@@ -1180,6 +1208,12 @@ app.add(METHOD.signTx, async (request, sendResponse) => {
   // and never reaches this handler.)
   if (!WalletStore.isWhitelisted(request.origin)) {
     return signTxReply({ error: APIError.Refused });
+  }
+
+  const programmableRefusal = refusalForProgrammableInputs(request.data?.tx);
+  if (programmableRefusal) {
+    debugLog(programmableRefusal);
+    return signTxReply({ error: TxSignError.ProofGeneration });
   }
 
   const signTxPayload = { ...request.data, website: request.origin, favIconUrl: request.send?.tab?.favIconUrl };
@@ -2415,6 +2449,19 @@ app.addToOptions(MessageTypes.REQUEST_CROSS_DEVICE_SIGNATURE, async (request, se
     }
 
     const { unsignedCbor, intent, stakeAddress, ttlMs } = request.data;
+
+    // The relay only forwards CBOR, so the receiving device never sees our index.
+    const crossDeviceRefusal = refusalForProgrammableInputs(unsignedCbor);
+    if (crossDeviceRefusal) {
+      debugLog(crossDeviceRefusal);
+      sendResponse({
+        id: request.id,
+        data: { decision: 'rejected', reason: 'Gero cannot sign transfers of CIP-113 programmable tokens' },
+        target: TARGET,
+        sender: SENDER.extension,
+      });
+      return;
+    }
     // Route to a specific device when the caller named one, else to the sole
     // online trusted signer; null => broadcast (backward-compatible).
     const to = (typeof request.data?.to === 'string' && request.data.to)
@@ -3382,6 +3429,13 @@ app.addToOptions(MessageTypes.TREZOR, async (request, sendResponse) => {
     } else if (request.data.method === 'signTx') {
       const { txCbor } = request.data;
 
+      // Trezor signs here rather than through WalletBg.signTx, so it needs its own check.
+      const trezorRefusal = refusalForProgrammableInputs(txCbor);
+      if (trezorRefusal) {
+        debugLog(trezorRefusal);
+        throw new Error('Gero cannot sign transfers of CIP-113 programmable tokens');
+      }
+
       const tx = deserializeCardanoJsSdkTx(txCbor);
 
       // For partial transactions, strip existing witnesses before signing with Trezor
@@ -4167,9 +4221,16 @@ function setupWalletConnectCallbacks(wcService: WalletConnectServiceInstance) {
           }
           case 'cardano_signTx': {
             const wcParams = wcRequest.params || {};
+            const wcTx = wcParams.tx || wcParams;
+            const wcProgrammableRefusal = refusalForProgrammableInputs(wcTx);
+            if (wcProgrammableRefusal) {
+              debugLog(wcProgrammableRefusal);
+              await wcService.respondError(topic, id, 4100, 'Gero cannot sign transfers of CIP-113 programmable tokens');
+              return;
+            }
             await routeWcSigningRequest(
               'signTx',
-              { tx: wcParams.tx || wcParams, partialSign: wcParams.partialSign, origin: 'WalletConnect' },
+              { tx: wcTx, partialSign: wcParams.partialSign, origin: 'WalletConnect' },
               topic, id, POPUP.signTx, [470, 852],
             );
             return;

@@ -83,6 +83,9 @@ export interface WalletStore {
   keys: Keys | null;
   tokens: {};
   collections: {};
+  // CIP-113: display only, held apart from `tokens` so nothing that selects inputs
+  // or discloses holdings can reach them.
+  programmableTokens: {};
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- config is a dynamic settings bag (~20 varied fields read/written across the app); see GeroStore.config
   config: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- reward history entries come straight from the provider payload
@@ -106,6 +109,7 @@ export const walletStore = Vue.observable<WalletStore>({
   keys: null,
   tokens: {},
   collections: {},
+  programmableTokens: {},
   config: {
     tokenAllocationSort: {
       by: 'allocation',
@@ -329,6 +333,13 @@ export default {
     broadcastFromBackground({ collections });
   },
 
+  // Kept out of `tokens` on purpose: the send pickers read `tokens`, so these can only
+  // appear where a surface has explicitly opted in to showing locked holdings.
+  setProgrammableTokens(programmableTokens: {}) {
+    walletStore.programmableTokens = programmableTokens;
+    broadcastFromBackground({ programmableTokens });
+  },
+
   setConfig(config: {}) {
     walletStore.config = config;
     broadcastFromBackground({ config });
@@ -463,6 +474,7 @@ export default {
       keys: null,
       tokens: {},
       collections: {},
+      programmableTokens: {},
       config: {},
       rewards: [],
       connectedDapps: [],
@@ -496,6 +508,7 @@ export default {
       keys: null,
       tokens: {},
       collections: {},
+      programmableTokens: {},
       rewards: [],
       contacts: {},
       connectedDapps: [],

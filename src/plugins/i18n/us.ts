@@ -4472,4 +4472,6 @@ export default {
   'midnight.proofServerPage.faq4A': 'No. Only shielded (private) transactions require a proof. Public NIGHT transfers are unaffected by this setting.',
   'midnight.proofServerPage.faq5Q': 'What is Arkhia zkPaaS?',
   'midnight.proofServerPage.faq5A': 'A hosted proving service for the Midnight ecosystem, run behind the Arkhia API gateway on Google Cloud confidential computing (a trusted execution environment, so proof data stays encrypted even while in use). It needs an API key from the Arkhia dashboard. Like any remote prover it receives your private transaction data for the proving step; unlike Gero Cloud, that data goes to Arkhia rather than Gero.',
+  'programmableTokens.badge': 'CIP-113',
+  'programmableTokens.badgeTooltip': 'CIP-113 programmable token. Gero cannot send these yet — use the issuing dApp to transfer it.',
 }

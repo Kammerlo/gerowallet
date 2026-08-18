@@ -62,7 +62,7 @@
     <template v-if="filteredTokens.length > 0">
       <div
         v-for="token in filteredTokens"
-        :key="token.unit"
+        :key="token.isProgrammable ? token.unit + '#locked' : token.unit"
         class="token-item"
         @click="handleSelect(token)"
       >
@@ -79,8 +79,21 @@
           <div class="token-info">
             <div class="token-name text-body-2 white--text text-truncate">
               {{ getTokenName(token) }}
+              <v-tooltip v-if="token.isProgrammable" top :open-delay="300" content-class="custom-tooltip">
+                <template v-slot:activator="{ on, attrs }">
+                  <v-icon
+                    x-small
+                    color="var(--g-warning)"
+                    class="ml-1"
+                    style="margin-top: -2px"
+                    v-bind="attrs"
+                    v-on="on"
+                  >mdi-lock-outline</v-icon>
+                </template>
+                {{ $t('programmableTokens.badgeTooltip') }}
+              </v-tooltip>
               <v-icon
-                v-if="token.verified"
+                v-else-if="token.verified"
                 x-small
                 color="primary"
                 class="ml-1"
@@ -162,11 +175,34 @@ const nightBreakdownText = computed(() => {
   const priv = formatMidnightUnits(midnightStore.balances.nightShielded ?? 0n, MN_NIGHT_DIVISOR, 2);
   return `${t('midnight.common.public')} ${pub} / ${t('midnight.common.private')} ${priv}`;
 });
+/**
+ * A row from walletStore.tokens / programmableTokens, as shaped by resolveAsset().
+ * Fields are optional because the resolver leaves them unset when the backend has
+ * no registry or on-chain metadata for the asset.
+ */
+interface WalletToken {
+  unit: string;
+  name?: string;
+  img?: string;
+  quantity?: string | number;
+  policy_id?: string;
+  verified?: boolean;
+  isScam?: boolean;
+  isProgrammable?: boolean;
+  metadata?: {
+    ticker?: string;
+    name?: string;
+    logo?: string;
+    image?: string;
+    decimals?: number;
+  };
+}
+
 const emit = defineEmits<{
-  (e: 'select', token: any): void;
+  (e: 'select', token: WalletToken): void;
 }>();
 
-const { tokens: rawTokens } = toRefs(walletStore);
+const { tokens: rawTokens, programmableTokens: rawProgrammableTokens } = toRefs(walletStore);
 const hideBalances = computed(() => walletStore.config?.hideBalances || false);
 const { allTokens: marketTokens, adaData } = useMarketData();
 
@@ -219,14 +255,15 @@ const adaToken = computed(() => ({
 const filteredTokens = computed(() => {
   if (!rawTokens.value) return [];
 
-  return Object.values(rawTokens.value)
-    .filter((token: any) => {
+  // Programmable tokens are exempt from verified-only: inherently unverified.
+  return [...Object.values(rawTokens.value), ...Object.values(rawProgrammableTokens.value || {})]
+    .filter((token: WalletToken) => {
       if (token.policy_id === '') return false;
       if (token.isScam) return false;
-      if (!token.verified) return false;
+      if (!token.verified && !token.isProgrammable) return false;
       return true;
     })
-    .sort((a: any, b: any) => {
+    .sort((a: WalletToken, b: WalletToken) => {
       return getTokenFiatValue(b) - getTokenFiatValue(a);
     });
 });
@@ -235,7 +272,7 @@ const filteredTokens = computed(() => {
 // the pinned ADA-0 row and show a single empty state instead of a "0" holding.
 const isEmpty = computed(() => adaBalanceLovelace.value === 0 && filteredTokens.value.length === 0);
 
-function getTokenImg(token: any): string {
+function getTokenImg(token: WalletToken): string {
   const name = token.metadata?.ticker || token.name || token.metadata?.name;
   // Prefer main-page market data logo (single source of truth, keyed by unit),
   // then fall back to the token's own / on-chain metadata image.
@@ -244,22 +281,22 @@ function getTokenImg(token: any): string {
   return applyTokenImageOverride(name, baseImg);
 }
 
-function getTokenName(token: any): string {
+function getTokenName(token: WalletToken): string {
   return token.metadata?.ticker || token.name || token.metadata?.name || 'Unknown';
 }
 
-function getTokenPrice(token: any): number {
+function getTokenPrice(token: WalletToken): number {
   const marketToken = marketTokens.value.find(t => t.unit === token.unit);
   if (marketToken?.price) return marketToken.price;
   return 0;
 }
 
-function getTokenChange(token: any): number | null {
+function getTokenChange(token: WalletToken): number | null {
   const marketToken = marketTokens.value.find(t => t.unit === token.unit);
   return marketToken?.change24h ?? null;
 }
 
-function getTokenFiatValue(token: any): number {
+function getTokenFiatValue(token: WalletToken): number {
   const price = getTokenPrice(token);
   if (!price) return 0;
   const decimals = token.metadata?.decimals ?? 0;
@@ -268,7 +305,7 @@ function getTokenFiatValue(token: any): number {
   return amount * price;
 }
 
-function formatTokenAmount(token: any): string {
+function formatTokenAmount(token: WalletToken): string {
   const decimals = token.metadata?.decimals ?? 0;
   let amount = Number(token.quantity || 0);
   if (decimals > 0) amount = amount / Math.pow(10, decimals);
@@ -280,7 +317,7 @@ function formatTokenAmount(token: any): string {
   });
 }
 
-function formatFiatValue(token: any): string {
+function formatFiatValue(token: WalletToken): string {
   const value = getTokenFiatValue(token);
   if (value < 0.01) return '<$0.01';
   return '$' + value.toLocaleString('en-US', {
@@ -289,7 +326,7 @@ function formatFiatValue(token: any): string {
   });
 }
 
-function handleSelect(token: any) {
+function handleSelect(token: WalletToken) {
   emit('select', token);
 }
 

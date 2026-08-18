@@ -48,10 +48,42 @@ export interface NetworkInfo {
   thorchainSupport: boolean;
   mempoolSupport: boolean;
   lightningSupport: boolean;
+  // CIP-113 `programmable_logic_base` script hashes. A list, not one value: a
+  // re-bootstrap changes the hash while existing holdings stay at the old script.
+  // Empty means CIP-113 is unavailable on this network, and it fails closed.
+  programmableLogicBaseScriptHashes?: string[];
   networkParams: {
     networkMagic: number;
   }
 }
+
+// See .env.example for the full rationale. Two non-obvious points here:
+// 1. Env keys must be string LITERALS — Vite only statically replaces literal
+//    `import.meta.env['VITE_…']`, so a computed key is undefined in the bundle.
+// 2. The value is taken as granted, so this format check is the only guard against
+//    a mis-pasted hash becoming a trust anchor.
+function normalizeCip113BaseScriptHashes(raw: string | undefined): string[] {
+  const seen = new Set<string>();
+  for (const part of (raw ?? '').split(',')) {
+    const hash = part.trim().toLowerCase();
+    if (/^[0-9a-f]{56}$/.test(hash)) {
+      seen.add(hash);
+    }
+  }
+  return Array.from(seen);
+}
+
+const CIP113_BASE_MAINNET: string[] = normalizeCip113BaseScriptHashes(
+  import.meta.env['VITE_CIP113_PROGRAMMABLE_LOGIC_BASE_MAINNET'] as string | undefined
+);
+const CIP113_BASE_PREPROD: string[] = normalizeCip113BaseScriptHashes(
+  import.meta.env['VITE_CIP113_PROGRAMMABLE_LOGIC_BASE_PREPROD'] as string | undefined
+);
+const CIP113_BASE_PREVIEW: string[] = normalizeCip113BaseScriptHashes(
+  import.meta.env['VITE_CIP113_PROGRAMMABLE_LOGIC_BASE_PREVIEW'] as string | undefined
+);
+
+
 export default {
   networks: [
     {
@@ -96,6 +128,7 @@ export default {
       thorchainSupport: false,
       mempoolSupport: false,
       lightningSupport: false,
+      programmableLogicBaseScriptHashes: CIP113_BASE_MAINNET,
       networkParams: {
         networkMagic: 764824073
       }
@@ -141,6 +174,7 @@ export default {
       thorchainSupport: false,
       mempoolSupport: false,
       lightningSupport: false,
+      programmableLogicBaseScriptHashes: CIP113_BASE_PREPROD,
       networkParams: {
         networkMagic: 1
       }
@@ -186,6 +220,7 @@ export default {
       thorchainSupport: false,
       mempoolSupport: false,
       lightningSupport: false,
+      programmableLogicBaseScriptHashes: CIP113_BASE_PREVIEW,
       networkParams: {
         networkMagic: 2
       }
@@ -634,6 +669,16 @@ export default {
       return false
     }
     return this.resolveNetwork(chain, network)?.lightningSupport ?? false
+  },
+  // Support is derived from the configured hashes rather than tracked separately.
+  resolveProgrammableLogicBaseScriptHashes(chain: string, network: string): string[] {
+    if (!chain || !network) {
+      return []
+    }
+    return this.resolveNetwork(chain, network)?.programmableLogicBaseScriptHashes || []
+  },
+  resolveProgrammableTokenSupport(chain: string, network: string): boolean {
+    return this.resolveProgrammableLogicBaseScriptHashes(chain, network).length > 0
   },
   resolveDaoSupport(chain: string, network: string): boolean {
     if (!chain || !network) {

@@ -200,6 +200,64 @@ export function buildBaseAddress(networkId: Cardano.NetworkId, paymentKeyHash: H
   );
 }
 
+/**
+ * Which partition a UTxO belongs to. `programmable-other` is a programmable UTxO owned
+ * by somebody else — dropped like `foreign`, but named separately so it can be counted:
+ * the base script is shared network-wide, so a non-zero count means the data source is
+ * returning other users' holdings.
+ */
+export type UtxoPartition = 'spendable' | 'programmable' | 'programmable-other' | 'foreign';
+
+/**
+ * Classify a UTxO's address for the CIP-113 partition. Extracted from applyUtxos so the
+ * security-critical branch is testable: a mistake either exposes a locked token to
+ * spending, or makes ordinary funds invisible and unspendable.
+ *
+ * Order matters — the spendable checks run first and are byte-for-byte the pre-CIP-113
+ * behaviour, including keeping non-base and unparseable addresses, so nothing spendable
+ * can be demoted here.
+ *
+ * @param programmableBaseScriptHashes every deployment to recognise on this network; a
+ *        re-bootstrap changes the hash while holdings stay at the old one. Empty
+ *        disables the programmable branch.
+ * @param programmableOwnerCredentials the wallet's payment credentials and its stake
+ *        credential, since which one occupies the stake slot is a per-deployment choice.
+ */
+export function classifyUtxoAddress(
+  address: string,
+  ownPaymentCredentials: Set<string>,
+  programmableBaseScriptHashes: Set<string>,
+  programmableOwnerCredentials: Set<string>,
+): UtxoPartition {
+  let baseAddr: Cardano.BaseAddress | undefined;
+  try {
+    baseAddr = Cardano.Address.fromString(address)?.asBase();
+  } catch {
+    return 'spendable'; // unparseable — keep, as before
+  }
+  if (!baseAddr) return 'spendable'; // enterprise, reward, Byron, …
+
+  const paymentCred = baseAddr.getPaymentCredential();
+  if (ownPaymentCredentials.has(paymentCred.hash)) return 'spendable';
+
+  if (
+    paymentCred.type === Cardano.CredentialType.ScriptHash &&
+    programmableBaseScriptHashes.has(paymentCred.hash)
+  ) {
+    const stakeCred = baseAddr.getStakeCredential();
+    if (
+      stakeCred?.type === Cardano.CredentialType.KeyHash &&
+      programmableOwnerCredentials.has(stakeCred.hash)
+    ) {
+      return 'programmable';
+    }
+    // Correct script, different owner — somebody else's holding.
+    return 'programmable-other';
+  }
+
+  return 'foreign';
+}
+
 export function filterOutCollateralFromUTxOs(utxos: Cardano.Utxo[], collateral: Cardano.Utxo) {
   if (collateral) {
     return utxos.filter(
@@ -227,7 +285,7 @@ export function getUtxos(
       const assetsMap = new Map<Cardano.AssetId, bigint>();
       // Convert plain object back to Map
       Object.entries(value.assets).forEach(([assetId, quantity]) => {
-        assetsMap.set(assetId as Cardano.AssetId, BigInt(quantity as any));
+        assetsMap.set(assetId as Cardano.AssetId, BigInt(quantity as string | number | bigint));
       });
       value = {
         coins: BigInt(value.coins),
@@ -381,7 +439,7 @@ export function getBalance(utxos: Cardano.Utxo[], collateral: Cardano.Utxo): Ser
         // Convert plain object to Map
         assets = new Map<Cardano.AssetId, bigint>();
         Object.entries(utxoValue.assets).forEach(([assetId, quantity]) => {
-          assets!.set(assetId as Cardano.AssetId, BigInt(quantity as any));
+          assets!.set(assetId as Cardano.AssetId, BigInt(quantity as string | number | bigint));
         });
       }
     }
@@ -607,6 +665,7 @@ function buildNexusUtxoCbor(lent: { txHash: string; outputIndex: number; address
   return Serialization.TransactionUnspentOutput.fromCore(utxo).toCbor();
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- heterogeneous key/path buckets from resolvePathsForMissingAddresses
 export function getUsedAddresses(keys: any, paginate?: Paginate): HexBlob[] {
   let res: HexBlob[] = []
   const addresses: string[] = keys.payment.filter(a => a.used);
@@ -617,6 +676,7 @@ export function getUsedAddresses(keys: any, paginate?: Paginate): HexBlob[] {
   return res
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- heterogeneous key/path buckets from resolvePathsForMissingAddresses
 export function getUnusedAddresses(xpub: string, chain: string, network: string, keys: any): HexBlob[] {
   let res: HexBlob[] = []
   const addresses: string[] = keys.payment.filter(a => !a.used);
@@ -625,6 +685,7 @@ export function getUnusedAddresses(xpub: string, chain: string, network: string,
     if (res.length == 0) {
       let highestIndex: number = 0
       const usedAddresses = keys.payment.filter(a => a.used)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- heterogeneous key/path buckets from resolvePathsForMissingAddresses
       usedAddresses.forEach((usedAddress: any) => {
         const hdPath: number[] = hdPathToArray(usedAddress.path)
         if (hdPath[3] === 0 && hdPath[4] > highestIndex) {
@@ -794,6 +855,7 @@ export function hdPathToArray(path: string): number[] {
 }
 
 export function toUTxO(utxo: UTxO): Serialization.TransactionUnspentOutput {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider asset row
   const tokenMap: Cardano.TokenMap = utxo.asset_list.reduce((map: Cardano.TokenMap, asset: any) => {
     const assetId: Cardano.AssetId = Cardano.AssetId.fromParts(asset.policy_id, asset.asset_name);
     const current: bigint = map.get(assetId) ?? BigInt(0);
@@ -897,21 +959,29 @@ export function keyHashFromAddress(address: string): Hash28ByteBase16 {
  * @param utxos - Current wallet UTXOs for input resolution
  * @returns Legacy UTXO structure with inputs and outputs
  */
+/** CIP-30 value entry: `{ unit, quantity }`, unit 'lovelace' for ADA. */
+interface AmountEntry { unit: string; quantity: string | number }
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
 export function createUtxoStructure(tx: any, utxos: Cardano.Utxo[]): any {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
   const inputs: any[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
   const outputs: any[] = [];
 
   // Convert inputs from Cardano JS SDK format to legacy format
   // For inputs, we need to find the actual UTXO values from our UTXO set
   if (tx.body?.inputs) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
     tx.body.inputs.forEach((input: any) => {
       // Try to find the corresponding UTXO from provided UTXOs
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
       const utxo = utxos.find((utxo: any) =>
         utxo[0].txId === input.txId && utxo[0].index === input.index
       );
 
       let address = '';
-      let amount: any[] = [];
+      let amount: AmountEntry[] = [];
 
       if (utxo) {
         // Use the actual UTXO data
@@ -942,8 +1012,9 @@ export function createUtxoStructure(tx: any, utxos: Cardano.Utxo[]): any {
 
   // Convert outputs from Cardano JS SDK format to legacy format
   if (tx.body?.outputs) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
     tx.body.outputs.forEach((output: any, index: number) => {
-      const amount: any[] = [{
+      const amount: AmountEntry[] = [{
         unit: 'lovelace',
         quantity: Number(output.value.coins)
       }];
@@ -979,15 +1050,17 @@ export function createUtxoStructure(tx: any, utxos: Cardano.Utxo[]): any {
  * @param utxos - Current wallet UTXOs for input resolution
  * @returns Array of converted transactions ready for database storage
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
 export function convertTransactionsForStorage(txs: any[], utxos: Cardano.Utxo[]): any[] {
   // First pass: build a lookup map of all outputs (txHash#index → amount[])
   // so that inputs in other transactions can find their native token amounts.
   // We deserialize CBOR for transactions that have it but no body yet.
-  const outputLookup = new Map<string, any[]>();
+  const outputLookup = new Map<string, AmountEntry[]>();
   for (const tx of txs) {
     const txHash = tx.tx_hash || tx.id;
     if (!txHash) continue;
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction outputs; field shape varies by provider and era
     let outputs: any[] | undefined;
     if (tx.body?.outputs) {
       outputs = tx.body.outputs;
@@ -1003,8 +1076,9 @@ export function convertTransactionsForStorage(txs: any[], utxos: Cardano.Utxo[])
     }
 
     if (outputs) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
       outputs.forEach((output: any, index: number) => {
-        const amount: any[] = [{
+        const amount: AmountEntry[] = [{
           unit: 'lovelace',
           quantity: Number(output.value?.coins ?? output.value),
         }];
@@ -1026,8 +1100,9 @@ export function convertTransactionsForStorage(txs: any[], utxos: Cardano.Utxo[])
       // Rebuild outputs from body if available — the sync backend may only include
       // lovelace in utxo.outputs[].amount, missing native tokens
       if (tx.body?.outputs) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
         tx.utxo.outputs = tx.body.outputs.map((output: any, index: number) => {
-          const amount: any[] = [{
+          const amount: AmountEntry[] = [{
             unit: 'lovelace',
             quantity: Number(output.value?.coins ?? output.value),
           }];
@@ -1063,8 +1138,9 @@ export function convertTransactionsForStorage(txs: any[], utxos: Cardano.Utxo[])
       // The sync backend may only send lovelace in utxo.outputs[].amount
       const utxo = tx.utxo || { inputs: [], outputs: [] };
       if (tx.body.outputs) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
         utxo.outputs = tx.body.outputs.map((output: any, index: number) => {
-          const amount: any[] = [{
+          const amount: AmountEntry[] = [{
             unit: 'lovelace',
             quantity: Number(output.value?.coins ?? output.value),
           }];
@@ -1115,8 +1191,9 @@ export function convertTransactionsForStorage(txs: any[], utxos: Cardano.Utxo[])
 
         // Rebuild outputs from CBOR body
         if (txDeserialized.body?.outputs) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
           utxo.outputs = txDeserialized.body.outputs.map((output: any, index: number) => {
-            const amount: any[] = [{
+            const amount: AmountEntry[] = [{
               unit: 'lovelace',
               quantity: Number(output.value?.coins ?? output.value),
             }];
@@ -1137,6 +1214,7 @@ export function convertTransactionsForStorage(txs: any[], utxos: Cardano.Utxo[])
 
         // Enrich inputs with native tokens from the output lookup map
         if (utxo.inputs && outputLookup.size > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
           utxo.inputs = utxo.inputs.map((input: any) => {
             const key = `${input.tx_hash}#${input.output_index}`;
             const enrichedAmount = outputLookup.get(key);
@@ -1275,6 +1353,7 @@ export async function signDataCip8(
   // Build COSE_Sign1: create builder and extract Sig_structure for signing
   const { builder, sigStrucBytes } = createBuilderWithSigStructure(addressBytes, payload);
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- COSE_Sign1 from @emurgo/cardano-message-signing-browser, which ships no types
   let coseSign1: any = null;
   try {
     // Sign the Sig_structure (not the raw payload) — this is what CIP-8 requires
