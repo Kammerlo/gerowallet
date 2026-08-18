@@ -56,6 +56,7 @@
     <div class="onboarding-actions d-flex" style="gap: 12px;">
       <v-spacer />
       <v-btn
+        class="onb-continue"
         color="primary"
         :loading="finishing"
         @click="finish()"
@@ -147,4 +148,5 @@ const finish = async (): Promise<void> => {
 </script>
 
 <style scoped>
+/* Continue/CREATE CTA: black label on gradient/accent, incl. disabled */
 </style>

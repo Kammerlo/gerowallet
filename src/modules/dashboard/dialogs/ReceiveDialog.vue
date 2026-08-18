@@ -456,10 +456,8 @@ const usedAddresses = computed(() => {
   return results
 });
 
-const isApex = computed(() => {
-  return loggedWallet.value?.chain === Blockchain.APEX_PRIME ||
-    loggedWallet.value?.chain === Blockchain.APEX_VECTOR;
-});
+// QR-center Gero logo, tinted per chain (Apex Prime teal / Vector orange).
+const qrLogo = computed(() => assets.resolveChainLogo(loggedWallet.value?.chain));
 
 // Bitcoin computed properties
 const bitcoinAddressTypeOptions = computed(() => [
@@ -662,7 +660,7 @@ watch(
             height: 160,
             type: 'svg',
             data: tabItem.value,
-            image: isApex.value ? assets.geroLogoApex : assets.geroLogo,
+            image: qrLogo.value,
             margin: 2,
             qrOptions: { typeNumber: 0, mode: 'Byte', errorCorrectionLevel: 'Q' },
             imageOptions: { hideBackgroundDots: true, imageSize: 0.5, margin: 10, crossOrigin: 'anonymous' },

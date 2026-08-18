@@ -16,10 +16,15 @@
 
       <div class="welcome-heading">
         <div class="welcome-title">{{ $t('welcome.welcomeMessage') }}</div>
-        <div class="welcome-subtitle">{{ $t('welcome.chooseAWallet') }}</div>
+        <!-- "Choose a wallet to sign in" only makes sense when there is a wallet
+             to choose. With an empty list the right-column hero + Get Started CTA
+             is the create-first-wallet path, so drop the sign-in subtitle. -->
+        <div v-if="hasWallets" class="welcome-subtitle">{{ $t('welcome.chooseAWallet') }}</div>
       </div>
 
-      <WalletsListLogin :hide-header="true" class="wallet-list-block" @network-change="onNetworkChange" />
+      <!-- The zero-wallet case never reaches this panel: Welcome.vue swaps the
+           whole left column for the centered onboarding hero instead. -->
+      <WalletsListLogin v-if="hasWallets" :hide-header="true" class="wallet-list-block" @network-change="onNetworkChange" />
     </div>
 
     <div class="footer-left">&#169; {{ new Date().getFullYear() }} {{ $t('welcome.adLabs') }}</div>
@@ -30,6 +35,7 @@ import { computed } from 'vue';
 import { geroDashboardApex, geroDashboardPrime, geroDashboardVector, geroDashboardBitcoin, geroDashboard } from '@/utils/assets';
 import WalletsListLogin from '@/options/modules/welcome/components/WalletsListLogin.vue';
 import { NetworkInfo } from '@/utils/networks';
+import { useAvailableWallets } from '@/shared/composables/useAvailableWallets';
 
 const props = defineProps<{
   selectedNetwork: NetworkInfo;
@@ -42,6 +48,10 @@ const emit = defineEmits<{
 const onNetworkChange = (n: NetworkInfo): void => {
   emit('network-change', n);
 };
+
+// Shared eligibility rule, so the heading stays in sync with what the list
+// actually renders.
+const { hasWallets } = useAvailableWallets();
 
 // Logo reacts to the selected network's brand colors.
 const logo = computed(() => {

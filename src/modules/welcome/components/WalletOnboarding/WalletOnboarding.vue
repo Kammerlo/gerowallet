@@ -130,7 +130,7 @@
   </div>
 </template>
 <script setup lang="ts">
-import { ref, computed, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import networks, { NetworkInfo } from '@/utils/networks';
 import { updateVuetifyTheme } from '@/plugins/vuetify';
 import { generateWalletName } from '@/shared/utils/walletNameGenerator';
@@ -327,6 +327,17 @@ const onConnected = (payload: ConnectionPayload): void => {
   step.value++;
 };
 
+// Prefetch the PassKey capability probe the moment onboarding opens: on
+// Windows the first getClientCapabilities() call can take seconds while the
+// Windows Hello service spins up, and the result is memoized — so by the time
+// the user reaches the security step it resolves instantly instead of the
+// step flashing a false "PassKey not supported" notice.
+onMounted(() => {
+  import('@/shared/utils/webauthn-prf')
+    .then(({ isPrfSupported }) => isPrfSupported())
+    .catch(() => { /* probe result is consumed (and errors surfaced) in StepSecurity */ });
+});
+
 // The network step previews its accent by mutating the global Vuetify theme.
 // If onboarding is abandoned (e.g. back to the wallet list), restore the
 // default theme so a not-yet-created wallet never leaves the app re-themed.
@@ -346,6 +357,20 @@ onUnmounted(() => {
 }
 
 /* CONTENT */
+/* Translucent card: let the animated network background show through the glass.
+   Higher specificity + !important to beat the global `.v-card.liquid-glass`
+   background; the blur/saturate backdrop is inherited from `.liquid-glass`. */
+.v-card.onboarding-content {
+  background: rgb(from var(--g-raised) r g b / 0.78) !important;
+}
+
+/* Continue CTA (every step): black label on gradient/teal, incl. disabled.
+   Hoisted here from the 11 step components so the rule exists once. */
+.onboarding-content ::v-deep .onb-continue.v-btn,
+.onboarding-content ::v-deep .onb-continue.v-btn.v-btn--disabled {
+  color: var(--g-canvas) !important;
+}
+
 .onboarding-content {
   width: 100%;
   min-width: 0;

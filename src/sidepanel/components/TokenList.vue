@@ -31,11 +31,11 @@
     <div v-if="!isEmpty" class="token-item ada-row" @click="handleSelect(adaToken)">
       <div class="token-left">
         <v-avatar size="36" class="token-avatar ada-avatar">
-          <img :src="adaLogo" alt="ADA" />
+          <img :src="nativeLogo" :alt="nativeTicker" />
         </v-avatar>
         <div class="token-info">
           <div class="token-name text-body-2 white--text text-truncate" style="font-weight: 600">
-            ADA
+            {{ nativeTicker }}
             <v-icon x-small color="primary" class="ml-1" style="margin-top: -2px">mdi-check-decagram</v-icon>
           </div>
           <div class="token-amount text-caption grey--text">
@@ -138,6 +138,7 @@ import { resolveIcon, applyTokenImageOverride } from '@/shared/utils/resolver';
 import { useAdaLovelace } from '../composables/useAdaLovelace';
 import { useMarketData } from '@/modules/market/composables/useMarketData';
 import assetsUtil from '@/utils/assets';
+import networks from '@/utils/networks';
 import midnightLogo from '@/assets/svg/midnight.svg';
 import { midnightStore } from '@/stores/midnightStore';
 import { Blockchain, Network } from '@/models/types';
@@ -146,6 +147,14 @@ import { useTranslation } from '@/shared/composables/useTranslation';
 
 const { t } = useTranslation();
 const adaLogo = assetsUtil.cardanoBlueLogo;
+
+// Native currency of the logged wallet's chain. Apex Fusion runs on an
+// ADA-denominated (lovelace) ledger but brands its unit AP3X, so the pinned
+// native row must show the chain's ticker + mark, not a hardcoded ADA.
+const nativeTicker = computed(() =>
+  networks.resolveCurrencyTicker(walletStore.loggedWallet?.chain ?? '', walletStore.loggedWallet?.network ?? '') || 'ADA');
+const nativeLogo = computed(() =>
+  networks.resolveCurrencyImage(walletStore.loggedWallet?.chain ?? '', walletStore.loggedWallet?.network ?? '') || adaLogo);
 
 // ── Midnight branch ───────────────────────────────────────────────────────────
 const isMidnight = computed(() => walletStore.loggedWallet?.chain === Blockchain.MIDNIGHT);
@@ -175,31 +184,31 @@ const nightBreakdownText = computed(() => {
   const priv = formatMidnightUnits(midnightStore.balances.nightShielded ?? 0n, MN_NIGHT_DIVISOR, 2);
   return `${t('midnight.common.public')} ${pub} / ${t('midnight.common.private')} ${priv}`;
 });
-/**
- * A row from walletStore.tokens / programmableTokens, as shaped by resolveAsset().
- * Fields are optional because the resolver leaves them unset when the backend has
- * no registry or on-chain metadata for the asset.
- */
-interface WalletToken {
-  unit: string;
+interface TokenMetadata {
+  ticker?: string;
   name?: string;
-  img?: string;
-  quantity?: string | number;
+  logo?: string;
+  image?: string;
+  decimals?: number;
+}
+
+interface TokenLike {
+  unit?: string;
   policy_id?: string;
+  name?: string;
+  ticker?: string;
+  img?: string;
+  quantity?: number | bigint | string;
+  decimals?: number;
   verified?: boolean;
   isScam?: boolean;
   isProgrammable?: boolean;
-  metadata?: {
-    ticker?: string;
-    name?: string;
-    logo?: string;
-    image?: string;
-    decimals?: number;
-  };
+  metadata?: TokenMetadata;
+  [key: string]: unknown;
 }
 
 const emit = defineEmits<{
-  (e: 'select', token: WalletToken): void;
+  (e: 'select', token: TokenLike): void;
 }>();
 
 const { tokens: rawTokens, programmableTokens: rawProgrammableTokens } = toRefs(walletStore);
@@ -240,9 +249,9 @@ const adaPriceChange = computed<number | null>(() => {
 const adaToken = computed(() => ({
   unit: 'lovelace',
   policy_id: '',
-  name: 'ADA',
-  ticker: 'ADA',
-  img: adaLogo,
+  name: nativeTicker.value,
+  ticker: nativeTicker.value,
+  img: nativeLogo.value,
   quantity: adaBalanceLovelace.value,
   decimals: 6,
   verified: true,
@@ -256,14 +265,17 @@ const filteredTokens = computed(() => {
   if (!rawTokens.value) return [];
 
   // Programmable tokens are exempt from verified-only: inherently unverified.
-  return [...Object.values(rawTokens.value), ...Object.values(rawProgrammableTokens.value || {})]
-    .filter((token: WalletToken) => {
+  return ([
+    ...Object.values(rawTokens.value),
+    ...Object.values(rawProgrammableTokens.value || {}),
+  ] as TokenLike[])
+    .filter((token: TokenLike) => {
       if (token.policy_id === '') return false;
       if (token.isScam) return false;
       if (!token.verified && !token.isProgrammable) return false;
       return true;
     })
-    .sort((a: WalletToken, b: WalletToken) => {
+    .sort((a: TokenLike, b: TokenLike) => {
       return getTokenFiatValue(b) - getTokenFiatValue(a);
     });
 });
@@ -272,7 +284,7 @@ const filteredTokens = computed(() => {
 // the pinned ADA-0 row and show a single empty state instead of a "0" holding.
 const isEmpty = computed(() => adaBalanceLovelace.value === 0 && filteredTokens.value.length === 0);
 
-function getTokenImg(token: WalletToken): string {
+function getTokenImg(token: TokenLike): string {
   const name = token.metadata?.ticker || token.name || token.metadata?.name;
   // Prefer main-page market data logo (single source of truth, keyed by unit),
   // then fall back to the token's own / on-chain metadata image.
@@ -281,22 +293,22 @@ function getTokenImg(token: WalletToken): string {
   return applyTokenImageOverride(name, baseImg);
 }
 
-function getTokenName(token: WalletToken): string {
+function getTokenName(token: TokenLike): string {
   return token.metadata?.ticker || token.name || token.metadata?.name || 'Unknown';
 }
 
-function getTokenPrice(token: WalletToken): number {
+function getTokenPrice(token: TokenLike): number {
   const marketToken = marketTokens.value.find(t => t.unit === token.unit);
   if (marketToken?.price) return marketToken.price;
   return 0;
 }
 
-function getTokenChange(token: WalletToken): number | null {
+function getTokenChange(token: TokenLike): number | null {
   const marketToken = marketTokens.value.find(t => t.unit === token.unit);
   return marketToken?.change24h ?? null;
 }
 
-function getTokenFiatValue(token: WalletToken): number {
+function getTokenFiatValue(token: TokenLike): number {
   const price = getTokenPrice(token);
   if (!price) return 0;
   const decimals = token.metadata?.decimals ?? 0;
@@ -305,7 +317,7 @@ function getTokenFiatValue(token: WalletToken): number {
   return amount * price;
 }
 
-function formatTokenAmount(token: WalletToken): string {
+function formatTokenAmount(token: TokenLike): string {
   const decimals = token.metadata?.decimals ?? 0;
   let amount = Number(token.quantity || 0);
   if (decimals > 0) amount = amount / Math.pow(10, decimals);
@@ -317,7 +329,7 @@ function formatTokenAmount(token: WalletToken): string {
   });
 }
 
-function formatFiatValue(token: WalletToken): string {
+function formatFiatValue(token: TokenLike): string {
   const value = getTokenFiatValue(token);
   if (value < 0.01) return '<$0.01';
   return '$' + value.toLocaleString('en-US', {
@@ -326,7 +338,7 @@ function formatFiatValue(token: WalletToken): string {
   });
 }
 
-function handleSelect(token: WalletToken) {
+function handleSelect(token: TokenLike) {
   emit('select', token);
 }
 

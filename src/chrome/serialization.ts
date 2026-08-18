@@ -1,4 +1,4 @@
-import { Blockchain, ChainDerivations, Network, Paginate, UTxO } from '@/models/types';
+import { Blockchain, ChainDerivations, Key, Keys, Network, Paginate, UTxO } from '@/models/types';
 import { APIError, DataSignError, POPUP_WINDOW } from './config';
 import networks from '@/utils/networks';
 import {
@@ -665,28 +665,25 @@ function buildNexusUtxoCbor(lent: { txHash: string; outputIndex: number; address
   return Serialization.TransactionUnspentOutput.fromCore(utxo).toCbor();
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- heterogeneous key/path buckets from resolvePathsForMissingAddresses
-export function getUsedAddresses(keys: any, paginate?: Paginate): HexBlob[] {
+export function getUsedAddresses(keys: Keys, paginate?: Paginate): HexBlob[] {
   let res: HexBlob[] = []
-  const addresses: string[] = keys.payment.filter(a => a.used);
+  const addresses: Key[] = keys.payment.filter(a => a.used);
   if (addresses && Array.isArray(addresses)) {
-    const addressesArrayHex: HexBlob[] = addresses.map(el => Cardano.Address.fromBech32(el['address']).toBytes());
+    const addressesArrayHex: HexBlob[] = addresses.map(el => Cardano.Address.fromBech32(el.address).toBytes());
     res = paginateArray(addressesArrayHex, paginate);
   }
   return res
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- heterogeneous key/path buckets from resolvePathsForMissingAddresses
-export function getUnusedAddresses(xpub: string, chain: string, network: string, keys: any): HexBlob[] {
+export function getUnusedAddresses(xpub: string, chain: string, network: string, keys: Keys): HexBlob[] {
   let res: HexBlob[] = []
-  const addresses: string[] = keys.payment.filter(a => !a.used);
+  const addresses: Key[] = keys.payment.filter(a => !a.used);
   if (addresses && Array.isArray(addresses)) {
-    res = addresses.map(el => Cardano.Address.fromBech32(el['address']).toBytes());
+    res = addresses.map(el => Cardano.Address.fromBech32(el.address).toBytes());
     if (res.length == 0) {
       let highestIndex: number = 0
       const usedAddresses = keys.payment.filter(a => a.used)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- heterogeneous key/path buckets from resolvePathsForMissingAddresses
-      usedAddresses.forEach((usedAddress: any) => {
+      usedAddresses.forEach((usedAddress) => {
         const hdPath: number[] = hdPathToArray(usedAddress.path)
         if (hdPath[3] === 0 && hdPath[4] > highestIndex) {
           highestIndex = hdPath[4]
@@ -757,7 +754,16 @@ export async function focusOrCreatePopup(url: string, width: number, height: num
           width: width,
           height: height,
         });
-        return window.tabs[0];
+        // windows.create can resolve before the tab is attached (seen on
+        // Opera/Chromium forks) — recover it by querying the new window.
+        let createdTab = window.tabs?.[0];
+        if (!createdTab) {
+          [createdTab] = await chrome.tabs.query({ windowId: window.id });
+        }
+        if (!createdTab) {
+          throw new Error('Popup window was created without a tab');
+        }
+        return createdTab;
       }
     } finally {
       // Clean up the pending popup tracking after creation
@@ -855,8 +861,7 @@ export function hdPathToArray(path: string): number[] {
 }
 
 export function toUTxO(utxo: UTxO): Serialization.TransactionUnspentOutput {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider asset row
-  const tokenMap: Cardano.TokenMap = utxo.asset_list.reduce((map: Cardano.TokenMap, asset: any) => {
+  const tokenMap: Cardano.TokenMap = utxo.asset_list.reduce((map: Cardano.TokenMap, asset) => {
     const assetId: Cardano.AssetId = Cardano.AssetId.fromParts(asset.policy_id, asset.asset_name);
     const current: bigint = map.get(assetId) ?? BigInt(0);
     map.set(assetId, current + BigInt(asset.quantity));
@@ -952,6 +957,32 @@ export function keyHashFromAddress(address: string): Hash28ByteBase16 {
   return undefined;
 }
 
+// Loose structural shapes for the mixed transaction records the legacy
+// converters below accept: sync-backend rows, Cardano JS SDK core txs, and
+// CBOR-only rows all flow through the same code paths.
+type LegacyAmount = { unit: string; quantity: number };
+type LegacyTxInput = { tx_hash?: string; output_index?: number; address?: string; amount?: LegacyAmount[] };
+type LegacyTxOutput = { output_index?: number; address?: string; amount?: LegacyAmount[] };
+type LegacyUtxoStructure = { inputs: LegacyTxInput[]; outputs: LegacyTxOutput[] };
+type SdkLikeValue = { coins?: bigint | number | string; assets?: Map<string, bigint> };
+type SdkLikeOutput = { address?: string; value?: SdkLikeValue };
+type SdkLikeInput = { txId?: string; index?: number };
+type LegacyTxRecord = {
+  id?: string;
+  tx_hash?: string;
+  hash?: string;
+  cbor?: string;
+  body?: { inputs?: SdkLikeInput[]; outputs?: SdkLikeOutput[] };
+  utxo?: LegacyUtxoStructure;
+  block_hash?: string;
+  block_height?: number;
+  absolute_slot?: number;
+  tx_timestamp?: number;
+  tx_size?: number;
+  epoch_no?: number;
+  pending?: boolean;
+};
+
 /**
  * Creates legacy UTXO structure from Cardano JS SDK transaction format
  * This is needed for TransactionDetails component compatibility and transaction calculations
@@ -959,29 +990,21 @@ export function keyHashFromAddress(address: string): Hash28ByteBase16 {
  * @param utxos - Current wallet UTXOs for input resolution
  * @returns Legacy UTXO structure with inputs and outputs
  */
-/** CIP-30 value entry: `{ unit, quantity }`, unit 'lovelace' for ADA. */
-interface AmountEntry { unit: string; quantity: string | number }
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
-export function createUtxoStructure(tx: any, utxos: Cardano.Utxo[]): any {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
-  const inputs: any[] = [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
-  const outputs: any[] = [];
+export function createUtxoStructure(tx: LegacyTxRecord, utxos: Cardano.Utxo[]): LegacyUtxoStructure {
+  const inputs: LegacyTxInput[] = [];
+  const outputs: LegacyTxOutput[] = [];
 
   // Convert inputs from Cardano JS SDK format to legacy format
   // For inputs, we need to find the actual UTXO values from our UTXO set
   if (tx.body?.inputs) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
-    tx.body.inputs.forEach((input: any) => {
+    tx.body.inputs.forEach((input) => {
       // Try to find the corresponding UTXO from provided UTXOs
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
-      const utxo = utxos.find((utxo: any) =>
+      const utxo = utxos.find((utxo) =>
         utxo[0].txId === input.txId && utxo[0].index === input.index
       );
 
       let address = '';
-      let amount: AmountEntry[] = [];
+      let amount: LegacyAmount[] = [];
 
       if (utxo) {
         // Use the actual UTXO data
@@ -1012,9 +1035,8 @@ export function createUtxoStructure(tx: any, utxos: Cardano.Utxo[]): any {
 
   // Convert outputs from Cardano JS SDK format to legacy format
   if (tx.body?.outputs) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
-    tx.body.outputs.forEach((output: any, index: number) => {
-      const amount: AmountEntry[] = [{
+    tx.body.outputs.forEach((output, index) => {
+      const amount: LegacyAmount[] = [{
         unit: 'lovelace',
         quantity: Number(output.value.coins)
       }];
@@ -1050,18 +1072,16 @@ export function createUtxoStructure(tx: any, utxos: Cardano.Utxo[]): any {
  * @param utxos - Current wallet UTXOs for input resolution
  * @returns Array of converted transactions ready for database storage
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
-export function convertTransactionsForStorage(txs: any[], utxos: Cardano.Utxo[]): any[] {
+export function convertTransactionsForStorage(txs: LegacyTxRecord[], utxos: Cardano.Utxo[]): LegacyTxRecord[] {
   // First pass: build a lookup map of all outputs (txHash#index → amount[])
   // so that inputs in other transactions can find their native token amounts.
   // We deserialize CBOR for transactions that have it but no body yet.
-  const outputLookup = new Map<string, AmountEntry[]>();
+  const outputLookup = new Map<string, LegacyAmount[]>();
   for (const tx of txs) {
     const txHash = tx.tx_hash || tx.id;
     if (!txHash) continue;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction outputs; field shape varies by provider and era
-    let outputs: any[] | undefined;
+    let outputs: SdkLikeOutput[] | undefined;
     if (tx.body?.outputs) {
       outputs = tx.body.outputs;
     } else if (tx.cbor && !tx.body) {
@@ -1076,9 +1096,8 @@ export function convertTransactionsForStorage(txs: any[], utxos: Cardano.Utxo[])
     }
 
     if (outputs) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
-      outputs.forEach((output: any, index: number) => {
-        const amount: AmountEntry[] = [{
+      outputs.forEach((output, index) => {
+        const amount: LegacyAmount[] = [{
           unit: 'lovelace',
           quantity: Number(output.value?.coins ?? output.value),
         }];
@@ -1100,9 +1119,8 @@ export function convertTransactionsForStorage(txs: any[], utxos: Cardano.Utxo[])
       // Rebuild outputs from body if available — the sync backend may only include
       // lovelace in utxo.outputs[].amount, missing native tokens
       if (tx.body?.outputs) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
-        tx.utxo.outputs = tx.body.outputs.map((output: any, index: number) => {
-          const amount: AmountEntry[] = [{
+        tx.utxo.outputs = tx.body.outputs.map((output, index) => {
+          const amount: LegacyAmount[] = [{
             unit: 'lovelace',
             quantity: Number(output.value?.coins ?? output.value),
           }];
@@ -1138,9 +1156,8 @@ export function convertTransactionsForStorage(txs: any[], utxos: Cardano.Utxo[])
       // The sync backend may only send lovelace in utxo.outputs[].amount
       const utxo = tx.utxo || { inputs: [], outputs: [] };
       if (tx.body.outputs) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
-        utxo.outputs = tx.body.outputs.map((output: any, index: number) => {
-          const amount: AmountEntry[] = [{
+        utxo.outputs = tx.body.outputs.map((output, index) => {
+          const amount: LegacyAmount[] = [{
             unit: 'lovelace',
             quantity: Number(output.value?.coins ?? output.value),
           }];
@@ -1191,9 +1208,8 @@ export function convertTransactionsForStorage(txs: any[], utxos: Cardano.Utxo[])
 
         // Rebuild outputs from CBOR body
         if (txDeserialized.body?.outputs) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
-          utxo.outputs = txDeserialized.body.outputs.map((output: any, index: number) => {
-            const amount: AmountEntry[] = [{
+          utxo.outputs = txDeserialized.body.outputs.map((output, index) => {
+            const amount: LegacyAmount[] = [{
               unit: 'lovelace',
               quantity: Number(output.value?.coins ?? output.value),
             }];
@@ -1214,8 +1230,7 @@ export function convertTransactionsForStorage(txs: any[], utxos: Cardano.Utxo[])
 
         // Enrich inputs with native tokens from the output lookup map
         if (utxo.inputs && outputLookup.size > 0) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider transaction payload; field shape varies by provider and era
-          utxo.inputs = utxo.inputs.map((input: any) => {
+          utxo.inputs = utxo.inputs.map((input) => {
             const key = `${input.tx_hash}#${input.output_index}`;
             const enrichedAmount = outputLookup.get(key);
             if (enrichedAmount && input.amount?.length <= 1) {
@@ -1353,8 +1368,7 @@ export async function signDataCip8(
   // Build COSE_Sign1: create builder and extract Sig_structure for signing
   const { builder, sigStrucBytes } = createBuilderWithSigStructure(addressBytes, payload);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- COSE_Sign1 from @emurgo/cardano-message-signing-browser, which ships no types
-  let coseSign1: any = null;
+  let coseSign1: { to_bytes(): Uint8Array } | null = null;
   try {
     // Sign the Sig_structure (not the raw payload) — this is what CIP-8 requires
     const signResult = await keyAgent.signBlob(derivationPath, sigStrucBytes);

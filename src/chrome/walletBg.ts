@@ -14,8 +14,10 @@ import {
   coin_type,
   CoinTypes,
   ERROR,
+  Key,
   Keys,
   Provider,
+  Wallet,
   purpose,
   Tip,
   WalletType,
@@ -41,13 +43,16 @@ import {
   toStakeAddress,
 } from '@/chrome/serialization';
 import { decryptPrivateKey, encryptWithPassword, isRawEncryptedKey } from '@/shared/utils/crypto';
+import type { IUnifiedUtxo } from '@/chains/common/interfaces';
+import type { BitcoinUtxo } from '@/api/bitcoin-api';
+import type { Psbt } from 'bitcoinjs-lib';
 import {
   deriveBitcoinAddress,
   deriveBitcoinAddressSetFromXpubs,
   type BitcoinAddressSet,
   type BitcoinAddressTypeName,
 } from '@/chains/bitcoin/bitcoinKeyManager';
-import WalletStore from '@/stores/walletStore';
+import WalletStore, { type Account } from '@/stores/walletStore';
 import NetworkStore, { isBitcoinTip } from '@/stores/networkStore';
 import {
   analyzeTransactionForSignatures,
@@ -75,17 +80,11 @@ import { signDataCip8 } from '@/chrome/serialization';
 
 let blockchainDb: Dexie = null;
 
-/** Serialized UTxO row as written to the per-wallet `utxos` Dexie table. */
-interface StoredUtxoRow {
-  txId: Cardano.TransactionId;
-  index: number;
-  address: Cardano.PaymentAddress;
-  coins: string;
-  assets?: { unit: string; quantity: string }[];
-  datumHash?: Cardano.DatumHash;
-  datum?: Cardano.PlutusData;
-  scriptReference?: Cardano.Script;
-}
+/**
+ * Row shape of the per-wallet `account` table — the persisted (possibly
+ * partial) form of the store's Account record.
+ */
+export type AccountInfoRow = Partial<Account>;
 
 export class WalletBg {
   api: Api;
@@ -126,8 +125,12 @@ export class WalletBg {
   /** Wallet record creation time (ISO). Lower bound for Midnight dust-registration age. */
   createdAt?: string;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wallet record carries chain-specific runtime fields beyond the DB Wallet shape
-  constructor(wallet: any, googleBaseAddress?: string) {
+  constructor(
+    // Wallet DB record; the intersection covers UI/store fields not part of
+    // the persisted Wallet model but carried on the runtime object.
+    wallet: Wallet & { theme?: string; order?: number; passwordLastUpdate?: Date; createdAt?: string; btSupported?: boolean; xfp?: string },
+    googleBaseAddress?: string
+  ) {
     this.id = wallet.id;
     this.name = wallet.name;
     this.createdAt = wallet.createdAt;
@@ -518,7 +521,17 @@ export class WalletBg {
       debugLog(`📦 Loading ${rows.length} persisted UTxOs from DB`);
 
       // Reconstruct Cardano.Utxo[] from serialized rows
-      const utxos: Cardano.Utxo[] = rows.map((row: StoredUtxoRow) => {
+      type PersistedUtxoRow = {
+        txId: string;
+        index: number;
+        address: string;
+        coins: string | number;
+        assets?: { unit: string; quantity: string | number }[];
+        datumHash?: Cardano.DatumHash;
+        datum?: Cardano.PlutusData;
+        scriptReference?: Cardano.Script;
+      };
+      const utxos: Cardano.Utxo[] = rows.map((row: PersistedUtxoRow) => {
         const assets = new Map<Cardano.AssetId, bigint>();
         if (row.assets) {
           for (const a of row.assets) {
@@ -575,7 +588,7 @@ export class WalletBg {
       const acc = await this.getAccountInfo();
       if (!acc || acc.controlled_amount == null) return;
       debugLog(`👤 Loading persisted account from DB (controlled=${acc.controlled_amount})`);
-      WalletStore.setAccount(acc);
+      WalletStore.setAccount(acc as Account);
       // Synthesize the lovelace balance token when no UTxOs are cached yet
       // (setAccountInfo skips the synth once UTxOs exist, so this is a no-op
       // when loadCachedUtxos has already populated them).
@@ -664,6 +677,12 @@ export class WalletBg {
     // Set Tokens
     const tokens = Object.fromEntries(resolvedAssets.filter(([, resolved]) => !isCollectible(resolved)));
 
+    {
+      const entries = Object.entries(tokens) as [string, { metadata?: { decimals?: number } }][];
+      const noMeta = entries.filter(([unit, t]) => unit !== 'lovelace' && !t.metadata);
+      debugLog(`🔬 setAssets: built ${entries.length} tokens; withoutMetadata=${noMeta.length}${noMeta.length ? ` sample=${noMeta[0][0].slice(0, 20)}…` : ''}; networkAssetMapSize=${Object.keys(NetworkStore.state.assets || {}).length}`);
+    }
+
     WalletStore.setTokens(tokens);
     chrome.alarms.onAlarm.addListener(alarmListener);
     const isStakingSupported = networks.resolveStakingSupport(this.chain, this.network);
@@ -679,8 +698,7 @@ export class WalletBg {
       return;
     }
     const collections = {};
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- resolveAsset() output is an untyped bag; see the note on its return type
-    Object.values(collectibles).forEach((collectible: any) => {
+    Object.values(collectibles).forEach((collectible: { policy_id: string; quantity: string | number }) => {
       let resolvedAsset;
       if (collectible.policy_id === '') {
         resolvedAsset = collectible;
@@ -797,8 +815,7 @@ export class WalletBg {
       });
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Dexie row for the provider-shaped account record
-  async getAccountInfo(): Promise<any> {
+  async getAccountInfo(): Promise<AccountInfoRow | undefined> {
     return this.getDb()
       .then(async db => {
         const accountTable = db.table('account');
@@ -807,11 +824,11 @@ export class WalletBg {
       })
       .catch(err => {
         debugLog(`Failed to open database: ${err.stack || err}`);
+        return undefined;
       });
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider-shaped account payload, merged field-by-field below
-  async setAccountInfo(accountInfo): Promise<any> {
+  async setAccountInfo(accountInfo): Promise<unknown> {
     const resAccount = await this.getAccountInfo();
     const acc = {
       walletId: this.id,
@@ -871,8 +888,7 @@ export class WalletBg {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider reward rows, stored verbatim
-  async setAccountRewards(res): Promise<any[] | void> {
+  async setAccountRewards(res): Promise<unknown[] | void> {
     return this.getDb()
       .then(db => {
         const rew = [];
@@ -891,8 +907,7 @@ export class WalletBg {
       });
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mixed chain tx records; consumers narrow per chain
-  async setAccountTransactions(txs): Promise<any> {
+  async setAccountTransactions(txs): Promise<unknown> {
     return this.getDb()
       .then(async db => {
         const txsTable = db.table('transactions');
@@ -947,8 +962,7 @@ export class WalletBg {
       });
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- protocol-parameter blob differs per provider and era
-  async setEpochParams(epoch_params: any): Promise<void> {
+  async setEpochParams(epoch_params: Record<string, Record<string, unknown>>): Promise<void> {
     const blockchainDB: Dexie = await this.getBlockchainDb();
     const epochParamsTable = blockchainDB.table('epoch_params');
     const key = Object.keys(epoch_params)[0];
@@ -960,10 +974,8 @@ export class WalletBg {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- returns the heterogeneous key/path buckets consumed by the signing paths
-  resolvePathsForMissingAddresses(usedAddresses: string[]): any {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- address+path+credential records assembled below
-    const resolvedAddresses: any[] = [];
+  resolvePathsForMissingAddresses(usedAddresses: string[]): Keys {
+    const resolvedAddresses: Key[] = [];
     let addressIndex: number = 0; // Start from the first address index
     let consecutiveUnused: number = 0; // Track consecutive unused addresses
     const keys = {
@@ -1198,12 +1210,12 @@ export class WalletBg {
         );
 
         return Bip32PrivateKey.fromBytes(privateKeyBytes);
-      } catch (error: unknown) {
+      } catch (error) {
         // User cancelled or PRF evaluation failed
-        if (error instanceof Error && error.message?.includes('cancelled')) {
+        if ((error as Error).message?.includes('cancelled')) {
           throw new Error('Biometric authentication was cancelled');
         }
-        throw new Error(`Failed to decrypt private key with PRF: ${error instanceof Error ? error.message : String(error)}`);
+        throw new Error(`Failed to decrypt private key with PRF: ${(error as Error).message}`);
       }
 
     } else {
@@ -1364,8 +1376,7 @@ export class WalletBg {
     );
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Esplora UTxO shape, normalised by the caller
-  async fetchBitcoinUtxos(): Promise<any[]> {
+  async fetchBitcoinUtxos(): Promise<IUnifiedUtxo[]> {
     const { BitcoinApi } = await import('@/api/bitcoin-api');
     const { parseBitcoinUtxos } = await import('@/chains/bitcoin/bitcoinUtxoManager');
     const { deriveBitcoinAddress: deriveBtcAddr } = await import('@/chains/bitcoin/bitcoinKeyManager');
@@ -1379,8 +1390,7 @@ export class WalletBg {
       const addressToDerivation = new Map<string, { chain: number; index: number }>();
 
       // Fetch UTXOs for all discovered addresses, deduplicating by txHash:index
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Esplora UTxO shape, normalised by the caller
-      const allUtxos: any[] = [];
+      const allUtxos: IUnifiedUtxo[] = [];
       const utxoSeen = new Set<string>();
 
       for (const chain of [0, 1]) {
@@ -1388,8 +1398,7 @@ export class WalletBg {
         let idx = 0;
         while (consecutiveUnused < GAP_LIMIT) {
           const addr = deriveBtcAddr(this.publicKey, this.network, this.addressType || 'segwit', chain, idx);
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Esplora UTxO shape, normalised by the caller
-          let rawUtxos: any[] = [];
+          let rawUtxos: BitcoinUtxo[] = [];
           try {
             rawUtxos = await bitcoinApi.getUtxos(addr);
           } catch (err) {
@@ -1682,8 +1691,7 @@ export class WalletBg {
    */
   async signBitcoinDappPsbt(
     psbtHex: string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- BIP-322 signer options passed straight through to bitcoinjs-lib
-    options?: { autoFinalized?: boolean; toSignInputs?: any[] },
+    options?: { autoFinalized?: boolean; toSignInputs?: unknown[] },
     password?: string,
     prfSecret?: Uint8Array
   ): Promise<string> {
@@ -1709,8 +1717,7 @@ export class WalletBg {
     const bitcoin = await import('bitcoinjs-lib');
     const bitcoinNetwork = getBitcoinNetwork(this.network);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- bitcoinjs-lib Psbt has no exported type surface for the fields used here
-    let psbt: any;
+    let psbt: Psbt;
     try {
       psbt = bitcoin.Psbt.fromHex(psbtHex, { network: bitcoinNetwork });
     } catch {
@@ -1821,8 +1828,7 @@ export class WalletBg {
 
     // Build to_sign PSBT spending to_spend
     const psbt = new bitcoin.Psbt({ network: bitcoinNetwork });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- setVersion is present at runtime but absent from bitcoinjs-lib's typings
-    (psbt as any).setVersion(0);
+    psbt.setVersion(0);
     psbt.addInput({
       hash: toSpendHash,
       index: 0,
@@ -1971,8 +1977,7 @@ export class WalletBg {
    * @param _utxos - UTXOs for transaction schema conversion
    * @returns Promise with transaction ID
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- unused legacy parameter kept for call-site compatibility
-  async submitTx(txInput: string | Cardano.Tx, _utxos: any[]): Promise<string> {
+  async submitTx(txInput: string | Cardano.Tx, _utxos: unknown[]): Promise<string> {
     let txCbor: string;
 
     // Handle different input types and convert to CBOR hex

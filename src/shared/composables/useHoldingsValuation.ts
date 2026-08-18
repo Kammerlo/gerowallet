@@ -82,13 +82,18 @@ export function useHoldingsValuation() {
     entries.forEach(([unit, token, isProgrammable]: HoldingEntry) => {
       if (!token.quantity || Number(token.quantity) <= 0) return;
 
-      const decimals = token.metadata?.decimals || 0;
-      const rawQuantity = Number(token.quantity);
-      const quantity = decimals > 0 ? rawQuantity / Math.pow(10, decimals) : rawQuantity;
-
       // Find in market data for enrichment
       const marketToken = allTokens.value.find(t => t.unit === unit);
       const dhToken = dhTokens[unit];
+
+      // Decimals: registry metadata first, then market/DexHunter fallbacks —
+      // on a fresh profile the wallet token can be built before the registry
+      // cache exists, and pricing the raw quantity inflates the portfolio by
+      // 10^decimals. The same value feeds `decimals` below so balance and
+      // formatting can never disagree.
+      const decimals = token.metadata?.decimals ?? marketToken?.decimals ?? dhToken?.decimals ?? 0;
+      const rawQuantity = Number(token.quantity);
+      const quantity = decimals > 0 ? rawQuantity / Math.pow(10, decimals) : rawQuantity;
 
       // Price: prefer market API data, then DexHunter fallback
       let priceUsd = marketToken?.price || 0;
@@ -152,7 +157,7 @@ export function useHoldingsValuation() {
         isNew: false,
         policyLocked: true,
         fingerprint: marketToken?.fingerprint || dhToken?.fingerprint || '',
-        decimals: marketToken?.decimals ?? dhToken?.decimals ?? decimals,
+        decimals,
         balance: quantity,
         value,
         allocation: value,
@@ -163,6 +168,14 @@ export function useHoldingsValuation() {
         isNative: isNativeToken,
       });
     });
+
+    {
+      const suspicious = rows.filter(r => !r.isNative && (r.decimals ?? 0) === 0 && (r.balance ?? 0) > 1e6);
+      if (suspicious.length > 0) {
+        // eslint-disable-next-line no-console -- temporary diagnostic for the fresh-restore decimals bug
+        console.log(`🔬 valuation: ${suspicious.length}/${rows.length} tokens resolved decimals=0 with balance>1e6; sample unit=${suspicious[0].unit?.slice(0, 20)}… hasWalletMeta=${!!(tokens[suspicious[0].unit ?? ''] as { metadata?: unknown })?.metadata} marketDecimals=${allTokens.value.find(t => t.unit === suspicious[0].unit)?.decimals} dhDecimals=${dhTokens[suspicious[0].unit ?? '']?.decimals}`);
+      }
+    }
 
     // Sort: native token pinned to top, then by value descending
     rows.sort((a, b) => {
