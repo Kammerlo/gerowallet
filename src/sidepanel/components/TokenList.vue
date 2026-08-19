@@ -62,7 +62,7 @@
     <template v-if="filteredTokens.length > 0">
       <div
         v-for="token in filteredTokens"
-        :key="token.isProgrammable ? token.unit + '#locked' : token.unit"
+        :key="tokenRowKey(token.unit, token.isProgrammable)"
         class="token-item"
         @click="handleSelect(token)"
       >
@@ -90,7 +90,7 @@
                     v-on="on"
                   >mdi-lock-outline</v-icon>
                 </template>
-                {{ $t('programmableTokens.badgeTooltip') }}
+                {{ $t(programmableTooltipKey(token.unit)) }}
               </v-tooltip>
               <v-icon
                 v-else-if="token.verified"
@@ -121,6 +121,13 @@
       </div>
     </template>
 
+    <!-- The lock icon on a row says a token is different; this says what to do about it.
+         Shown only when the wallet actually holds one, so it never becomes chrome. -->
+    <div v-if="hasProgrammableHoldings" class="programmable-note text-caption">
+      <v-icon x-small color="var(--g-warning)" class="mr-1">mdi-lock-outline</v-icon>
+      {{ $t('programmableTokens.listFootnote') }}
+    </div>
+
     <!-- Empty state: only a truly empty wallet (0 ADA, no tokens) reaches here,
          so the ADA row is hidden and this stands alone — no contradiction. -->
     <div v-if="isEmpty" class="empty-state">
@@ -132,6 +139,8 @@
 
 <script setup lang="ts">
 import { computed, toRefs } from 'vue';
+import { programmableTooltipKey } from '@/shared/utils/programmableTokenDisplay';
+import { tokenRowKey } from '@/shared/utils/tokenRowKey';
 import { walletStore } from '@/stores/walletStore';
 import { priceStore } from '@/stores/priceStore';
 import { resolveIcon, applyTokenImageOverride } from '@/shared/utils/resolver';
@@ -212,6 +221,17 @@ const emit = defineEmits<{
 }>();
 
 const { tokens: rawTokens, programmableTokens: rawProgrammableTokens } = toRefs(walletStore);
+
+/**
+ * True when this wallet holds a CIP-113 token on a network that supports them. Gated on
+ * resolveProgrammableTokenSupport so the note can never claim support the build lacks.
+ */
+const hasProgrammableHoldings = computed(() => {
+  const wallet = walletStore.loggedWallet;
+  if (!wallet?.chain || !wallet?.network) return false;
+  if (!networks.resolveProgrammableTokenSupport(wallet.chain, wallet.network)) return false;
+  return Object.keys(rawProgrammableTokens.value || {}).length > 0;
+});
 const hideBalances = computed(() => walletStore.config?.hideBalances || false);
 const { allTokens: marketTokens, adaData } = useMarketData();
 
@@ -349,6 +369,14 @@ function onImgError(event: Event) {
 </script>
 
 <style scoped>
+.programmable-note {
+  display: flex;
+  align-items: center;
+  padding: var(--g-s-2) var(--g-s-3);
+  color: var(--g-text-3);
+  line-height: 1.4;
+}
+
 .token-list {
   display: flex;
   flex-direction: column;

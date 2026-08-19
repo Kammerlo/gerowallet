@@ -1,4 +1,9 @@
 import { Blockchain, Network, Provider } from '@/models/types';
+import {
+  CIP113_BASE_MAINNET as CIP113_DEPLOYMENTS_MAINNET,
+  CIP113_BASE_PREPROD as CIP113_DEPLOYMENTS_PREPROD,
+  CIP113_BASE_PREVIEW as CIP113_DEPLOYMENTS_PREVIEW,
+} from '@/utils/cip113Deployments';
 import cardanoBlueLogo from '@/assets/svg/cardano-blue.svg';
 import cardanoSvg from '@/assets/svg/cardano.svg';
 import apexSvg from '@/assets/svg/ap3x.svg';
@@ -57,15 +62,12 @@ export interface NetworkInfo {
   }
 }
 
-// See .env.example for the full rationale. Two non-obvious points here:
-// 1. Env keys must be string LITERALS — Vite only statically replaces literal
-//    `import.meta.env['VITE_…']`, so a computed key is undefined in the bundle.
-// 2. The value is taken as granted, so this format check is the only guard against
-//    a mis-pasted hash becoming a trust anchor.
-function normalizeCip113BaseScriptHashes(raw: string | undefined): string[] {
+// Hashes come from cip113Deployments.ts. Re-validated here because they are taken as
+// granted downstream, so this is the only guard against a mistyped literal.
+function normalizeCip113BaseScriptHashes(hashes: readonly string[]): string[] {
   const seen = new Set<string>();
-  for (const part of (raw ?? '').split(',')) {
-    const hash = part.trim().toLowerCase();
+  for (const entry of hashes) {
+    const hash = entry.trim().toLowerCase();
     if (/^[0-9a-f]{56}$/.test(hash)) {
       seen.add(hash);
     }
@@ -73,15 +75,9 @@ function normalizeCip113BaseScriptHashes(raw: string | undefined): string[] {
   return Array.from(seen);
 }
 
-const CIP113_BASE_MAINNET: string[] = normalizeCip113BaseScriptHashes(
-  import.meta.env['VITE_CIP113_PROGRAMMABLE_LOGIC_BASE_MAINNET'] as string | undefined
-);
-const CIP113_BASE_PREPROD: string[] = normalizeCip113BaseScriptHashes(
-  import.meta.env['VITE_CIP113_PROGRAMMABLE_LOGIC_BASE_PREPROD'] as string | undefined
-);
-const CIP113_BASE_PREVIEW: string[] = normalizeCip113BaseScriptHashes(
-  import.meta.env['VITE_CIP113_PROGRAMMABLE_LOGIC_BASE_PREVIEW'] as string | undefined
-);
+const CIP113_BASE_MAINNET: string[] = normalizeCip113BaseScriptHashes(CIP113_DEPLOYMENTS_MAINNET);
+const CIP113_BASE_PREPROD: string[] = normalizeCip113BaseScriptHashes(CIP113_DEPLOYMENTS_PREPROD);
+const CIP113_BASE_PREVIEW: string[] = normalizeCip113BaseScriptHashes(CIP113_DEPLOYMENTS_PREVIEW);
 
 
 export default {

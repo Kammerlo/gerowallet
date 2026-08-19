@@ -21,8 +21,8 @@ vi.mock('@/modules/market/composables/useNativeCurrency', () => ({
     currencyTicker: { value: 'ADA' },
   }),
 }));
-vi.mock('@/stores/priceStore', () => ({ priceStore: { adaUsd: { lastPrice: 0 } } }));
-vi.mock('@/stores/networkStore', () => ({ networkStore: { price: { lastPrice: 0 } } }));
+vi.mock('@/stores/priceStore', () => ({ priceStore: { adaUsd: { lastPrice: 0.4 } } }));
+vi.mock('@/stores/networkStore', () => ({ networkStore: { price: { lastPrice: 0.4 } } }));
 vi.mock('@/stores/coinGeckoStore', () => ({ coinGeckoStore: { cache: {} } }));
 vi.mock('@/stores/tokenMetadataStore', () => ({ tokenMetadataStore: { tokens: {} } }));
 
@@ -38,6 +38,7 @@ function resetStore() {
   walletStore.collateral = null;
   walletStore.tokens = {};
   walletStore.programmableTokens = {};
+  walletStore.programmableLockedLovelace = '0';
 }
 
 describe('useHoldingsValuation — CIP-113 holdings', () => {
@@ -70,7 +71,7 @@ describe('useHoldingsValuation — CIP-113 holdings', () => {
     expect(row!.ticker).toBe('Test123');
   });
 
-  it('keeps locked holdings out of the portfolio total', () => {
+  it('keeps locked token holdings out of the portfolio total', () => {
     walletStore.programmableTokens = {
       [PROGRAMMABLE_UNIT]: { unit: PROGRAMMABLE_UNIT, name: 'Test123', quantity: '10' },
     };
@@ -106,6 +107,49 @@ describe('useHoldingsValuation — CIP-113 holdings', () => {
     const rows = useHoldingsValuation().holdings.value;
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every(r => typeof r.rowKey === 'string' && r.rowKey.length > 0)).toBe(true);
+  });
+
+  it('surfaces locked ADA as its own row, keyed apart from spendable ADA', () => {
+    walletStore.programmableLockedLovelace = '2500000';
+
+    const rows = useHoldingsValuation().holdings.value.filter(r => r.unit === 'lovelace');
+    const locked = rows.find(r => r.isProgrammable);
+
+    expect(locked, 'locked lovelace produced no row').toBeDefined();
+    expect(locked!.rowKey).toBe('lovelace#locked');
+    // 6 decimals — the row must read 2.5 ADA, not 2500000.
+    expect(locked!.balance).toBe(2.5);
+  });
+
+  it('prices locked ADA at the native rate and counts it in the portfolio total', () => {
+    walletStore.programmableLockedLovelace = '2500000';
+
+    const { holdings, totals } = useHoldingsValuation();
+    const locked = holdings.value.find(r => r.unit === 'lovelace' && r.isProgrammable);
+
+    // It is the user's ADA at the native price — zeroing it would understate holdings.
+    expect(locked!.price).toBe(0.4);
+    expect(locked!.value).toBeCloseTo(1.0);
+    expect(totals.value.usd).toBeCloseTo(1.0);
+  });
+
+  it('still leaves locked TOKENS unpriced — position at the PLB address proves nothing', () => {
+    walletStore.programmableTokens = {
+      [PROGRAMMABLE_UNIT]: { unit: PROGRAMMABLE_UNIT, name: 'Test123', quantity: '10' },
+    };
+    const { holdings, totals } = useHoldingsValuation();
+    const row = holdings.value.find(r => r.unit === PROGRAMMABLE_UNIT);
+
+    expect(row!.price).toBe(0);
+    expect(row!.value).toBe(0);
+    expect(totals.value.usd).toBe(0);
+  });
+
+  it('renders no locked-ADA row when nothing is locked', () => {
+    walletStore.programmableLockedLovelace = '0';
+
+    const rows = useHoldingsValuation().holdings.value;
+    expect(rows.find(r => r.unit === 'lovelace' && r.isProgrammable)).toBeUndefined();
   });
 
   it('drops zero-quantity entries rather than rendering an empty row', () => {

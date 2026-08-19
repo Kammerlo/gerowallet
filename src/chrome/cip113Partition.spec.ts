@@ -10,7 +10,9 @@ import { classifyUtxoAddress } from './serialization';
 
 const NETWORK_ID = Cardano.NetworkId.Testnet;
 
-// Real preprod programmable_logic_base script hash (see .env.example).
+// A well-formed programmable_logic_base hash from the preprod reference deployment, used
+// only as test fixture data. cip113Deployments.ts ships CIP113_BASE_PREPROD empty: that
+// deployment predates the current contracts and is not confirmed on-chain.
 const PLB = 'a48744c1584c58c2995cba1fa26b37f3999ee8cedac0ef241662f53d';
 const OWN_PAYMENT = '00000000000000000000000000000000000000000000000000000001';
 const OWN_STAKE = '00000000000000000000000000000000000000000000000000000002';
@@ -50,7 +52,10 @@ describe('classifyUtxoAddress — CIP-113 partition', () => {
     expect(classifyUtxoAddress(programmableAddress, ownPaymentCreds, plbSet, ownerCreds)).toBe('programmable');
   });
 
-  it('recognises the payment-credential ownership convention too', () => {
+  // Classifier-level only: gero-sync's stake-anchored SUBSCRIBE cannot currently surface
+  // such a UTxO (see subscriptionCredentials()). This proves the branch is correct if a
+  // future deployment uses that convention, not that the wallet finds one today.
+  it('recognises the payment-credential ownership convention too (classifier-only)', () => {
     const addr = baseAddress(
       PLB, Cardano.CredentialType.ScriptHash,
       OWN_PAYMENT, Cardano.CredentialType.KeyHash,
@@ -75,9 +80,28 @@ describe('classifyUtxoAddress — CIP-113 partition', () => {
     expect(classifyUtxoAddress(enterprise, ownPaymentCreds, plbSet, ownerCreds)).toBe('spendable');
   });
 
-  it('keeps unparseable addresses spendable rather than swallowing them', () => {
-    expect(classifyUtxoAddress('not-an-address', ownPaymentCreds, plbSet, ownerCreds)).toBe('spendable');
-    expect(classifyUtxoAddress('', ownPaymentCreds, plbSet, ownerCreds)).toBe('spendable');
+  // Sending an empty `credentials` list turns off gero-sync's payment-credential filter,
+  // so on a CIP-113-configured network these fallbacks are the only gate left. They fail
+  // closed there and stay permissive everywhere else, so mainnet behaviour is unchanged.
+  it('drops unparseable addresses once the server-side filter is off', () => {
+    expect(classifyUtxoAddress('not-an-address', ownPaymentCreds, plbSet, ownerCreds)).toBe('foreign');
+    expect(classifyUtxoAddress('', ownPaymentCreds, plbSet, ownerCreds)).toBe('foreign');
+  });
+
+  it('keeps unparseable addresses spendable where the filter is still on', () => {
+    const noPlb = new Set<string>();
+    expect(classifyUtxoAddress('not-an-address', ownPaymentCreds, noPlb, ownerCreds)).toBe('spendable');
+    expect(classifyUtxoAddress('', ownPaymentCreds, noPlb, ownerCreds)).toBe('spendable');
+  });
+
+  it('drops a stranger\'s enterprise address once the server-side filter is off', () => {
+    const strangerEnterprise = Cardano.EnterpriseAddress.fromCredentials(NETWORK_ID, {
+      hash: Hash28ByteBase16(STRANGER),
+      type: Cardano.CredentialType.KeyHash,
+    }).toAddress().toBech32();
+    expect(classifyUtxoAddress(strangerEnterprise, ownPaymentCreds, plbSet, ownerCreds)).toBe('foreign');
+    // …but keeps it on a network where gero-sync still pre-filters.
+    expect(classifyUtxoAddress(strangerEnterprise, ownPaymentCreds, new Set<string>(), ownerCreds)).toBe('spendable');
   });
 
   // ── Nothing else gets pulled into the programmable bucket ──────────────────
@@ -141,8 +165,11 @@ describe('classifyUtxoAddress — multiple deployments per network', () => {
     expect(classifyUtxoAddress(atNewDeployment, ownPaymentCreds, bothDeployments, ownerCreds)).toBe('programmable');
   });
 
-  // Both preview deployments are configured because real holdings sit under each.
-  // Dropping the older one classifies its UTxOs as somebody else's and hides them.
+  // Exercises the list mechanism a future rotation needs, not today's shipped config:
+  // preview deliberately ships only the newest hash, because the older deployments
+  // predate the current contracts (see cip113Deployments.ts). This proves what that
+  // rotation would rely on — a still-held but unconfigured hash reads as somebody
+  // else's and its UTxOs silently disappear from the portfolio.
   it('loses the superseded deployment if only the newest is configured', () => {
     const newOnly = new Set([NEW_PLB]);
     expect(classifyUtxoAddress(atNewDeployment, ownPaymentCreds, newOnly, ownerCreds)).toBe('programmable');
@@ -174,8 +201,8 @@ describe('credential expansion — script addresses must never trigger it', () =
 
   const scriptAddresses = [
     baseAddress(PLB, Cardano.CredentialType.ScriptHash, OWN_STAKE, Cardano.CredentialType.KeyHash),
-    // A different script sharing the same stake credential — the case the original
-    // hash-specific exemption missed.
+    // A different script sharing the same stake credential — the exemption keys off
+    // credential type, not the specific PLB hash, so this must be skipped too.
     baseAddress(STRANGER, Cardano.CredentialType.ScriptHash, OWN_STAKE, Cardano.CredentialType.KeyHash),
   ];
 

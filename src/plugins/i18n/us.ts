@@ -4483,5 +4483,8 @@ export default {
   'midnight.proofServerPage.faq5Q': 'What is Arkhia zkPaaS?',
   'midnight.proofServerPage.faq5A': 'A hosted proving service for the Midnight ecosystem, run behind the Arkhia API gateway on Google Cloud confidential computing (a trusted execution environment, so proof data stays encrypted even while in use). It needs an API key from the Arkhia dashboard. Like any remote prover it receives your private transaction data for the proving step; unlike Gero Cloud, that data goes to Arkhia rather than Gero.',
   'programmableTokens.badge': 'CIP-113',
-  'programmableTokens.badgeTooltip': 'CIP-113 programmable token. Gero cannot send these yet — use the issuing dApp to transfer it.',
+  'programmableTokens.lockedAdaTooltip': 'ADA held inside your CIP-113 token UTxOs. It counts toward your portfolio value, but Gero can\'t spend it. The issuing dApp releases it when the token moves.',
+  'programmableTokens.listFootnote': 'Locked tokens stay in your wallet but Gero doesn\'t move them. Use the app that issued the token to send it.',
+  'programmableTokens.signRefused': 'This transaction moves a CIP-113 programmable token. Gero doesn\'t build these transfers, so use the issuing dApp instead.',
+  'programmableTokens.badgeTooltip': 'CIP-113 programmable token. Gero doesn\'t build transfers of these, so use the issuing dApp to send it.',
 }

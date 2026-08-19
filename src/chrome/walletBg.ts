@@ -3,7 +3,7 @@ import { type StoredTransaction } from '@/models/transaction.types';
 import { Api } from '@/api/api';
 import { Cardano, Serialization } from '@cardano-sdk/core';
 import { HexBlob } from '@cardano-sdk/util';
-import { APIError, TxSendError } from '@/chrome/config';
+import { APIError, CIP113_SIGN_REFUSAL_MESSAGE, TxSendError } from '@/chrome/config';
 import networks from '@/utils/networks';
 import { blockChainDBSchema, blockChainDBVersion } from '@/db/schema';
 import {
@@ -274,8 +274,7 @@ export class WalletBg {
   /**
    * Apply UTxOs: set on store, resolve assets, persist to DB.
    * Called on login (from DB) and when server UTxOs arrive.
-   */
-  /**
+   *
    * @param source 'cache' loads only carry the spendable partition, so they must not
    *   touch programmable state — doing so would wipe the restored refusal index.
    */
@@ -286,7 +285,7 @@ export class WalletBg {
     const myCredentials = new Set(this.derivePaymentCredentials());
     // CIP-113 tokens sit at a shared script address whose stake slot names the owner:
     // ours to display, never ours to spend. Divert rather than drop. The spendable
-    // branch is evaluated first and unchanged, so nothing spendable can be demoted.
+    // branch is evaluated first, so nothing spendable can be demoted.
     const programmableBases = this.programmableBaseScriptHashes();
     const programmableOwners = programmableBases.size > 0
       ? this.programmableOwnerCredentials(myCredentials)
@@ -310,8 +309,8 @@ export class WalletBg {
       return partition === 'spendable';
     });
     if (programmableOther > 0) {
-      // console.warn, not debugLog: debugLog is compiled out of normal builds and this
-      // is a trust-boundary violation that has to stay visible.
+      // console.warn, not debugLog: debugLog no-ops in normal builds and this is a
+      // trust-boundary violation that has to stay visible.
       console.warn(
         `CIP-113: dropped ${programmableOther} programmable UTxO(s) owned by other wallets — ` +
         `gero-sync is returning holdings that are not ours`
@@ -407,15 +406,22 @@ export class WalletBg {
   /**
    * Aggregate into a display-only map, deliberately NOT walletStore.utxos/tokens:
    * every path that selects transaction inputs or discloses holdings reads those, so
-   * keeping these separate is what stops Gero spending or exposing them. No synthetic
-   * 'lovelace' entry — that min-ADA is locked, not spendable.
+   * keeping these separate is what stops Gero spending or exposing them.
+   *
+   * The lovelace riding along in these UTxOs is summed separately: it is real ADA the
+   * user owns and cannot spend through Gero, so it is shown as a locked row rather than
+   * folded into the spendable balance (which would overstate it) or dropped (which
+   * would make it vanish from the wallet entirely).
    */
   private setProgrammableAssets(utxos: Cardano.Utxo[]) {
     this.programmableUtxos = utxos ?? [];
     void this.persistProgrammableRefs();
 
     const assets = {};
+    let lockedLovelace = 0n;
     for (const utxo of this.programmableUtxos) {
+      // Before the assets guard: a pure-ADA programmable UTxO still locks its coins.
+      lockedLovelace += utxo[1].value.coins ?? 0n;
       if (!utxo[1].value.assets) continue;
       for (const [key, quantity] of utxo[1].value.assets) {
         const assetName: Cardano.AssetName = Cardano.AssetId.getAssetName(key);
@@ -441,14 +447,17 @@ export class WalletBg {
       Object.entries(assets).map(([key, asset]) => [key, { ...resolveAsset(asset), isProgrammable: true }])
     );
 
-    WalletStore.setProgrammableTokens(tokens);
+    WalletStore.setProgrammableTokens(tokens, lockedLovelace.toString());
   }
 
   /**
    * `txId#index` refs the signing guard refuses. Persisted rather than derived on
    * demand: an MV3 worker can restart at any time and loadCachedUtxos() restores only
    * the spendable partition, so without this the guard reports clean after every
-   * restart. Stale entries can only cause a refusal, never a wrongful signature.
+   * restart. A stale entry that lingers can only cause a refusal, never a wrongful
+   * signature — but a MISSING one is different: a programmable UTxO created since the last
+   * live sync is not in the index, so the guard reports clean for it. That window is the
+   * known limit of a snapshot-based check.
    */
   private programmableInputRefs: Set<string> = new Set();
 
@@ -1156,8 +1165,17 @@ export class WalletBg {
    * empty list disables the filter so the server resolves by stake address instead, and
    * classifyUtxoAddress does the filtering client-side.
    *
-   * Networks without a deployment keep the filter, so sync is unchanged there.
+   * Networks without a deployment take the non-empty branch, so the server-side filter
+   * stays active there exactly as it does for any other credential list.
    * Single source of truth: resubscribe() REPLACES the socket's credential set.
+   *
+   * LIMITATION — only the stake-key CIP-113 convention is discoverable this way. The
+   * SUBSCRIBE is anchored on this wallet's stake address, so gero-sync only ever fans out
+   * over addresses sharing that stake credential. An address built the other way round
+   * (delegation slot holding a PAYMENT key hash) resolves to a different reward account
+   * and is never returned. classifyUtxoAddress still recognises that convention if handed
+   * such a UTxO, but nothing on this path supplies one — closing it needs a second
+   * subscription or a gero-sync change.
    */
   subscriptionCredentials(): string[] {
     if (this.programmableBaseScriptHashes().size > 0) return [];
@@ -1921,7 +1939,7 @@ export class WalletBg {
     const programmableInputs = this.findProgrammableInputs(transaction);
     if (programmableInputs.length > 0) {
       debugLog('CIP-113: refusing to sign, programmable inputs:', programmableInputs);
-      throw new Error('Gero cannot sign transfers of CIP-113 programmable tokens');
+      throw new Error(CIP113_SIGN_REFUSAL_MESSAGE);
     }
 
     // Get root private key

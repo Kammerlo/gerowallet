@@ -139,9 +139,10 @@ See [`.env.example`](.env.example) for the full list of optional variables
 (fiat on-ramp, feature-flag service, blog, etc.). Every entry ships with a safe
 placeholder — none are required to boot the extension against a local backend.
 
-CIP-113 programmable-token display is enabled per network by
-`VITE_CIP113_PROGRAMMABLE_LOGIC_BASE_*` (the deployment's `programmable_logic_base`
-script hash). An empty value disables it for that network; mainnet ships empty.
+CIP-113 programmable-token display is configured in
+[`src/utils/cip113Deployments.ts`](src/utils/cip113Deployments.ts). The
+`programmable_logic_base` script hashes are reviewed protocol constants. An empty list
+disables the feature for that network, and mainnet ships empty.
 
 ### 3. Start Gero Backend
 

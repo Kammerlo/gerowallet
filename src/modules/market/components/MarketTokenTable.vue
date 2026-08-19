@@ -72,7 +72,7 @@
                 v-on="on"
               >mdi-lock-outline</v-icon>
             </template>
-            {{ $t('programmableTokens.badgeTooltip') }}
+            {{ $t(programmableTooltipKey(item.unit)) }}
           </v-tooltip>
           <v-icon
             v-else-if="item.isSnekFun"
@@ -417,6 +417,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue';
+import { programmableTooltipKey } from '@/shared/utils/programmableTokenDisplay';
 import assets from '@/utils/assets';
 import { useWatchlist } from '@/modules/market/composables/useWatchlist';
 import { useColumnPreferences } from '@/modules/market/composables/useColumnPreferences';

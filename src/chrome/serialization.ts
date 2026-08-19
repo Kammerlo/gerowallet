@@ -209,13 +209,13 @@ export function buildBaseAddress(networkId: Cardano.NetworkId, paymentKeyHash: H
 export type UtxoPartition = 'spendable' | 'programmable' | 'programmable-other' | 'foreign';
 
 /**
- * Classify a UTxO's address for the CIP-113 partition. Extracted from applyUtxos so the
- * security-critical branch is testable: a mistake either exposes a locked token to
- * spending, or makes ordinary funds invisible and unspendable.
+ * Classify a UTxO's address for the CIP-113 partition, kept standalone so the
+ * security-critical branch is directly testable: a mistake either exposes a locked token
+ * to spending, or makes ordinary funds invisible and unspendable.
  *
- * Order matters — the spendable checks run first and are byte-for-byte the pre-CIP-113
- * behaviour, including keeping non-base and unparseable addresses, so nothing spendable
- * can be demoted here.
+ * Order matters — the spendable checks run first, including keeping non-base and
+ * unparseable addresses spendable, so nothing spendable can be demoted by the
+ * programmable branch below.
  *
  * @param programmableBaseScriptHashes every deployment to recognise on this network; a
  *        re-bootstrap changes the hash while holdings stay at the old one. Empty
@@ -229,13 +229,28 @@ export function classifyUtxoAddress(
   programmableBaseScriptHashes: Set<string>,
   programmableOwnerCredentials: Set<string>,
 ): UtxoPartition {
+  // With CIP-113 configured, walletBg sends an empty `credentials` list so gero-sync
+  // stops pre-filtering by payment credential — which makes these fallbacks the only
+  // gate, so it fails closed. Networks without a deployment (mainnet included) keep the
+  // server-side filter and stay permissive, so an enterprise-address wallet there keeps
+  // seeing its own non-base UTxOs.
+  const gateActive = programmableBaseScriptHashes.size > 0;
+
+  let parsed: Cardano.Address | undefined;
   let baseAddr: Cardano.BaseAddress | undefined;
   try {
-    baseAddr = Cardano.Address.fromString(address)?.asBase();
+    parsed = Cardano.Address.fromString(address);
+    baseAddr = parsed?.asBase();
   } catch {
-    return 'spendable'; // unparseable — keep, as before
+    return gateActive ? 'foreign' : 'spendable'; // unparseable
   }
-  if (!baseAddr) return 'spendable'; // enterprise, reward, Byron, …
+  if (!baseAddr) {
+    // Enterprise addresses have a payment credential and no stake part, so ownership
+    // is still checkable — an own enterprise UTxO stays spendable either way.
+    const enterpriseCred = parsed?.asEnterprise()?.getPaymentCredential();
+    if (enterpriseCred && ownPaymentCredentials.has(enterpriseCred.hash)) return 'spendable';
+    return gateActive ? 'foreign' : 'spendable'; // reward, pointer, Byron, …
+  }
 
   const paymentCred = baseAddr.getPaymentCredential();
   if (ownPaymentCredentials.has(paymentCred.hash)) return 'spendable';

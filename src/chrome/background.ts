@@ -3,7 +3,7 @@ import Loading from '@/stores/loading';
 import { Messaging } from '@/chrome/messaging';
 import { getErrorMessage } from '@/shared/utils/errorHandler';
 import { isStakeKeyRegistered } from '@/shared/utils/stakeRegistration';
-import { APIError, BITCOIN_METHOD, MIDNIGHT_METHOD, MidnightErrorCode, METHOD, POPUP, SENDER, TARGET, TxSendError, TxSignError } from '@/chrome/config';
+import { APIError, BITCOIN_METHOD, CIP113_SIGN_REFUSAL_MESSAGE, MIDNIGHT_METHOD, MidnightErrorCode, METHOD, POPUP, SENDER, TARGET, TxSendError } from '@/chrome/config';
 import { toDappError } from '@/chrome/dappError';
 import { bringInitBackground } from '@bringweb3/chrome-extension-kit';
 import {
@@ -1249,7 +1249,9 @@ app.add(METHOD.signTx, async (request, sendResponse) => {
   const programmableRefusal = refusalForProgrammableInputs(request.data?.tx);
   if (programmableRefusal) {
     debugLog(programmableRefusal);
-    return signTxReply({ error: TxSignError.ProofGeneration });
+    // Refused, like the whitelist check above: this returns before the approval UI opens
+    // and Gero does hold the key, so the wallet is declining by policy.
+    return signTxReply({ error: { code: APIError.Refused.code, info: CIP113_SIGN_REFUSAL_MESSAGE } });
   }
 
   const signTxPayload = { ...request.data, website: request.origin, favIconUrl: request.send?.tab?.favIconUrl };
@@ -2492,7 +2494,7 @@ app.addToOptions(MessageTypes.REQUEST_CROSS_DEVICE_SIGNATURE, async (request, se
       debugLog(crossDeviceRefusal);
       sendResponse({
         id: request.id,
-        data: { decision: 'rejected', reason: 'Gero cannot sign transfers of CIP-113 programmable tokens' },
+        data: { decision: 'rejected', reason: CIP113_SIGN_REFUSAL_MESSAGE },
         target: TARGET,
         sender: SENDER.extension,
       });
@@ -3469,7 +3471,7 @@ app.addToOptions(MessageTypes.TREZOR, async (request, sendResponse) => {
       const trezorRefusal = refusalForProgrammableInputs(txCbor);
       if (trezorRefusal) {
         debugLog(trezorRefusal);
-        throw new Error('Gero cannot sign transfers of CIP-113 programmable tokens');
+        throw new Error(CIP113_SIGN_REFUSAL_MESSAGE);
       }
 
       const tx = deserializeCardanoJsSdkTx(txCbor);
@@ -4261,7 +4263,7 @@ function setupWalletConnectCallbacks(wcService: WalletConnectServiceInstance) {
             const wcProgrammableRefusal = refusalForProgrammableInputs(wcTx);
             if (wcProgrammableRefusal) {
               debugLog(wcProgrammableRefusal);
-              await wcService.respondError(topic, id, 4100, 'Gero cannot sign transfers of CIP-113 programmable tokens');
+              await wcService.respondError(topic, id, 4100, CIP113_SIGN_REFUSAL_MESSAGE);
               return;
             }
             await routeWcSigningRequest(

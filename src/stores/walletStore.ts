@@ -83,9 +83,20 @@ export interface WalletStore {
   keys: Keys | null;
   tokens: {};
   collections: {};
-  // CIP-113: display only, held apart from `tokens` so nothing that selects inputs
-  // or discloses holdings can reach them.
+  // CIP-113: display-only balances. NOT itself the spend/disclosure guard — that is
+  // applyUtxos() keeping programmable UTxOs out of `utxos`, which is what input selection
+  // and the CIP-30/WalletConnect getBalance handlers actually read.
+  //
+  // Kept apart from `tokens` because ~9 other consumers (SendSheet, SwapCard,
+  // useCopilotFeed, useAgentDock, HomePage, MarketPage, popup TransactionCard,
+  // useCnightDustRegistration, DAppOverlay) read `tokens` for balance and spend-adjacent
+  // logic. Separate means they stay spendable-only by default; merged would mean each of
+  // them has to remember to opt out, and a forgotten one counts locked tokens as
+  // spendable. Fails toward a missing display row rather than an overstated balance.
   programmableTokens: {};
+  /** Lovelace locked in CIP-113 UTxOs: owned but not Gero-spendable — kept out of `utxos`
+   *  and adaBalance, yet priced and counted in portfolio totals (see useHoldingsValuation). */
+  programmableLockedLovelace: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- config is a dynamic settings bag (~20 varied fields read/written across the app); see GeroStore.config
   config: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- reward history entries come straight from the provider payload
@@ -110,6 +121,7 @@ export const walletStore = Vue.observable<WalletStore>({
   tokens: {},
   collections: {},
   programmableTokens: {},
+  programmableLockedLovelace: '0',
   config: {
     tokenAllocationSort: {
       by: 'allocation',
@@ -335,9 +347,10 @@ export default {
 
   // Kept out of `tokens` on purpose: the send pickers read `tokens`, so these can only
   // appear where a surface has explicitly opted in to showing locked holdings.
-  setProgrammableTokens(programmableTokens: {}) {
+  setProgrammableTokens(programmableTokens: {}, programmableLockedLovelace = '0') {
     walletStore.programmableTokens = programmableTokens;
-    broadcastFromBackground({ programmableTokens });
+    walletStore.programmableLockedLovelace = programmableLockedLovelace;
+    broadcastFromBackground({ programmableTokens, programmableLockedLovelace });
   },
 
   setConfig(config: {}) {
@@ -475,6 +488,7 @@ export default {
       tokens: {},
       collections: {},
       programmableTokens: {},
+  programmableLockedLovelace: '0',
       config: {},
       rewards: [],
       connectedDapps: [],
@@ -509,6 +523,7 @@ export default {
       tokens: {},
       collections: {},
       programmableTokens: {},
+  programmableLockedLovelace: '0',
       rewards: [],
       contacts: {},
       connectedDapps: [],

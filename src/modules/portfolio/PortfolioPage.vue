@@ -386,6 +386,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, toRefs, onMounted, onBeforeUnmount, getCurrentInstance } from 'vue';
+import { tokenRowKey } from '@/shared/utils/tokenRowKey';
 import { useTranslation } from '@/shared/composables/useTranslation';
 import { useQuickActionDialogs } from '@/shared/composables/useQuickActionDialogs';
 import { useMarketData, type MarketToken } from '@/modules/market/composables/useMarketData';
@@ -807,7 +808,7 @@ const displayedTokens = computed(() => {
   // too, or the locked row is dropped and the balance reads short.
   const seen = new Set<string>();
   tokens = tokens.filter(t => {
-    const key = t.isProgrammable ? `${t.unit}#locked` : t.unit;
+    const key = tokenRowKey(t.unit, t.isProgrammable);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
