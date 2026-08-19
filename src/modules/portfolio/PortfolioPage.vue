@@ -396,6 +396,7 @@ import { usePortfolioData } from '@/shared/composables/usePortfolioData';
 import { useCurrencyConverter } from '@/shared/composables/useCurrencyConverter';
 import { useHoldingsValuation } from '@/shared/composables/useHoldingsValuation';
 import { walletStore } from '@/stores/walletStore';
+import { isClickInsidePanel } from '@/shared/utils/outsideClick';
 import { Blockchain, Network } from '@/models/types';
 import { isNewUser as checkNewUser } from '@/modules/dashboard/utils/emptyStateConfigs';
 
@@ -842,14 +843,27 @@ function openSwap(token: MarketToken) {
   swapDialogOpen.value = true;
 }
 
+// The node under the pointer at press time, captured BEFORE any click handler can
+// re-render it away. isClickInsidePanel falls back to it when the click target is
+// detached, so an outside click on a self-re-rendering control still closes the
+// panel while the swap widget's mid-confirm re-render still counts as inside.
+let lastPressedTarget: EventTarget | null = null;
+
+function handlePointerDown(e: PointerEvent) {
+  lastPressedTarget = e.composedPath?.()[0] ?? e.target;
+}
+
 function handleOutsideClick(e: MouseEvent) {
   if (!panelOpen.value) return;
   if (skipNextOutsideClose) {
     skipNextOutsideClose = false;
     return;
   }
-  const panel = document.querySelector('.token-detail-panel');
-  if (panel && panel.contains(e.target as HTMLElement)) return;
+  // Not a plain `panel.contains(e.target)`: confirming a swap detaches the clicked
+  // control before the click reaches this listener, and the embed's password/PassKey
+  // prompts render outside the panel's subtree. Both read as "outside" and tore the
+  // panel down mid-swap — see isClickInsidePanel.
+  if (isClickInsidePanel(e, '.token-detail-panel', document, lastPressedTarget)) return;
   panelOpen.value = false;
 }
 
@@ -908,6 +922,8 @@ async function handleChartModeChange(adaOnly: boolean) {
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 onMounted(() => {
+  // Capture phase: run before any component handler can re-render the pressed node.
+  document.addEventListener('pointerdown', handlePointerDown, true);
   document.addEventListener('click', handleOutsideClick);
   loadExchangeRate();
   if (isMainnetCardano.value) {
@@ -930,6 +946,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', handlePointerDown, true);
   document.removeEventListener('click', handleOutsideClick);
   if (searchDebounce) clearTimeout(searchDebounce);
   if (chartRefetchTimer) clearTimeout(chartRefetchTimer);
