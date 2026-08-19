@@ -4381,8 +4381,8 @@ export default {
   'midnight.proofServerPage.faq5Q': 'Was ist Arkhia zkPaaS?',
   'midnight.proofServerPage.faq5A': 'Ein gehosteter Beweis-Dienst für das Midnight-Ökosystem, betrieben hinter dem Arkhia-API-Gateway auf Google Cloud Confidential Computing (einer Trusted Execution Environment, sodass Proof-Daten selbst während der Verarbeitung verschlüsselt bleiben). Er benötigt einen API-Key aus dem Arkhia-Dashboard. Wie jeder entfernte Prover erhält er deine privaten Transaktionsdaten für den Beweis-Schritt; anders als bei Gero Cloud gehen diese Daten an Arkhia statt an Gero.',
   'programmableTokens.badge': 'CIP-113',
-  'programmableTokens.lockedAdaTooltip': 'ADA, das in deinen CIP-113-Token-UTxOs liegt. Es zählt zum Portfoliowert, Gero kann es aber nicht ausgeben. Die ausgebende dApp gibt es frei, wenn der Token bewegt wird.',
-  'programmableTokens.listFootnote': 'Gesperrte Token bleiben in deiner Wallet, Gero bewegt sie aber nicht. Nutze zum Senden die App, die den Token ausgegeben hat.',
-  'programmableTokens.signRefused': 'Diese Transaktion bewegt einen programmierbaren CIP-113-Token. Gero erstellt diese Überweisungen nicht, nutze dafür die ausgebende dApp.',
-  'programmableTokens.badgeTooltip': 'Programmierbarer CIP-113-Token. Gero erstellt keine Überweisungen dieser Token, nutze zum Senden die ausgebende dApp.',
+  'programmableTokens.lockedAdaTooltip': 'ADA, das in deinen CIP-113-Token-UTxOs liegt. Es zählt zum Portfoliowert, Gero kann es aber nicht ausgeben, und das Bewegen dieser Token wird noch nicht unterstützt.',
+  'programmableTokens.listFootnote': 'Gesperrte Token bleiben in deiner Wallet, Transfers dieser Token werden aber noch nicht unterstützt.',
+  'programmableTokens.signRefused': 'Diese Transaktion bewegt einen programmierbaren CIP-113-Token. Gero kann solche Überweisungen noch nicht signieren.',
+  'programmableTokens.badgeTooltip': 'Programmierbarer CIP-113-Token. Gero zeigt dein Guthaben an, Überweisungen dieser Token werden aber noch nicht unterstützt.',
 }

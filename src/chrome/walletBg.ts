@@ -52,7 +52,7 @@ import {
   type BitcoinAddressSet,
   type BitcoinAddressTypeName,
 } from '@/chains/bitcoin/bitcoinKeyManager';
-import WalletStore, { type Account } from '@/stores/walletStore';
+import WalletStore, { spendableControlledAmount, type Account } from '@/stores/walletStore';
 import NetworkStore, { isBitcoinTip } from '@/stores/networkStore';
 import {
   analyzeTransactionForSignatures,
@@ -858,8 +858,12 @@ export class WalletBg {
         console.error(`${err.stack || err}`);
       });
 
-    // Synthesize lovelace token from account when UTxOs aren't available (e.g. preprod/testnet)
-    const controlled = Number(accountInfo.controlled_amount);
+    // Synthesize lovelace token from account when UTxOs aren't available (e.g. preprod/testnet).
+    // The account total covers the whole stake address, CIP-113 UTxOs included, so the
+    // synthesized balance uses the spendable share — otherwise it would count the locked
+    // lovelace a second time alongside the locked row in useHoldingsValuation.
+    const spendable = spendableControlledAmount(accountInfo.controlled_amount);
+    const controlled = Number(spendable);
     if (controlled > 0 && WalletStore.state.utxos.length === 0) {
       const network = networks.resolveNetwork(this.chain, this.network);
       WalletStore.setTokens({
@@ -868,7 +872,7 @@ export class WalletBg {
           name: network?.currencyName,
           policy_id: '',
           img: network?.currencyImage,
-          quantity: accountInfo.controlled_amount,
+          quantity: spendable,
           metadata: {
             name: network?.currencyName,
             ticker: network?.currencyTicker,

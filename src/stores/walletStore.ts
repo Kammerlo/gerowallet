@@ -58,7 +58,12 @@ function clearWalletSpecificAlarms() {
 export interface Account {
   active: boolean;
   active_epoch: number;
+  /** Spendable lovelace. The provider reports a stake-level total; setAccount() subtracts
+   *  the CIP-113 locked share before the value reaches any consumer. */
   controlled_amount: string;
+  /** The provider's unadjusted stake-level total, carried so setAccount() stays idempotent.
+   *  Derived in the store only — never written to the `account` table. */
+  controlled_amount_total?: string;
   drep_id: string;
   id: number;
   pool_id: string;
@@ -106,6 +111,31 @@ export interface WalletStore {
   connectedDapps?: any[];
   // Bitcoin-specific state
   bitcoinBalance?: IBalance;  // Bitcoin balance (available, total, locked)
+}
+
+/**
+ * `controlled_amount` is reported per stake address, and CIP-113 UTxOs sit at the shared
+ * programmable-logic-base script address carrying that same stake credential, so their
+ * lovelace is part of the reported total. Consumers read the field as spendable ADA
+ * (max-send, swap sizing, delegation), so the locked share comes off here, at the single
+ * point the account enters the store, rather than at each of them.
+ */
+export function spendableControlledAmount(total: string | number | null | undefined): string {
+  if (total == null) return '0';
+  try {
+    const remaining = BigInt(total) - BigInt(walletStore.programmableLockedLovelace || '0');
+    return (remaining > 0n ? remaining : 0n).toString();
+  } catch {
+    return String(total);
+  }
+}
+
+/** Re-derive `controlled_amount` from the provider total, tolerating repeated application. */
+function withSpendableControlledAmount(account: Account | null): Account | null {
+  if (!account) return account;
+  const total = account.controlled_amount_total ?? account.controlled_amount;
+  if (total == null) return account;
+  return { ...account, controlled_amount: spendableControlledAmount(total), controlled_amount_total: total };
 }
 
 // Create observable state
@@ -284,8 +314,9 @@ export default {
   },
 
   setAccount(account: Account | null) {
-    walletStore.account = account;
-    broadcastFromBackground({ account });
+    const adjusted = withSpendableControlledAmount(account);
+    walletStore.account = adjusted;
+    broadcastFromBackground({ account: adjusted });
   },
 
   setTransactions(transactions: WalletStore['transactions']) {
@@ -351,6 +382,9 @@ export default {
     walletStore.programmableTokens = programmableTokens;
     walletStore.programmableLockedLovelace = programmableLockedLovelace;
     broadcastFromBackground({ programmableTokens, programmableLockedLovelace });
+    // A SYNC push carries the account and the UTxOs together, so the account can land
+    // before this partition is known. Re-derive it against the locked total just set.
+    this.setAccount(walletStore.account);
   },
 
   setConfig(config: {}) {

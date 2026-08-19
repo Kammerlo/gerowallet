@@ -1,6 +1,6 @@
 // Four render sites share this helper, so the two locked cases can't drift apart:
 // a programmable token Gero won't transfer, vs the ADA locked inside those UTxOs
-// (priced, counted in the portfolio total, and released by the issuing dApp).
+// (priced and counted in the portfolio total, but not spendable through Gero).
 import { describe, it, expect } from 'vitest';
 import { programmableTooltipKey } from './programmableTokenDisplay';
 
