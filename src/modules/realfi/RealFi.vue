@@ -45,7 +45,9 @@
           <section class="realfi-hero">
             <div class="realfi-hero__top">
               <span class="t-label">{{ $t('realfi.position.label') }}</span>
-              <span v-if="apyLabel" class="realfi-apy g-num">{{ apyLabel }}</span>
+              <!-- Plain coloured text, never a chip: the design language reserves
+                   chips for status and gives deltas a glyph instead. -->
+              <span :class="['t-body-sm', 'g-num', deltaClass]">{{ yieldLabel }}</span>
             </div>
 
             <p class="t-display g-num realfi-hero__value">{{ positionValue }}</p>
@@ -53,7 +55,7 @@
             <div class="realfi-hero__meta">
               <span class="t-body-sm">
                 {{ $t('realfi.position.earned') }}
-                <b :class="earnedClass">{{ earnedLabel }}</b>
+                <b :class="['realfi-strong', 'g-num', deltaClass]">{{ earnedLabel }}</b>
               </span>
               <span class="t-body-sm">
                 {{ $t('realfi.position.principal') }}
@@ -166,21 +168,24 @@ const positionValue = computed(() => formatUsd(fromSmallestUnit(position.value?.
 const principalLabel = computed(() => formatUsd(fromSmallestUnit(position.value?.principal)));
 
 const earnedAmount = computed(() => fromSmallestUnit(position.value?.earned));
-/**
- * The glyph carries the direction, per the design language — the colour is
- * reinforcement, never the only signal.
- */
-const earnedLabel = computed(() => formatSignedChange(earnedAmount.value));
-const earnedClass = computed(() => [
-  'realfi-strong',
-  'g-num',
-  earnedAmount.value < 0 ? 'delta-down' : 'delta-up',
-]);
 
-const apyLabel = computed(() => {
-  const percent = position.value?.yieldPercent;
-  return typeof percent === 'number' && percent !== 0 ? `${percent.toFixed(2)}%` : '';
-});
+/** Money, formatted as money. */
+const earnedLabel = computed(() => formatUsd(earnedAmount.value));
+
+/**
+ * The direction, carried by the glyph.
+ *
+ * `formatSignedChange` is the PERCENTAGE formatter — it appends '%' — so it takes
+ * `yieldPercent`, never the dollar amount. Feeding it the earned figure renders
+ * "$382.14 earned" as "▲ 382.1%", which is how this read before.
+ *
+ * Note this is yield to date, not an APY: the SDK does not return a rate, and
+ * labelling a cumulative figure "APY" would overstate it.
+ */
+const yieldLabel = computed(() => formatSignedChange(position.value?.yieldPercent ?? 0));
+
+/** Colour reinforces the glyph; it is never the only signal. */
+const deltaClass = computed(() => (earnedAmount.value < 0 ? 'delta-down' : 'delta-up'));
 
 /* ── Points and referrals ─────────────────────────────────────────────────── */
 
@@ -298,15 +303,6 @@ onMounted(load);
   display: flex;
   flex-wrap: wrap;
   gap: var(--g-s-4);
-}
-
-.realfi-apy {
-  padding: var(--g-s-1) var(--g-s-3);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--g-accent);
-  border: 1px solid var(--g-hairline-2);
-  border-radius: var(--g-r-pill);
 }
 
 .realfi-strong {
