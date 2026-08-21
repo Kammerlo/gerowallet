@@ -14,6 +14,12 @@ export interface FeatureFlags {
   // Master gate for the daemon-free Trezor WebUSB signing path.
   isTrezorWebUsbEnabled: boolean;
   isPoolOperatorEnabled: boolean;
+  // Master gate for the Cardano on-chain governance surface (CIP-1694): the
+  // /governance route, its nav item and the global-search DRep results. Default
+  // OFF and ships dark. Network support is a SEPARATE gate —
+  // `networks.resolveGovernanceSupport` — so both must pass before the route or
+  // the nav item appears.
+  isGovernanceEnabled: boolean;
   // Master gate for the RealFi Earn surface (USDr / sUSDr yield). Default OFF and
   // ships dark: RealFi is a value-moving surface, so it is enabled deliberately via
   // gero-sync, never by a flag-service outage. Network support is a SEPARATE gate —
@@ -78,6 +84,7 @@ const featureFlagsState = Vue.observable<FeatureFlagsState>({
     isBitcoinEnabled: false,
     isTrezorWebUsbEnabled: false,
     isPoolOperatorEnabled: false,
+    isGovernanceEnabled: false,
     isRealFiEnabled: false,
     isNexusWithdrawalEnabled: false,
     isNexusUnstakeEnabled: false,
@@ -147,6 +154,7 @@ export const featureFlagsStore = {
     featureFlagsState.flags.isBitcoinEnabled = featureFlagService.getFlag('isBitcoinEnabled', false);
     featureFlagsState.flags.isTrezorWebUsbEnabled = featureFlagService.getFlag('isTrezorWebUsbEnabled', false);
     featureFlagsState.flags.isPoolOperatorEnabled = featureFlagService.getFlag('isPoolOperatorEnabled', false);
+    featureFlagsState.flags.isGovernanceEnabled = featureFlagService.getFlag('isGovernanceEnabled', false);
     featureFlagsState.flags.isRealFiEnabled = featureFlagService.getFlag('isRealFiEnabled', false);
     featureFlagsState.flags.isNexusWithdrawalEnabled = featureFlagService.getFlag('isNexusWithdrawalEnabled', false);
     featureFlagsState.flags.isNexusUnstakeEnabled = featureFlagService.getFlag('isNexusUnstakeEnabled', false);
@@ -192,6 +200,9 @@ export const featureFlagsStore = {
     });
     featureFlagService.onFlagChange('isPoolOperatorEnabled', (newValue) => {
       Vue.set(featureFlagsState.flags, 'isPoolOperatorEnabled', newValue);
+    });
+    featureFlagService.onFlagChange('isGovernanceEnabled', (newValue) => {
+      Vue.set(featureFlagsState.flags, 'isGovernanceEnabled', newValue);
     });
     featureFlagService.onFlagChange('isRealFiEnabled', (newValue) => {
       Vue.set(featureFlagsState.flags, 'isRealFiEnabled', newValue);
@@ -292,6 +303,17 @@ export const featureFlagsStore = {
    */
   isPoolOperatorEnabled(): boolean {
     return featureFlagsState.flags.isPoolOperatorEnabled;
+  },
+
+  /**
+   * Whether the Cardano governance surface is enabled.
+   *
+   * This is only the MASTER gate. Callers must AND it with
+   * `networks.resolveGovernanceSupport(chain, network)` — see router.ts,
+   * NavigationDrawer.vue and useGlobalSearch.ts, which all apply both.
+   */
+  isGovernanceEnabled(): boolean {
+    return featureFlagsState.flags.isGovernanceEnabled;
   },
 
   /**
@@ -430,6 +452,7 @@ export const featureFlagsStore = {
       isGoMiningEnabled: false,
       isBitcoinEnabled: false,
       isPoolOperatorEnabled: false,
+      isGovernanceEnabled: false,
       isRealFiEnabled: false,
       isNexusWithdrawalEnabled: false,
       isNexusUnstakeEnabled: false,
