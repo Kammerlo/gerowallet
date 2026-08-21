@@ -25,8 +25,16 @@
         <span class="t-caption">{{ t(capability.reasonKey || 'governance.watchWalletReadOnly') }}</span>
       </div>
 
+      <!-- Which selected actions the liveness pre-check dropped, and why. The
+           user must see exactly what fell out of the batch before signing. -->
+      <div v-for="(notice, i) in droppedNotices" :key="`dropped-${i}`" class="cast-vote__banner cast-vote__banner--blocked">
+        <v-icon small class="mr-2" color="var(--g-warning)">mdi-minus-circle-outline</v-icon>
+        <span class="t-caption">{{ notice }}</span>
+      </div>
+
       <!-- Phase 1: pick a choice PER ACTION (one blanket choice for a batch is a footgun). -->
       <template v-if="phase === 'choose'">
+        <p v-if="actions.length > 1" class="t-caption cast-vote__hint">{{ t('governance.chooseVoteForEachAction') }}</p>
         <div v-for="action in actions" :key="action.govActionId" class="cast-vote__action">
           <div class="cast-vote__action-info">
             <span class="t-label cast-vote__action-type">{{ typeLabel(action.type) }}</span>
@@ -67,6 +75,7 @@
             {{ t('governance.reviewVote') }}
           </GButton>
         </div>
+        <p v-if="building" class="t-caption cast-vote__hint cast-vote__hint--center">{{ t('governance.checkingActions') }}</p>
       </template>
 
       <!-- Phase 2: what you are about to sign, then the shared auth path. -->
@@ -153,6 +162,7 @@ import GButton from '@/shared/components/GButton/GButton.vue';
 import { useTranslation } from '@/shared/composables/useTranslation';
 import { useTransactionSigning } from '@/shared/composables/useTransactionSigning';
 import { useVoting } from '@/shared/composables/useVoting';
+import { checkActionsStillOpen } from '@/modules/governance/dialogs/voteLiveness';
 import type { VoteChoice, VoteIntent } from '@/shared/utils/voteBuilder';
 import { toLovelace } from '@/shared/utils/lovelace';
 import filters from '@/shared/utils/filters';
@@ -196,6 +206,8 @@ const building = ref(false);
 const buildError = ref('');
 const builtTx = ref<Cardano.Tx | undefined>(undefined);
 const intents = ref<VoteIntent[]>([]);
+/** Translated liveness-check drop notices — who fell out of the batch, and why. */
+const droppedNotices = ref<string[]>([]);
 
 const allChosen = computed(
   () => props.actions.length > 0 && props.actions.every(action => !!choices.value[action.govActionId]),
@@ -318,21 +330,48 @@ const {
 
 const form = ref<{ validate: () => boolean; resetValidation: () => void } | null>(null);
 
-function currentIntents(): VoteIntent[] {
-  return props.actions
-    .filter(action => !!choices.value[action.govActionId])
-    .map(action => ({
-      govActionId: displayId(action),
-      choice: choices.value[action.govActionId] as VoteChoice,
-    }));
+function statusLabel(status: string | undefined): string {
+  const key = `governance.status.${String(status ?? '').toLowerCase()}`;
+  const translated = String(t(key));
+  return translated === key ? String(status ?? '') : translated;
 }
 
 async function proceed(): Promise<void> {
   if (!allChosen.value || !capability.value.canVote || building.value) return;
   building.value = true;
   buildError.value = '';
+  droppedNotices.value = [];
   try {
-    const nextIntents = currentIntents();
+    // LIVENESS PRE-CHECK: a multi-vote tx is all-or-nothing, so re-fetch every
+    // selected action IMMEDIATELY before building and drop any no longer open
+    // — telling the user exactly which were dropped and why — rather than
+    // letting one expired action take the whole batch down on chain.
+    let open;
+    try {
+      const result = await checkActionsStillOpen(props.actions, String(loggedWallet.value?.network ?? ''));
+      open = result.open;
+      droppedNotices.value = result.dropped.map(item =>
+        String(
+          item.reasonKey === 'governance.actionDroppedNotOpen'
+            ? t(item.reasonKey, { title: actionTitle(item.action), status: statusLabel(item.status) })
+            : t(item.reasonKey, { title: actionTitle(item.action) }),
+        ),
+      );
+    } catch (error) {
+      debugLog('CastVoteDialog: liveness pre-check failed', error);
+      buildError.value = String(t('governance.livenessCheckFailed'));
+      return;
+    }
+
+    if (!open.length) {
+      buildError.value = String(t('governance.allActionsDropped'));
+      return;
+    }
+
+    const nextIntents = open.map(action => ({
+      govActionId: displayId(action),
+      choice: choices.value[action.govActionId] as VoteChoice,
+    }));
     builtTx.value = await castVotes(nextIntents);
     intents.value = nextIntents;
     phase.value = 'sign';
@@ -368,6 +407,7 @@ watch(
       buildError.value = '';
       builtTx.value = undefined;
       intents.value = [];
+      droppedNotices.value = [];
       choices.value = Object.fromEntries(props.actions.map(action => [action.govActionId, null]));
       void loadVotingPower();
       if (form.value) {
@@ -396,6 +436,13 @@ watch(
 .cast-vote__banner--blocked {
   border-color: var(--g-warning-line);
   background: var(--g-warning-fill);
+}
+.cast-vote__hint {
+  margin: 0;
+  color: var(--g-text-3);
+}
+.cast-vote__hint--center {
+  text-align: center;
 }
 .cast-vote__action {
   display: flex;
