@@ -396,8 +396,10 @@ const dreps = computed(() => {
   return drepsMap;
 });
 
-// Get drepId from loggedWallet
-const drepId = computed(() => keys.value?.drep129[0].address);
+// Get drepId from loggedWallet.
+// Watch wallets have no DRep key — walletBg returns `drep129: []` for
+// WalletType.Watch, so index [0] throws. Same guard as GovernanceView.vue.
+const drepId = computed(() => keys.value?.drep129?.[0]?.address ?? '');
 
 // Data refs
 const delegateLoading = ref(false);
