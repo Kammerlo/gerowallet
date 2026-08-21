@@ -682,6 +682,7 @@ export function analyzeTransactionForSignatures(
           certificate.__typename === Cardano.CertificateType.Unregistration ||
           certificate.__typename === Cardano.CertificateType.StakeDelegation ||
           certificate.__typename === Cardano.CertificateType.StakeRegistrationDelegation ||
+          certificate.__typename === Cardano.CertificateType.StakeVoteDelegation ||
           certificate.__typename === Cardano.CertificateType.VoteDelegation ||
           certificate.__typename === Cardano.CertificateType.VoteRegistrationDelegation ||
           certificate.__typename === Cardano.CertificateType.StakeVoteRegistrationDelegation) {
