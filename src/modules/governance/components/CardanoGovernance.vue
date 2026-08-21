@@ -217,6 +217,7 @@
                       :sort-by.sync="sortBy"
                       :sort-desc.sync="sortDesc"
                       :must-sort="true"
+                      :custom-sort="sortDReps"
                       @click:row="drepDelegate"
                       :loading="drepsLoading"
                       loading-text="Loading DReps..."
@@ -293,7 +294,7 @@
                       <template v-slot:[`item.voting_power`]="{ item }">
                         {{
                           toCurrency(
-                            item.voting_power,
+                            Number(item.voting_power),
                             false,
                             2,
                             networks.resolveCurrencySymbol(loggedWallet?.chain, loggedWallet?.network),
@@ -324,6 +325,7 @@ import { ref, computed, toRefs, onMounted, onUnmounted, watch, getCurrentInstanc
 import { useTranslation } from '@/shared/composables/useTranslation';
 import CopyButton from '@/shared/components/CopyButton.vue';
 import filters from '@/shared/utils/filters';
+import { toLovelace, compareLovelace } from '@/shared/utils/lovelace';
 
 const { t } = useTranslation();
 const instance = getCurrentInstance();
@@ -394,8 +396,10 @@ const dreps = computed(() => {
   return drepsMap;
 });
 
-// Get drepId from loggedWallet
-const drepId = computed(() => keys.value?.drep129[0].address);
+// Get drepId from loggedWallet.
+// Watch wallets have no DRep key — walletBg returns `drep129: []` for
+// WalletType.Watch, so index [0] throws. Same guard as GovernanceView.vue.
+const drepId = computed(() => keys.value?.drep129?.[0]?.address ?? '');
 
 // Data refs
 const delegateLoading = ref(false);
@@ -407,13 +411,29 @@ type DRepRow = {
   image?: string;
   delegators?: number;
   votes?: number;
-  voting_power?: number;
+  voting_power?: bigint;
   hex?: string;
   has_script?: boolean;
   [key: string]: unknown;
 };
 
 const selectedDRep = ref<DRepRow | undefined>(undefined);
+
+// v-data-table's default comparator coerces to Number, which is lossy for
+// lovelace. Sort voting_power through the BigInt comparator instead.
+function sortDReps(items: DRepRow[], sortKeys: string[], sortDescFlags: boolean[]): DRepRow[] {
+  const key = sortKeys?.[0];
+  if (!key) return items;
+  const desc = !!sortDescFlags?.[0];
+  const sorted = [...items].sort((a, b) => {
+    if (key === 'voting_power') return compareLovelace(a.voting_power, b.voting_power);
+    const av = a[key] as string | number;
+    const bv = b[key] as string | number;
+    if (av === bv) return 0;
+    return av > bv ? 1 : -1;
+  });
+  return desc ? sorted.reverse() : sorted;
+}
 const delegationModel = ref(undefined);
 const xLogo = assets.xSvg;
 const telegramLogo = assets.telegramSvg;
@@ -472,7 +492,7 @@ const drepsList = computed(() => {
         image,
         delegators: drep['delegators']?.length || 0,
         votes: drep['votes']?.length || 0,
-        voting_power: Number(drep['amount'] || 0),
+        voting_power: toLovelace(drep['amount']),
         links: drep['metadata']?.meta_json?.body?.references,
         hex: drep['hex'],
         registered: drep['registered'],
@@ -506,7 +526,7 @@ const drepsList = computed(() => {
           image,
           delegators: drep['delegators']?.length || 0,
           votes: drep['votes']?.length || 0,
-          voting_power: Number(drep['amount'] || 0),
+          voting_power: toLovelace(drep['amount']),
           links: drep['metadata']?.meta_json?.body?.references,
           hex: drep['hex'],
           registered: drep['registered'],
@@ -587,7 +607,7 @@ const delegate = async () => {
         image: '',
         delegators: 0,
         votes: 0,
-        voting_power: 0,
+        voting_power: 0n,
       };
     } else if (delegationModel.value === String(t('governance.noConfidence'))) {
       selectedDRep.value = {
@@ -596,7 +616,7 @@ const delegate = async () => {
         image: '',
         delegators: 0,
         votes: 0,
-        voting_power: 0,
+        voting_power: 0n,
       };
     }
 
