@@ -5,7 +5,10 @@
         <h1 class="t-title">{{ $t('governance.actionsTitle') }}</h1>
         <p class="action-list__subtitle t-caption">{{ $t('governance.actionsSubtitle') }}</p>
       </div>
-      <AsOf :timestamp="state.fetchedAt" />
+      <div class="action-list__header-side">
+        <GButton tier="tertiary" compact @click="goToDReps()">{{ $t('governance.dReps') }}</GButton>
+        <AsOf :timestamp="state.fetchedAt" />
+      </div>
     </div>
 
     <div class="action-list__filters">
@@ -208,6 +211,10 @@ function statusLabel(status: string): string {
   return translated === key ? status : translated;
 }
 
+function goToDReps(): void {
+  router.push({ name: 'governanceDReps' });
+}
+
 function reload(page = 1): void {
   // A new page/filter means new rows — a selection kept across it would let
   // "N selected" refer to actions the user can no longer see.
@@ -256,6 +263,11 @@ onMounted(() => {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+  gap: var(--g-s-3);
+}
+.action-list__header-side {
+  display: flex;
+  align-items: baseline;
   gap: var(--g-s-3);
 }
 .action-list__subtitle {

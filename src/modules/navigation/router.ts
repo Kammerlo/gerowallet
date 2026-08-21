@@ -23,6 +23,7 @@ const DevTools = () => import('@/modules/devTools/DevTools.vue');
 const Governance = () => import('@/modules/governance/Governance.vue');
 const GovernanceActionList = () => import('@/modules/governance/views/ActionList.vue');
 const GovernanceActionDetail = () => import('@/modules/governance/views/ActionDetail.vue');
+const GovernanceDReps = () => import('@/modules/governance/components/CardanoGovernance.vue');
 const Dao = () => import('@/modules/dao/Dao.vue');
 const WarningPopUp = () => import('@/popup/modules/views/WarningPopUp.vue');
 const Transactions = () => import('@/modules/transactions/Transactions.vue');
@@ -131,6 +132,17 @@ const routes = [
     path: '/governance/actions/:txHash/:index',
     name: 'governanceAction',
     component: GovernanceActionDetail,
+    meta: {
+      layout: ContentLayout,
+      requiresAuth: true,
+    },
+  },
+  {
+    // The pre-split DRep directory + delegate surface. The `?drep=` deep link
+    // from global search resolves here (forwarded by Governance.vue).
+    path: '/governance/dreps',
+    name: 'governanceDReps',
+    component: GovernanceDReps,
     meta: {
       layout: ContentLayout,
       requiresAuth: true,
@@ -417,6 +429,7 @@ function isRouteUnderMaintenance(routeName: string | null | undefined): boolean 
     case 'governance':
     case 'governanceActions':
     case 'governanceAction':
+    case 'governanceDReps':
       // Cardano governance ships dark — enabled deliberately via gero-sync.
       return !featureFlagsStore.isGovernanceEnabled();
 
@@ -501,6 +514,7 @@ router.beforeEach(async (to: Route, from: Route, next: NavigationGuardNext) => {
       governance: (c, n) => networks.resolveGovernanceSupport(c, n),
       governanceActions: (c, n) => networks.resolveGovernanceSupport(c, n),
       governanceAction: (c, n) => networks.resolveGovernanceSupport(c, n),
+      governanceDReps: (c, n) => networks.resolveGovernanceSupport(c, n),
       dao: (c, n) => networks.resolveDaoSupport(c, n),
       staking: (c, n) => networks.resolveStakingSupport(c, n),
       // The swap page's route is named 'swap' (‘/market’ is only a redirect, no
