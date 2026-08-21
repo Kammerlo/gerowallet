@@ -1,3 +1,4 @@
+import { expect, test, vi } from 'vitest';
 import { featureFlagsStore } from '@/stores/featureFlagsStore';
 import featureFlagService from '@/services/featureFlag.service';
 

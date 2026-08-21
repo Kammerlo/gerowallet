@@ -382,6 +382,10 @@ function isRouteUnderMaintenance(routeName: string | null | undefined): boolean 
       // deliberately via gero-sync rather than by default.
       return !featureFlagsStore.isRealFiEnabled();
 
+    case 'governance':
+      // Cardano governance ships dark — enabled deliberately via gero-sync.
+      return !featureFlagsStore.isGovernanceEnabled();
+
     case 'copilotFeed':
       // Gero Copilot feed gated by the master feature flag (ships dark)
       return !featureFlagsStore.isCopilotEnabled();
