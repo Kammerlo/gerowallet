@@ -17,10 +17,27 @@ test('exposes isGovernanceEnabled, defaulting to false', () => {
   expect(featureFlagsStore.isGovernanceEnabled()).toBe(false);
 });
 
+test('exposes isGovernanceVotingEnabled, defaulting to false', () => {
+  expect(featureFlagsStore.isGovernanceVotingEnabled()).toBe(false);
+});
+
 test('reflects a remote isGovernanceEnabled flag once loaded', () => {
   vi.mocked(featureFlagService.getFlag).mockImplementation((key: string, fallback: unknown) =>
     key === 'isGovernanceEnabled' ? true : fallback,
   );
   featureFlagsStore.loadFlags();
   expect(featureFlagsStore.isGovernanceEnabled()).toBe(true);
+});
+
+test('reflects a remote isGovernanceVotingEnabled flag once loaded', () => {
+  vi.mocked(featureFlagService.getFlag).mockImplementation((key: string, fallback: unknown) =>
+    key === 'isGovernanceVotingEnabled' ? true : fallback,
+  );
+  featureFlagsStore.loadFlags();
+  expect(featureFlagsStore.isGovernanceVotingEnabled()).toBe(true);
+});
+
+test('reset() turns isGovernanceVotingEnabled back off', () => {
+  featureFlagsStore.reset();
+  expect(featureFlagsStore.isGovernanceVotingEnabled()).toBe(false);
 });

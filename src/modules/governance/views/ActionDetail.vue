@@ -36,6 +36,7 @@
             {{ $t('governance.epochsRemaining', { n: epochsLeft }) }}<template v-if="daysLeft !== null"> ({{ $t('governance.approxDaysLeft', { n: daysLeft }) }})</template>
           </span>
         </div>
+        <VoteCta :action="action" @vote="voteDialogOpen = true" />
       </div>
 
       <div class="action-detail__tabs" role="tablist">
@@ -132,12 +133,18 @@
         <EmptyState v-if="action.govAction === null" :message="$t('common.notAvailable')" />
         <pre v-else class="action-detail__json g-mono t-caption">{{ formattedGovAction }}</pre>
       </div>
+
+      <CastVoteDialog
+        :is-open="voteDialogOpen"
+        :actions="action ? [action] : []"
+        @close="voteDialogOpen = false"
+      />
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router/composables';
 import { walletStore } from '@/stores/walletStore';
 import NetworkStore, { networkStore } from '@/stores/networkStore';
@@ -155,6 +162,8 @@ import StatusPill from '@/modules/governance/components/actions/StatusPill.vue';
 import AnchorBadge from '@/modules/governance/components/actions/AnchorBadge.vue';
 import AsOf from '@/modules/governance/components/actions/AsOf.vue';
 import BodyTallyCard from '@/modules/governance/components/actions/BodyTallyCard.vue';
+import VoteCta from '@/modules/governance/components/actions/VoteCta.vue';
+import CastVoteDialog from '@/modules/governance/dialogs/CastVoteDialog.vue';
 import EmptyState from '@/shared/components/feedback/EmptyState.vue';
 import ErrorState from '@/shared/components/feedback/ErrorState.vue';
 import GButton from '@/shared/components/GButton/GButton.vue';
@@ -185,6 +194,8 @@ const govActionId = computed(() =>
 const action = computed(() => state.currentAction);
 const summary = computed(() => state.currentSummary);
 const isInfoAction = computed(() => action.value?.type === 'InfoAction');
+
+const voteDialogOpen = ref(false);
 
 const tab = computed(() => {
   const value = String(route.query['tab'] ?? 'overview');
