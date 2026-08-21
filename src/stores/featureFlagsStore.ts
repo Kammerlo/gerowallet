@@ -20,6 +20,13 @@ export interface FeatureFlags {
   // `networks.resolveGovernanceSupport` — so both must pass before the route or
   // the nav item appears.
   isGovernanceEnabled: boolean;
+  // Sub-gate for CASTING governance votes (the CastVoteDialog / VoteCta surface).
+  // Default OFF and ships dark, SEPARATELY from `isGovernanceEnabled`: voting is a
+  // value-moving surface (signed, irreversible on-chain statements), so the read
+  // surface can go live while vote casting is still being verified on preprod.
+  // Callers must AND it with `isGovernanceEnabled` — a vote affordance only makes
+  // sense on a visible governance surface.
+  isGovernanceVotingEnabled: boolean;
   // Master gate for the RealFi Earn surface (USDr / sUSDr yield). Default OFF and
   // ships dark: RealFi is a value-moving surface, so it is enabled deliberately via
   // gero-sync, never by a flag-service outage. Network support is a SEPARATE gate —
@@ -85,6 +92,7 @@ const featureFlagsState = Vue.observable<FeatureFlagsState>({
     isTrezorWebUsbEnabled: false,
     isPoolOperatorEnabled: false,
     isGovernanceEnabled: false,
+    isGovernanceVotingEnabled: false,
     isRealFiEnabled: false,
     isNexusWithdrawalEnabled: false,
     isNexusUnstakeEnabled: false,
@@ -155,6 +163,7 @@ export const featureFlagsStore = {
     featureFlagsState.flags.isTrezorWebUsbEnabled = featureFlagService.getFlag('isTrezorWebUsbEnabled', false);
     featureFlagsState.flags.isPoolOperatorEnabled = featureFlagService.getFlag('isPoolOperatorEnabled', false);
     featureFlagsState.flags.isGovernanceEnabled = featureFlagService.getFlag('isGovernanceEnabled', false);
+    featureFlagsState.flags.isGovernanceVotingEnabled = featureFlagService.getFlag('isGovernanceVotingEnabled', false);
     featureFlagsState.flags.isRealFiEnabled = featureFlagService.getFlag('isRealFiEnabled', false);
     featureFlagsState.flags.isNexusWithdrawalEnabled = featureFlagService.getFlag('isNexusWithdrawalEnabled', false);
     featureFlagsState.flags.isNexusUnstakeEnabled = featureFlagService.getFlag('isNexusUnstakeEnabled', false);
@@ -203,6 +212,9 @@ export const featureFlagsStore = {
     });
     featureFlagService.onFlagChange('isGovernanceEnabled', (newValue) => {
       Vue.set(featureFlagsState.flags, 'isGovernanceEnabled', newValue);
+    });
+    featureFlagService.onFlagChange('isGovernanceVotingEnabled', (newValue) => {
+      Vue.set(featureFlagsState.flags, 'isGovernanceVotingEnabled', newValue);
     });
     featureFlagService.onFlagChange('isRealFiEnabled', (newValue) => {
       Vue.set(featureFlagsState.flags, 'isRealFiEnabled', newValue);
@@ -314,6 +326,19 @@ export const featureFlagsStore = {
    */
   isGovernanceEnabled(): boolean {
     return featureFlagsState.flags.isGovernanceEnabled;
+  },
+
+  /**
+   * Whether CASTING governance votes is enabled — the CastVoteDialog and the
+   * VoteCta on the action detail. Ships DARK (default false), separately from
+   * {@link isGovernanceEnabled}: voting is a value-moving surface (a vote is a
+   * signed, irreversible on-chain statement), so the read surface can go live
+   * while vote casting is still being verified. Callers must AND this with
+   * `isGovernanceEnabled` — the vote affordance only exists on a visible
+   * governance surface.
+   */
+  isGovernanceVotingEnabled(): boolean {
+    return featureFlagsState.flags.isGovernanceVotingEnabled;
   },
 
   /**
@@ -453,6 +478,7 @@ export const featureFlagsStore = {
       isBitcoinEnabled: false,
       isPoolOperatorEnabled: false,
       isGovernanceEnabled: false,
+      isGovernanceVotingEnabled: false,
       isRealFiEnabled: false,
       isNexusWithdrawalEnabled: false,
       isNexusUnstakeEnabled: false,
