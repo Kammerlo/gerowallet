@@ -1,0 +1,157 @@
+/**
+ * TypeScript mirrors of Nexus's Cardano governance DTOs.
+ *
+ * Two conventions to keep straight:
+ *  - These come from NEXUS via the gero-backend proxy and are camelCase.
+ *  - gero-backend's own /api/dreps (blockchain-api.ts) is snake_case.
+ *
+ * Every `BigInteger` field arrives as a JSON number and is converted to a
+ * decimal STRING by `parseBigJson` before it reaches this layer, so those
+ * fields are typed `string`. Pass them through `toLovelace()` — never
+ * `Number()`. Fields Nexus types as `Double` (the `*Pct` family) are genuinely
+ * safe as `number`.
+ */
+
+/** Nexus's generic page envelope. Note: `total` is nullable — some list modes do not count. */
+export interface GovPage<T> {
+  items: T[];
+  page: number;
+  pageSize: number;
+  total: number | null;
+}
+
+/** The seven CIP-1694 governance action types, as Nexus spells them. */
+export type GovActionType =
+  | 'ParameterChange'
+  | 'HardForkInitiation'
+  | 'TreasuryWithdrawals'
+  | 'NoConfidence'
+  | 'NewCommittee'
+  | 'NewConstitution'
+  | 'InfoAction';
+
+export type GovActionStatus = 'active' | 'ratified' | 'enacted' | 'expired' | 'dropped';
+
+export type VoterRole = 'DRep' | 'SPO' | 'ConstitutionalCommittee';
+
+export type VoteChoice = 'Yes' | 'No' | 'Abstain';
+
+/** A row in the governance action list. */
+export interface GovProposal {
+  govActionId: string;
+  govActionIdCip129: string;
+  txHash: string;
+  index: number;
+  slot: number | null;
+  type: GovActionType | string;
+  status: GovActionStatus | string;
+  /** Lovelace as a decimal string. */
+  deposit: string | null;
+  returnAddress: string | null;
+  anchorUrl: string | null;
+  anchorHash: string | null;
+  title: string | null;
+  submittedEpoch: number | null;
+  expiresEpoch: number | null;
+}
+
+/** A CIP-100 `references[]` entry. */
+export interface GovReference {
+  '@type'?: string;
+  label?: string;
+  uri?: string;
+}
+
+/** The full action, including resolved off-chain metadata. */
+export interface GovProposalDetail extends GovProposal {
+  /** Decoded on-chain payload — shape varies by action type. */
+  govAction: unknown | null;
+  /** The raw anchor document as fetched. */
+  rawMetadata: unknown | null;
+  /** NOTE: `abstract` is reserved in Java, so Nexus names this `abstractText`. */
+  abstractText: string | null;
+  motivation: string | null;
+  rationale: string | null;
+  references: GovReference[] | null;
+  authors: string[] | null;
+  /**
+   * Whether the fetched anchor document's blake2b-256 matched `anchorHash`.
+   * `null` means the check did not run (not fetched, or not attempted) — that is
+   * NOT the same as `false`, and the UI must distinguish them.
+   */
+  hashValid: boolean | null;
+}
+
+/** One cast vote. */
+export interface GovVote {
+  voterRole: VoterRole | string;
+  voterHash: string | null;
+  drepId: string | null;
+  vote: VoteChoice | string;
+  txHash: string | null;
+}
+
+/**
+ * Stake-weighted tally, sourced from Koios's proposal_voting_summary.
+ *
+ * Several fields are always null upstream — `abstainVotePower`, `ccThreshold`,
+ * `spoAbstainVotePower`, `spoNotVotedPower` and `notVotedPower` — so the UI must
+ * treat absence as "not available", never as zero. Verify against a captured
+ * fixture before relying on any one of them.
+ */
+export interface GovVotingSummary {
+  epochNo: number | null;
+
+  // DRep
+  yesVotePower: string | null;
+  noVotePower: string | null;
+  abstainVotePower: string | null;
+  yesPct: number | null;
+  noPct: number | null;
+  yesVotesCast: number | null;
+  noVotesCast: number | null;
+  abstainVotesCast: number | null;
+  alwaysNoConfidenceVotePower: string | null;
+  alwaysAbstainVotePower: string | null;
+
+  // Constitutional committee
+  ccYesVotes: number | null;
+  ccNoVotes: number | null;
+  ccAbstainVotes: number | null;
+  ccThreshold: number | null;
+  ccYesPct: number | null;
+  ccNoPct: number | null;
+
+  // SPO
+  spoYesVotesCast: number | null;
+  spoNoVotesCast: number | null;
+  spoAbstainVotesCast: number | null;
+  spoYesVotePower: string | null;
+  spoNoVotePower: string | null;
+  spoAbstainVotePower: string | null;
+  spoNotVotedPower: string | null;
+  spoYesPct: number | null;
+  spoNoPct: number | null;
+
+  notVotedPower: string | null;
+}
+
+export interface CommitteeMember {
+  hash: string;
+  credType: string | null;
+  startEpoch: number | null;
+  expiredEpoch: number | null;
+}
+
+export interface Committee {
+  thresholdNumerator: number | null;
+  thresholdDenominator: number | null;
+  members: CommitteeMember[];
+}
+
+export interface Constitution {
+  activeEpoch: number | null;
+  anchorUrl: string | null;
+  anchorHash: string | null;
+  script: string | null;
+}
