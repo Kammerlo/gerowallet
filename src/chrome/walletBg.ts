@@ -532,9 +532,6 @@ export class WalletBg {
     if (!this.isEnterpriseAddress() && isStakingSupported) {
       chrome.alarms.create('refreshStakingPools', { delayInMinutes: 0, periodInMinutes: 240 });
     }
-    if (!this.isEnterpriseAddress() && networks.resolveGovernanceSupport(this.chain, this.network)) {
-      chrome.alarms.create('refreshDReps', { delayInMinutes: 0, periodInMinutes: 280 });
-    }
     // Set Collections
     const collectibles = Object.fromEntries(resolvedAssets.filter(([, resolved]) => isCollectible(resolved)));
     if (Object.values(collectibles).length === 0) {
