@@ -396,6 +396,7 @@
 </template>
 
 <script setup lang="ts">
+import '@/shared/styles/compact-pagination.css';
 import { ref, computed, watch, onMounted } from 'vue';
 import assets from '@/utils/assets';
 import { useWatchlist } from '@/modules/market/composables/useWatchlist';

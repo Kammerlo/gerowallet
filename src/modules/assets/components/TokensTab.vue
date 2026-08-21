@@ -155,6 +155,7 @@
 </template>
 
 <script setup lang="ts">
+import '@/shared/styles/compact-pagination.css';
 import { useTranslation } from '@/shared/composables/useTranslation';
 import { ref, computed, toRefs, watch } from 'vue';
 import filters from '@/shared/utils/filters';
@@ -485,40 +486,8 @@ watch(
   margin-right: 10px;
 }
 
-.compact-pagination >>> .v-pagination__item {
-  width: 24px !important;
-  height: 24px !important;
-  min-width: 24px !important;
-  font-size: 12px !important;
-  margin: 0 4px !important;
-}
-
-.compact-pagination >>> .v-pagination__item .v-btn {
-  display: flex !important;
-  align-items: flex-end !important;
-  justify-content: center !important;
-  min-height: 24px !important;
-  height: 24px !important;
-}
-
-.compact-pagination >>> .v-pagination__navigation {
-  width: 24px !important;
-  height: 24px !important;
-  min-width: 24px !important;
-  margin: 0 8px !important;
-}
-
-.compact-pagination >>> .v-pagination__navigation .v-btn {
-  display: flex !important;
-  align-items: flex-end !important;
-  justify-content: center !important;
-  min-height: 24px !important;
-  height: 24px !important;
-}
-
-.compact-pagination >>> .v-pagination__navigation .v-icon {
-  font-size: 16px !important;
-}
+/* .compact-pagination is the shared recipe in
+   src/shared/styles/compact-pagination.css (imported in the script block). */
 
 /* Remove hover effect and margins from pagination row */
 .no-hover:hover {
@@ -530,10 +499,6 @@ watch(
   margin: 0 !important;
   position: relative;
   height: 44px !important;
-}
-
-.compact-pagination.ma-0 {
-  margin: 0 !important;
 }
 
 .token-description-content {
