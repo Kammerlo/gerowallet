@@ -2,12 +2,12 @@
   <v-layout>
     <v-row no-gutters>
       <v-col cols="12" class="pa-2">
-        <CardanoGovernance />
+        <DAO />
       </v-col>
     </v-row>
   </v-layout>
 </template>
 
 <script setup lang="ts">
-import CardanoGovernance from '@/modules/governance/components/CardanoGovernance.vue';
+import DAO from '@/modules/governance/components/DAO.vue';
 </script>

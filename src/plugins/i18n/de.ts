@@ -1609,6 +1609,7 @@ export default {
   'navigation.continue': 'Weiter',
   'navigation.continueToSite': 'Weiter zur Website',
   'navigation.cred': 'Zugangsdaten',
+  'navigation.dao': 'Gero DAO',
   'navigation.dashboard': 'Übersicht',
   'navigation.decline': 'Ablehnen',
   'navigation.descriptionOfScam': 'Beschreibung des Betrugs',

@@ -8,6 +8,7 @@ import { useNftMarketData } from '@/modules/market/composables/useNftMarketData'
 import blockchainApi from '@/api/blockchain-api';
 import cashbackApi from '@/api/cashback-api';
 import networks from '@/utils/networks';
+import { featureFlagsStore } from '@/stores/featureFlagsStore';
 
 export type SearchResultType = 'token' | 'transaction' | 'nft' | 'pool' | 'drep' | 'retailer' | 'contact' | 'setting';
 
@@ -18,7 +19,10 @@ export interface SearchResult {
   subtitle: string;
   icon?: string;
   route?: string;
-  data?: any; // Original object for navigation handlers
+  // Original object for navigation handlers — a grab-bag by design (token, pool,
+  // DRep, contact or settings target), consumed untyped by GlobalSearch.vue.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data?: any;
   _score?: number; // Relevance score for sorting (higher = better match)
 }
 
@@ -37,10 +41,10 @@ async function loadRetailerCache() {
   if (retailerCacheLoaded) return;
   try {
     const res = await cashbackApi.retailers(null, undefined, 0);
-    const items = res?.items || [];
-    const iconBase = res?.retailerIconBasePath || '';
-    const iconQuery = res?.iconQueryParam || '';
-    retailerCache = items.map((r: any) => ({
+    const items = res?.['items'] || [];
+    const iconBase = res?.['retailerIconBasePath'] || '';
+    const iconQuery = res?.['iconQueryParam'] || '';
+    retailerCache = items.map((r) => ({
       name: r.name,
       id: r.id,
       icon: (iconBase && r.iconPath) ? (iconBase + r.iconPath + iconQuery) : 'mdi-shopping',
@@ -96,7 +100,11 @@ export function useGlobalSearch() {
   // Resolve feature support for the active wallet's chain/network
   const wallet = computed(() => walletStore.loggedWallet);
   const hasCashback = computed(() => networks.resolveCashbackSupport(wallet.value?.chain, wallet.value?.network));
-  const hasGovernance = computed(() => networks.resolveGovernanceSupport(wallet.value?.chain, wallet.value?.network));
+  const hasGovernance = computed(
+    () =>
+      networks.resolveGovernanceSupport(wallet.value?.chain, wallet.value?.network) &&
+      featureFlagsStore.isGovernanceEnabled(),
+  );
   const hasStaking = computed(() => networks.resolveStakingSupport(wallet.value?.chain, wallet.value?.network));
 
   function open() {
@@ -119,10 +127,10 @@ export function useGlobalSearch() {
   }
 
   // ── DRep display name helper ─────────────────────────────────────────────
-  function getDRepName(d: any): string {
+  function getDRepName(d: { name?: string; metadata?: { meta_json?: { body?: { givenName?: string | { '@value'?: string } } } } }): string {
     const givenName = d.metadata?.meta_json?.body?.givenName;
     if (givenName) {
-      return givenName['@value'] || givenName;
+      return typeof givenName === 'string' ? givenName : givenName['@value'] || '';
     }
     return d.name || '';
   }
@@ -171,9 +179,9 @@ export function useGlobalSearch() {
       const txs = walletStore.transactions || [];
       const txArr = Array.isArray(txs) ? txs : [];
       const txMatches = txArr
-        .filter((tx: any) => tx.id?.toLowerCase().includes(lower))
+        .filter((tx) => tx.id?.toLowerCase().includes(lower))
         .slice(0, 5)
-        .map((tx: any) => ({
+        .map((tx) => ({
           type: 'transaction' as const,
           id: tx.id,
           title: `${tx.id.slice(0, 12)}...${tx.id.slice(-8)}`,
@@ -205,7 +213,7 @@ export function useGlobalSearch() {
 
     // 4. Contacts — from wallet contacts
     const contacts = walletStore.contacts || {};
-    const contactEntries = Object.entries(contacts) as [string, any][];
+    const contactEntries = Object.entries(contacts) as [string, { name?: string; img?: string }][];
     const contactMatches = contactEntries
       .filter(([address, contact]) =>
         contact.name?.toLowerCase().includes(lower) ||
@@ -229,13 +237,13 @@ export function useGlobalSearch() {
         const pools = stakingStore.pools || [];
         if (pools.length > 0) {
           const poolMatches = pools
-            .filter((p: any) =>
+            .filter((p) =>
               p.name?.toLowerCase().includes(lower) ||
               p.ticker?.toLowerCase().includes(lower) ||
               (lower.length >= 8 && p.pool_id_bech32?.toLowerCase().includes(lower))
             )
             .slice(0, 5)
-            .map((p: any) => ({
+            .map((p) => ({
               type: 'pool' as const,
               id: p.pool_id_bech32 || p.poolId,
               title: p.ticker ? `[${p.ticker}] ${p.name}` : p.name || p.pool_id_bech32,
@@ -258,13 +266,13 @@ export function useGlobalSearch() {
         const dreps = governanceStore.dreps || [];
         if (dreps.length > 0) {
           const drepMatches = dreps
-            .filter((d: any) => {
+            .filter((d) => {
               const name = getDRepName(d);
               return name?.toLowerCase().includes(lower) ||
                 (lower.length >= 8 && d.drep_id?.toLowerCase().includes(lower));
             })
             .slice(0, 5)
-            .map((d: any) => {
+            .map((d) => {
               const name = getDRepName(d);
               return {
                 type: 'drep' as const,
@@ -362,7 +370,7 @@ export function useGlobalSearch() {
     if (hasStaking.value) {
       apiSearches.push(
         blockchainApi.getPoolsPaginated({ search: q, page: 1, per_page: 5 }, chain, network)
-          .then((res: any) => {
+          .then((res) => {
             const items = res?.items || [];
             for (const p of items) {
               found.push({
@@ -385,7 +393,7 @@ export function useGlobalSearch() {
     if (hasGovernance.value) {
       apiSearches.push(
         blockchainApi.getDRepsPaginated({ search: q, page: 1, per_page: 5 }, chain, network)
-        .then((res: any) => {
+        .then((res) => {
           const items = res?.items || [];
           for (const d of items) {
             const name = getDRepName(d);

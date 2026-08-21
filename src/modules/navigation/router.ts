@@ -21,6 +21,7 @@ const Swap = () => import('@/modules/swap/Swap.vue');
 // Market.vue no longer used as standalone route — unified into PortfolioPage
 const DevTools = () => import('@/modules/devTools/DevTools.vue');
 const Governance = () => import('@/modules/governance/Governance.vue');
+const Dao = () => import('@/modules/dao/Dao.vue');
 const WarningPopUp = () => import('@/popup/modules/views/WarningPopUp.vue');
 const Transactions = () => import('@/modules/transactions/Transactions.vue');
 const Blog = () => import('@/modules/blog/Blog.vue');
@@ -108,6 +109,15 @@ const routes = [
     path: '/governance',
     name: 'governance',
     component: Governance,
+    meta: {
+      layout: ContentLayout,
+      requiresAuth: true,
+    },
+  },
+  {
+    path: '/dao',
+    name: 'dao',
+    component: Dao,
     meta: {
       layout: ContentLayout,
       requiresAuth: true,
@@ -382,6 +392,10 @@ function isRouteUnderMaintenance(routeName: string | null | undefined): boolean 
       // deliberately via gero-sync rather than by default.
       return !featureFlagsStore.isRealFiEnabled();
 
+    case 'governance':
+      // Cardano governance ships dark — enabled deliberately via gero-sync.
+      return !featureFlagsStore.isGovernanceEnabled();
+
     case 'copilotFeed':
       // Gero Copilot feed gated by the master feature flag (ships dark)
       return !featureFlagsStore.isCopilotEnabled();
@@ -461,6 +475,7 @@ router.beforeEach(async (to: Route, from: Route, next: NavigationGuardNext) => {
     const routeNetworkGuards: Record<string, (c: string, n: string) => boolean> = {
       cashback: (c, n) => networks.resolveCashbackSupport(c, n),
       governance: (c, n) => networks.resolveGovernanceSupport(c, n),
+      dao: (c, n) => networks.resolveDaoSupport(c, n),
       staking: (c, n) => networks.resolveStakingSupport(c, n),
       // The swap page's route is named 'swap' (‘/market’ is only a redirect, no
       // named route). Keying this guard 'market' left #/swap ungated, so an Apex
