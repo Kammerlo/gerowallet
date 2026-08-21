@@ -1392,6 +1392,7 @@ export default {
   'navigation.continue': 'Continue',
   'navigation.continueToSite': 'Continue to site',
   'navigation.cred': 'Cred',
+  'navigation.dao': 'Gero DAO',
   'navigation.dashboard': 'Dashboard',
   'navigation.decline': 'Decline',
   'navigation.descriptionOfScam': 'Description of the Scam',

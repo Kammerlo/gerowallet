@@ -367,6 +367,7 @@ const items = computed((): NavigationItemUnion[] => {
     // Governance — mirrors the router's `governance` guard exactly (network
     // support AND the master feature flag). Keep the two textually identical.
     { title: t('navigation.governance'), icon: assts.governance, link: '/governance', enabled: networks.resolveGovernanceSupport(loggedWallet.value?.chain, loggedWallet.value?.network) && featureFlagsStore.isGovernanceEnabled() },
+    { title: t('navigation.dao'), icon: assts.dao, link: '/dao', enabled: networks.resolveDaoSupport(loggedWallet.value?.chain, loggedWallet.value?.network) },
     {
       title: t('navigation.geroCard'),
       icon: assts.cardIcon,
