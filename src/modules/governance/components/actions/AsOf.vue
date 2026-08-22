@@ -4,8 +4,14 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import type { PropType } from 'vue';
 
-const props = defineProps<{ timestamp: number | null }>();
+// Runtime declaration, not defineProps<{...}>: Vue 2.7 compiles a `number | null`
+// type literal into a `[Number, null]` runtime validator, and null is not a
+// constructor — every render warns. `default: null` makes null skip validation.
+const props = defineProps({
+  timestamp: { type: Number as PropType<number | null>, default: null },
+});
 
 // Every value on this surface comes from a synced index, not live chain, so it
 // is always stamped. Locale-aware short time; the date is implied by recency.

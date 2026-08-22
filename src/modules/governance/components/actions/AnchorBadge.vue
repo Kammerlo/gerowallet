@@ -7,9 +7,16 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import type { PropType } from 'vue';
 import { useTranslation } from '@/shared/composables/useTranslation';
 
-const props = defineProps<{ hashValid: boolean | null; hasAnchor: boolean }>();
+// Runtime declaration — `boolean | null` compiles to a `[Boolean, null]`
+// validator and warns on every render (null is not a constructor). hashValid is
+// deliberately tri-state: null = the check did not run. See AsOf.vue.
+const props = defineProps({
+  hashValid: { type: Boolean as PropType<boolean | null>, default: null },
+  hasAnchor: { type: Boolean, required: true },
+});
 const { t } = useTranslation();
 
 // `hashValid` is TRI-STATE: null means the check did not run, which is not the

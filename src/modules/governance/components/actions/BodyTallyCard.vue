@@ -38,19 +38,26 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import type { PropType } from 'vue';
 import type { BodyResult } from '@/shared/utils/govThresholds';
 import type { Composition } from '@/shared/utils/govTally';
 import { useTranslation } from '@/shared/composables/useTranslation';
 import TallyBar from '@/modules/governance/components/actions/TallyBar.vue';
 
-const props = defineProps<{
-  result: BodyResult;
-  composition: Composition;
+// Runtime declaration — an `X | null` type literal compiles to a validator
+// containing null, which is not a constructor and warns on every render. See
+// AsOf.vue.
+const props = defineProps({
+  result: { type: Object as PropType<BodyResult>, required: true },
+  composition: { type: Object as PropType<Composition>, required: true },
   /** Committee member counts — the CC votes by member count, not stake. */
-  counts?: { yes: number; no: number; abstain: number } | null;
+  counts: {
+    type: Object as PropType<{ yes: number; no: number; abstain: number } | null>,
+    default: null,
+  },
   /** Label shown when the threshold is unknown (defaults to the epoch-params message). */
-  thresholdNote?: string;
-}>();
+  thresholdNote: { type: String, default: undefined },
+});
 
 const { t } = useTranslation();
 

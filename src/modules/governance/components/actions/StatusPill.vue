@@ -4,10 +4,16 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import type { PropType } from 'vue';
 import { statusTone } from '@/shared/utils/govLifecycle';
 import { useTranslation } from '@/shared/composables/useTranslation';
 
-const props = defineProps<{ status: string | null }>();
+// Runtime declaration — a `string | null` type literal compiles to a
+// `[String, null]` validator and warns on every render (null is not a
+// constructor). See AsOf.vue.
+const props = defineProps({
+  status: { type: String as PropType<string | null>, default: null },
+});
 const { t } = useTranslation();
 
 const tone = computed(() => statusTone(props.status));

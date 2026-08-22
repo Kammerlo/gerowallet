@@ -11,14 +11,17 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import type { PropType } from 'vue';
 import { useTranslation } from '@/shared/composables/useTranslation';
 
-const props = defineProps<{
-  yesPct: number | null;
-  noPct: number | null;
-  thresholdPct: number | null;
-  available: boolean;
-}>();
+// Runtime declaration — `number | null` type literals compile to `[Number, null]`
+// validators and warn on every render (null is not a constructor). See AsOf.vue.
+const props = defineProps({
+  yesPct: { type: Number as PropType<number | null>, default: null },
+  noPct: { type: Number as PropType<number | null>, default: null },
+  thresholdPct: { type: Number as PropType<number | null>, default: null },
+  available: { type: Boolean, required: true },
+});
 
 const { t } = useTranslation();
 

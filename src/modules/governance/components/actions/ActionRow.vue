@@ -27,6 +27,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import type { PropType } from 'vue';
 import type { GovProposal } from '@/api/governance.types';
 import type { Composition } from '@/shared/utils/govTally';
 import { epochsRemaining, isOpen } from '@/shared/utils/govLifecycle';
@@ -34,11 +35,14 @@ import { useTranslation } from '@/shared/composables/useTranslation';
 import StatusPill from '@/modules/governance/components/actions/StatusPill.vue';
 import TallyBar from '@/modules/governance/components/actions/TallyBar.vue';
 
-const props = defineProps<{
-  action: GovProposal;
-  currentEpoch: number | null;
-  composition?: Composition | null;
-}>();
+// Runtime declaration — `number | null` / `X | null` type literals compile to
+// validators containing null, which is not a constructor and warns on every
+// render. See AsOf.vue.
+const props = defineProps({
+  action: { type: Object as PropType<GovProposal>, required: true },
+  currentEpoch: { type: Number as PropType<number | null>, default: null },
+  composition: { type: Object as PropType<Composition | null>, default: null },
+});
 
 defineEmits<{ (e: 'select', govActionId: string): void }>();
 
