@@ -128,7 +128,41 @@ function escapeHtml(s: string): string {
  * `![a[1]b](url)` literal instead of an anchor with a stray "!" in front.
  */
 const INLINE_TEXT = /(?:[^[\]]|\[[^[\]]*\])/.source;
-const IMAGE = new RegExp(`!\\[${INLINE_TEXT}*\\]\\([^\\s)]*\\)`, 'g');
+
+/**
+ * Every quantifier below is BOUNDED, and that is a denial-of-service fix rather
+ * than a style choice.
+ *
+ * An unclosed destination is the bad shape: in `[a](https://a.test/` the class
+ * runs to the end of the document, fails to find `)`, and backtracks the whole
+ * tail — then the scan restarts at the next `[` and pays for the tail again.
+ * That is O(starts x tail). Measured before this bound, a body of that shape
+ * repeated took 8.1s at 512 KB and 39s at 928 KB, and a proposal body arrives
+ * from the API with no length cap, so a governance action anyone can submit
+ * could freeze the proposal view. A bound turns each failed start into constant
+ * work, so the cost follows the document instead of its square.
+ *
+ * The limits are far above any real document (a CIP-119 anchor URL is capped at
+ * 128 characters on chain) and a link that exceeds them simply does not form,
+ * staying visible literal text — the same honest outcome an unparseable link
+ * already had.
+ *
+ * IMAGE's destination bound is the SMALLEST one that keeps it a superset of
+ * LINK (see `INLINE_TEXT`): LINK carries an `https?://` prefix outside its own
+ * bound, so the image must allow that prefix plus LINK's whole destination.
+ * Every character of slack here is paid twice over on the bad shape — the
+ * unclosed-image case is the more expensive of the two — so the margin is
+ * small on purpose rather than a round number.
+ */
+const MAX_INLINE_TEXT = 1024;
+const MAX_URL = 2048;
+/** `https://` or `http://`, the longest prefix LINK matches before its bound. */
+const URL_SCHEME_SLACK = 8;
+
+const IMAGE = new RegExp(
+  `!\\[${INLINE_TEXT}{0,${MAX_INLINE_TEXT}}\\]\\([^\\s)]{0,${MAX_URL + URL_SCHEME_SLACK}}\\)`,
+  'g',
+);
 
 /**
  * A link's destination stops at `<` or `>`. That is what keeps this file's own
@@ -159,7 +193,10 @@ const IMAGE = new RegExp(`!\\[${INLINE_TEXT}*\\]\\([^\\s)]*\\)`, 'g');
  * pattern (see `INLINE_TEXT`), and it builds no attribute at all, since its
  * match is held verbatim as text.
  */
-const LINK = new RegExp(`\\[(${INLINE_TEXT}+)\\]\\((https?:\\/\\/[^\\s<>)]+)\\)`, 'g');
+const LINK = new RegExp(
+  `\\[(${INLINE_TEXT}{1,${MAX_INLINE_TEXT}})\\]\\((https?:\\/\\/[^\\s<>)]{1,${MAX_URL}})\\)`,
+  'g',
+);
 
 /** Placeholder shape. Angle-bracketed on purpose — see `renderInline`. */
 const SLOT = 'md-slot-';

@@ -559,6 +559,81 @@ describe('renderMarkdown, slot restoration is linear in the document', () => {
   });
 });
 
+// A separate cost model from the slot table, and it survived that fix: an
+// UNCLOSED destination used to make the link and image patterns consume to the
+// end of the document, fail to find `)`, backtrack the whole tail, then pay for
+// it again at the next `[`. Measured before the bound: 8.1s at 512 KB of
+// `[a](https://a.test/`, and 39s at 928 KB. A proposal body arrives from the API
+// with no length cap and is rendered in a computed, so that froze the view for
+// anyone opening a governance action anyone could submit.
+describe('renderMarkdown, a malformed body cannot blow up the cost', () => {
+  /** `unit` repeated to fill `kb` kilobytes. */
+  function fill(unit: string, kb: number): string {
+    return unit.repeat(Math.ceil((kb * 1024) / unit.length));
+  }
+
+  // Both bad shapes: an unclosed link destination and an unclosed image one.
+  // The image pattern is the more expensive of the two, since its destination
+  // bound must stay a superset of the link's.
+  it.each([
+    ['an unclosed link destination', '[a](https://a.test/'],
+    ['an unclosed image destination', '![a](x'],
+  ])('stays linear on %s', (_label, unit) => {
+    // Quadratic cost quadruples per doubling; linear cost doubles. Comparing
+    // the two sizes rather than asserting a wall-clock number keeps this from
+    // flaking on a loaded machine: a slow box slows both halves equally.
+    const small = fill(unit, 128);
+    const large = fill(unit, 512); // 4x the input
+
+    const t1 = performance.now();
+    renderMarkdown(small);
+    const smallMs = performance.now() - t1;
+
+    const t2 = performance.now();
+    renderMarkdown(large);
+    const largeMs = performance.now() - t2;
+
+    // Linear predicts ~4x, quadratic ~16x. 8x sits between them with room for
+    // timer noise on a tiny `smallMs`, and the floor keeps a near-zero
+    // measurement from making the ratio meaningless.
+    expect(largeMs / Math.max(smallMs, 0.5)).toBeLessThan(8);
+  });
+
+  it('still renders a well-formed body of the same size', () => {
+    const out = renderMarkdown(fill('[a](https://a.test/x) ', 128));
+    // The bound may only cost the shapes that were already unparseable.
+    expect((out.match(/<a /g) ?? []).length).toBeGreaterThan(1000);
+  });
+
+  // The bound sits on the part AFTER the scheme, because `https?://` is matched
+  // separately, so the longest url that still links is scheme + 2048.
+  const HOST = 'a.test/';
+  function url(afterScheme: number): string {
+    return `https://${HOST}${'x'.repeat(afterScheme - HOST.length)}`;
+  }
+
+  it('links a maximum-length url, and keeps an over-long one as literal text', () => {
+    expect(renderMarkdown(`[t](${url(2048)})`)).toMatch(/<a /);
+
+    // One character past the bound: no anchor, and the text is still shown
+    // rather than dropped, which is the same outcome any unparseable link had.
+    const out = renderMarkdown(`[t](${url(2049)})`);
+    expect(out).not.toMatch(/<a /);
+    expect(out).toContain('[t](');
+  });
+
+  it('keeps the image pattern a superset of the link pattern at the bounds', () => {
+    // The invariant `INLINE_TEXT` documents: whatever `[…](…)` the link rule
+    // could match, the image rule lifts the `![…](…)` spelling of first, so a
+    // maximum-size linked image stays literal instead of becoming an anchor
+    // with a stray "!" in front of it. This is the case that would break first
+    // if the image bounds were ever tightened to equal the link's.
+    const out = renderMarkdown(`![${'a'.repeat(1024)}](${url(2048)})`);
+    expect(out).not.toMatch(/<a /);
+    expect(out).toContain('![');
+  });
+});
+
 // Governance metadata is authored by whoever submitted the action — anyone can
 // submit one. These cases pin the escape-first contract for every construct the
 // governance surface added, because a table cell or a quote must not become an
