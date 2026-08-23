@@ -23,7 +23,8 @@ const DevTools = () => import('@/modules/devTools/DevTools.vue');
 const Governance = () => import('@/modules/governance/Governance.vue');
 const GovernanceActionList = () => import('@/modules/governance/views/ActionList.vue');
 const GovernanceActionDetail = () => import('@/modules/governance/views/ActionDetail.vue');
-const GovernanceDReps = () => import('@/modules/governance/components/CardanoGovernance.vue');
+const GovernanceDReps = () => import('@/modules/governance/views/DRepDirectory.vue');
+const GovernanceDRepProfile = () => import('@/modules/governance/views/DRepProfile.vue');
 const GovernanceMe = () => import('@/modules/governance/views/MyGovernance.vue');
 const GovernanceRegister = () => import('@/modules/governance/views/BecomeDRep.vue');
 const Dao = () => import('@/modules/dao/Dao.vue');
@@ -162,11 +163,22 @@ const routes = [
     },
   },
   {
-    // The pre-split DRep directory + delegate surface. The `?drep=` deep link
-    // from global search resolves here (forwarded by Governance.vue).
+    // The DRep directory. The `?drep=` deep link from global search resolves
+    // here (forwarded by Governance.vue) and pre-fills the search box.
     path: '/governance/dreps',
     name: 'governanceDReps',
     component: GovernanceDReps,
+    meta: {
+      layout: ContentLayout,
+      requiresAuth: true,
+    },
+  },
+  {
+    // One DRep's record. `:drepId` accepts any of the three live id forms
+    // (CIP-129, CIP-105, raw credential hex); the view canonicalises it.
+    path: '/governance/dreps/:drepId',
+    name: 'governanceDRep',
+    component: GovernanceDRepProfile,
     meta: {
       layout: ContentLayout,
       requiresAuth: true,
@@ -455,6 +467,7 @@ function isRouteUnderMaintenance(routeName: string | null | undefined): boolean 
     case 'governanceActions':
     case 'governanceAction':
     case 'governanceDReps':
+    case 'governanceDRep':
       // Cardano governance ships dark — enabled deliberately via gero-sync.
       return !featureFlagsStore.isGovernanceEnabled();
 
@@ -548,6 +561,7 @@ router.beforeEach(async (to: Route, from: Route, next: NavigationGuardNext) => {
       governanceActions: (c, n) => networks.resolveGovernanceSupport(c, n),
       governanceAction: (c, n) => networks.resolveGovernanceSupport(c, n),
       governanceDReps: (c, n) => networks.resolveGovernanceSupport(c, n),
+      governanceDRep: (c, n) => networks.resolveGovernanceSupport(c, n),
       dao: (c, n) => networks.resolveDaoSupport(c, n),
       staking: (c, n) => networks.resolveStakingSupport(c, n),
       // The swap page's route is named 'swap' (‘/market’ is only a redirect, no
