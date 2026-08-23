@@ -39,12 +39,25 @@ import ActionList from './ActionList.vue';
 import governanceActionsStore from '@/stores/governanceActionsStore';
 import { walletStore } from '@/stores/walletStore';
 import NetworkStore from '@/stores/networkStore';
+import { toCip129 } from '@/shared/utils/drepId';
 
 /** Echoes params so a wrong interpolated number cannot hide inside the key. */
 const $t = (key: string, values?: Record<string, unknown>): string =>
   values ? `${key}:${JSON.stringify(values)}` : key;
 
 const DREP = 'drep1ytjyvm958ywjkp57f8wm3havj72lc653tp7ajttxxt6ftgcmcmdk2';
+
+/**
+ * This wallet's OWN DRep key, deliberately a different credential from the one
+ * it delegated to, so the identity assertions below can only pass by picking
+ * the right one rather than by the two ids happening to coincide.
+ */
+const OWN_DREP = toCip129('11'.repeat(28)) as string;
+
+/** Give the wallet a derived DRep key, as a real Cardano wallet always has. */
+function withOwnDRepKey(): void {
+  walletStore.keys = { drep129: [{ address: OWN_DREP }] } as never;
+}
 
 function proposal(id: string, over: Record<string, unknown> = {}) {
   return {
@@ -222,6 +235,60 @@ describe('ActionList stat strip', () => {
     expect(html).toContain('governance.approxDaysLeft:{"n":50}');
     // One of the two is inside the 15-day window.
     expect(html).toContain('governance.stats.closingWithin:{"n":15}');
+  });
+
+  // A DRep that retired still returns a row, carrying `registered: false`.
+  // Treating the row's mere presence as registration would hand a retired user
+  // the self-DRep identity and the batch-voting affordance that goes with it,
+  // for votes the chain would reject.
+  it('votes as itself when this wallet\'s own DRep is registered', async () => {
+    withOwnDRepKey();
+    getDRepById.mockResolvedValue({ registered: true, votes: [] });
+    listProposals.mockResolvedValue({ items: [proposal('a#0')], page: 1, pageSize: 50, total: 1 });
+    getProposalVotes.mockResolvedValue(votesPage([]));
+
+    wrapper = mountPage();
+    await settle();
+
+    expect(governanceActionsStore.state.yourVotes.identityKind).toBe('self');
+    // The join runs against the wallet's OWN key, not the one it delegated to.
+    expect(wrapper.html()).toContain('governance.youHaventVoted');
+    expect(wrapper.html()).not.toContain('governance.yourDRepHasntVoted');
+  });
+
+  it('does not treat a RETIRED own DRep as a voting identity', async () => {
+    withOwnDRepKey();
+    // The retirement case: a row comes back, but registration is gone.
+    getDRepById.mockResolvedValue({ registered: false, votes: [] });
+    listProposals.mockResolvedValue({ items: [proposal('a#0')], page: 1, pageSize: 50, total: 1 });
+    getProposalVotes.mockResolvedValue(votesPage([]));
+
+    wrapper = mountPage();
+    await settle();
+
+    // Falls through to the DRep this wallet delegated to, which is the honest
+    // remaining fact about where its stake stands.
+    expect(governanceActionsStore.state.yourVotes.identityKind).toBe('delegated');
+    const html = wrapper.html();
+    expect(html).toContain('governance.yourDRepHasntVoted');
+    expect(html).not.toContain('governance.youHaventVoted');
+    // Batch selection hangs off this same flag, so it is withheld too. Not
+    // asserted here: `isGovernanceVotingEnabled` defaults to false in tests, so
+    // a checkbox assertion would pass no matter what this fix did.
+  });
+
+  it('does not treat an own DRep with no registration field as registered', async () => {
+    withOwnDRepKey();
+    // The endpoint is untyped upstream and every field has been seen absent.
+    // Absent must not read as registered.
+    getDRepById.mockResolvedValue({ votes: [] });
+    listProposals.mockResolvedValue({ items: [proposal('a#0')], page: 1, pageSize: 50, total: 1 });
+    getProposalVotes.mockResolvedValue(votesPage([]));
+
+    wrapper = mountPage();
+    await settle();
+
+    expect(governanceActionsStore.state.yourVotes.identityKind).toBe('delegated');
   });
 
   it('surfaces a retryable error instead of a strip full of zeroes', async () => {
