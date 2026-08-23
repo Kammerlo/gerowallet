@@ -54,11 +54,16 @@ import AgentDock from '@/sidepanel/components/AgentDock.vue';
 import HardwareSignPrompt from '@/shared/components/HardwareSignPrompt.vue';
 import { featureFlagsStore } from '@/stores/featureFlagsStore';
 import { useChainAccent } from '@/shared/composables/useChainAccent';
+import { useGovernanceHydration } from '@/shared/composables/useGovernanceHydration';
 
 // Bootstrap the single chain-accent writer at the dashboard root. It lives here
 // rather than in ContentLayout because ContentLayout unmounts on the welcome
 // route, which would strand the module-level latch as a permanent no-op.
 useChainAccent();
+// Same root, same reason: the CIP-149 hydration must be live from login, not
+// from the first governance-view mount, so a withdrawal built on the dashboard
+// still carries the committed donation.
+useGovernanceHydration();
 
 const { loading, isRestoring, text, progress } = toRefs(loadingState);
 const geroConfig = toRefs(geroStore).config;

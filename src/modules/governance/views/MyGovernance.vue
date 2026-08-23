@@ -239,13 +239,12 @@
  */
 import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router/composables';
-import { Cardano } from '@cardano-sdk/core';
 import { walletStore } from '@/stores/walletStore';
 import NetworkStore, { networkStore } from '@/stores/networkStore';
-import governanceStoreActions from '@/stores/governanceStore';
-import blockchainApi from '@/api/blockchain-api';
-import { isCardanoTx } from '@/models/transaction.types';
-import { extractCip149Compensation } from '@/shared/utils/builder';
+import {
+  applyGovernanceHydration,
+  fetchDelegatedDRepRecord,
+} from '@/shared/composables/useGovernanceHydration';
 import { KEYWORD_DREPS } from '@/shared/utils/drepId';
 import { useGovernanceStatus } from '@/shared/composables/useGovernanceStatus';
 import type { DelegatedDRepRecord, DRepVoteRecord } from '@/shared/composables/useDelegationHealth';
@@ -465,63 +464,15 @@ function goToRegister(): void {
 }
 
 /**
- * Hydrate the shared governance store from the record this page already has.
- *
- * `useWithdrawal.compensationInfo` reads `currentDRep` (for the DRep's CIP-119
- * payment address) and `currentCompensationBps` to decide whether a withdrawal
- * carries a CIP-149 donation output. CardanoGovernance.vue used to be the only
- * thing in the dashboard context that wrote either, and it is being deleted, so
- * that hydration lives here now.
- *
- * Deliberately reuses the record already fetched rather than calling
- * `loadDRepById`, which would repeat the same request.
- */
-function hydrateGovernanceStore(): void {
-  const drepId = walletStore.account?.drep_id;
-  if (!drepId) {
-    governanceStoreActions.clearCurrentDRep();
-    governanceStoreActions.setCompensationBps(null);
-    return;
-  }
-
-  // The predefined choices have no record to fetch; the store only ever held
-  // the bare id for them, and compensation cannot apply to a keyword.
-  governanceStoreActions.setCurrentDRep(
-    KEYWORD_DREPS.includes(drepId as (typeof KEYWORD_DREPS)[number])
-      ? { drep_id: drepId }
-      : record.value,
-  );
-  governanceStoreActions.setCompensationBps(activeCompensationBps());
-}
-
-/**
- * The donation rate the user last committed to, read off the newest CONFIRMED
- * vote-delegation transaction's CIP-149 metadata. A pending one is excluded:
- * it can still fail, and acting on it would attach a donation the chain never
- * agreed to.
- */
-function activeCompensationBps(): number | null {
-  const txs = walletStore.transactions ?? [];
-  const latestDelegation = txs
-    .filter(
-      tx =>
-        !tx.pending &&
-        isCardanoTx(tx) &&
-        (tx.body?.certificates ?? []).some(
-          (cert: Cardano.Certificate) =>
-            cert.__typename === Cardano.CertificateType.VoteDelegation ||
-            cert.__typename === Cardano.CertificateType.VoteRegistrationDelegation,
-        ),
-    )
-    .sort((a, b) => (b.block_height || 0) - (a.block_height || 0))[0];
-
-  return latestDelegation ? extractCip149Compensation(latestDelegation.auxiliaryData) : null;
-}
-
-/**
  * Fetch the delegated DRep's record. Absence is not retirement: a 404 leaves
  * `record` null, `recordAvailable` false, and the health strip hidden rather
  * than reporting a DRep as dead on missing data.
+ *
+ * The fetch and the store-write are the shared ones from
+ * useGovernanceHydration, whose wallet-keyed bootstrap covers withdrawals
+ * from pages that never mount this view; going through them here means the
+ * governance store is written off this page's own single lookup (deduped
+ * against the bootstrap's) rather than a second request.
  */
 async function loadDRep(): Promise<void> {
   error.value = '';
@@ -535,15 +486,15 @@ async function loadDRep(): Promise<void> {
   if (!fetchable) {
     record.value = null;
     loading.value = false;
-    hydrateGovernanceStore();
+    applyGovernanceHydration(null);
     return;
   }
 
   loading.value = true;
   try {
-    record.value = await blockchainApi.getDRepById(drepId, wallet.chain, wallet.network);
+    record.value = await fetchDelegatedDRepRecord(drepId, wallet);
     fetchedAt.value = Date.now();
-    hydrateGovernanceStore();
+    applyGovernanceHydration(record.value);
   } catch (err: unknown) {
     debugLog('MyGovernance: DRep lookup failed', err);
     record.value = null;
