@@ -182,9 +182,10 @@ const { capability } = useVoting();
 const drepId = computed(() => walletStore.keys?.drep129?.[0]?.address ?? '');
 
 /**
- * Whether this wallet's DRep is actually registered on chain. Having a derived
- * DRep key is not registration — only a live DRep record is. Loaded once per
- * mount; a lookup failure leaves it false (selection simply stays hidden).
+ * Whether this wallet's DRep is registered on chain RIGHT NOW. Having a derived
+ * DRep key is not registration, and neither is merely having a record: a
+ * retired DRep still returns a row, carrying `registered: false`. Loaded once
+ * per mount; a lookup failure leaves it false (selection simply stays hidden).
  */
 const isRegisteredDrep = ref(false);
 
@@ -201,7 +202,18 @@ async function loadDrepRegistration(): Promise<void> {
       walletStore.loggedWallet.chain,
       walletStore.loggedWallet.network,
     );
-    isRegisteredDrep.value = !!record;
+    // `registered === true`, not `!!record`. A deregistered DRep still has a
+    // row, so the presence of one says nothing about whether this wallet can
+    // still vote as itself. Note `registered` is retirement and is permanent,
+    // whereas `active: false` is only an inactivity expiry — an inactive DRep
+    // may still cast votes, which is precisely how it becomes active again, so
+    // liveness must NOT gate this.
+    //
+    // Erring toward false is the cheap direction: a registered DRep misread
+    // here just falls through to the delegated branch and gets labelled "your
+    // DRep" instead of "you", while a retired one misread as self would be
+    // offered batch voting the chain will reject.
+    isRegisteredDrep.value = record?.registered === true;
   } catch (error) {
     debugLog('ActionList: DRep registration lookup failed', error);
     isRegisteredDrep.value = false;
