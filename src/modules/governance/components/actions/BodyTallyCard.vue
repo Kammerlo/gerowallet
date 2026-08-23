@@ -1,5 +1,5 @@
 <template>
-  <div class="body-card">
+  <div class="body-card glass-panel">
     <div class="body-card__head">
       <span class="t-heading">{{ bodyLabel }}</span>
       <span v-if="result.met" class="body-card__verdict body-card__verdict--met t-caption">
@@ -87,14 +87,13 @@ function fmt(pct: number | null): string {
 </script>
 
 <style scoped>
+/* Surface, border and radius come from `glass-panel` (liquid-glass.css): this
+   is a top-level card on the detail page, per the ActionDetail artboard. */
 .body-card {
   display: flex;
   flex-direction: column;
   gap: var(--g-s-2);
   padding: var(--g-s-4);
-  background: var(--g-surface);
-  border: 1px solid var(--g-hairline-1);
-  border-radius: var(--g-r-card);
 }
 .body-card__head {
   display: flex;

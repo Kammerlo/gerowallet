@@ -21,7 +21,11 @@
         <div class="action-detail__badges">
           <span class="t-label action-detail__type">{{ typeLabel }}</span>
           <StatusPill :status="action.status" />
-          <AnchorBadge :hash-valid="action.hashValid" :has-anchor="!!action.anchorUrl" />
+          <AnchorBadge
+            :hash-valid="action.hashValid"
+            :has-anchor="!!action.anchorUrl"
+            :failure-reason="anchorFailureReason"
+          />
         </div>
         <h1 class="t-title action-detail__title">{{ title }}</h1>
         <div class="action-detail__meta t-caption">
@@ -58,7 +62,7 @@
       <div v-if="tab === 'overview'" class="action-detail__body">
         <!-- InfoAction is advisory: no threshold, can never ratify. An explicit
              panel — never a pass/fail tally. -->
-        <div v-if="isInfoAction" class="action-detail__advisory">
+        <div v-if="isInfoAction" class="action-detail__advisory glass-panel">
           <v-icon small color="var(--g-text-2)" class="mr-2">mdi-information-outline</v-icon>
           <span class="t-body-2">{{ $t('governance.infoActionAdvisory') }}</span>
         </div>
@@ -118,6 +122,11 @@
       <div v-else-if="tab === 'positions'" class="action-detail__body">
         <EmptyState v-if="!state.currentVotes.length" :message="$t('governance.noVotesYet')" />
         <div v-else class="action-detail__votes">
+          <!-- The votes endpoint returns one row per voter with no timestamp or
+               epoch, so a re-vote cannot be ordered against its predecessor.
+               What IS certain is that each row is that voter's standing
+               position, and that is all this says. -->
+          <p class="action-detail__votes-note t-caption">{{ $t('governance.positionsLatestOnly') }}</p>
           <div v-for="(vote, i) in state.currentVotes" :key="i" class="action-detail__vote-row">
             <span class="t-caption action-detail__vote-role">{{ roleLabel(vote.voterRole) }}</span>
             <span class="g-mono t-caption action-detail__vote-voter">{{ voterId(vote) }}</span>
@@ -336,6 +345,21 @@ const daysLeft = computed(() => {
   return daysRemaining(currentEpoch.value, action.value?.expiresEpoch);
 });
 
+/**
+ * Why the hash check produced no verdict, when that is knowable.
+ *
+ * An anchor URL with no verdict AND no document in hand means the document
+ * could not be read — a different fact from "the check did not run", and the
+ * one the reader can act on (the metadata may be gone, or the host down).
+ * When `rawMetadata` IS present a null verdict really is just an unrun check,
+ * so the badge keeps its plain "unverified" state.
+ */
+const anchorFailureReason = computed<'fetchFailed' | null>(() => {
+  const value = action.value;
+  if (!value?.anchorUrl || value.hashValid !== null) return null;
+  return value.rawMetadata === null ? 'fetchFailed' : null;
+});
+
 /** Anchor and reference URLs are author-controlled — everything goes through the safe-link parser. */
 const anchorHref = computed(() => safeExternalHref(action.value?.anchorUrl));
 
@@ -462,14 +486,16 @@ onMounted(() => reload());
   flex-direction: column;
   gap: var(--g-s-4);
 }
+/* Surface, border and radius all come from `glass-panel` (liquid-glass.css). */
 .action-detail__advisory {
   display: flex;
   align-items: flex-start;
   padding: var(--g-s-4);
-  background: var(--g-raised);
-  border: 1px solid var(--g-hairline-2);
-  border-radius: var(--g-r-card);
   color: var(--g-text-2);
+}
+.action-detail__votes-note {
+  margin: 0 0 var(--g-s-1);
+  color: var(--g-text-3);
 }
 .action-detail__tallies {
   display: flex;
