@@ -36,6 +36,88 @@
           {{ item.header }}
         </v-subheader>
 
+        <!-- Expandable parent (Governance only). The row itself navigates to the
+             group's landing page; the chevron is the ONLY control that toggles
+             the submenu. Children inherit the parent's gate. -->
+        <div
+          v-else-if="item.children"
+          v-show="item.enabled"
+          :key="index"
+          class="nav-group"
+          :class="{ 'nav-group--open': governanceExpanded }"
+        >
+          <v-list-item
+            link
+            class="menuItem"
+            style="height: 34px"
+            @click="openNavGroup(item)"
+          >
+            <v-list-item-avatar tile size="18">
+              <v-badge :value="!!item.notificationDot" dot color="error" overlap bordered>
+                <v-icon v-if="item.icon?.startsWith('mdi-')" size="18" color="var(--g-accent)">{{ item.icon }}</v-icon>
+                <span
+                  v-else
+                  class="nav-svg-icon"
+                  role="img"
+                  :aria-label="item.title"
+                  :style="{ maskImage: `url(${item.icon})`, WebkitMaskImage: `url(${item.icon})` }"
+                />
+              </v-badge>
+            </v-list-item-avatar>
+
+            <v-list-item-content>
+              <v-list-item-title style="font-weight: 500">
+                {{ item.title }}
+              </v-list-item-title>
+            </v-list-item-content>
+
+            <v-list-item-action class="ma-0 nav-group__actions">
+              <!-- The health dot bubbles up from My governance so a collapsed
+                   submenu never hides an alert. -->
+              <span
+                v-if="item.alertDot"
+                class="nav-dot"
+                role="img"
+                :aria-label="$t('governance.delegationNeedsAttention')"
+                :title="$t('governance.delegationNeedsAttention')"
+              />
+              <v-btn
+                icon
+                x-small
+                :aria-label="$t('navigation.toggleSubmenu')"
+                @click.stop.prevent="toggleNavGroup()"
+              >
+                <v-icon size="16">{{ governanceExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+              </v-btn>
+            </v-list-item-action>
+          </v-list-item>
+
+          <div v-if="governanceExpanded" class="nav-group__children">
+            <v-list-item
+              v-for="child in item.children"
+              :key="child.link"
+              :to="child.link"
+              link
+              class="nav-group__child"
+              active-class="nav-group__child--active"
+            >
+              <v-list-item-content>
+                <v-list-item-title class="t-body-sm nav-group__child-title">
+                  {{ child.title }}
+                </v-list-item-title>
+              </v-list-item-content>
+              <v-list-item-action v-if="child.alertDot" class="ma-0">
+                <span
+                  class="nav-dot"
+                  role="img"
+                  :aria-label="$t('governance.delegationNeedsAttention')"
+                  :title="$t('governance.delegationNeedsAttention')"
+                />
+              </v-list-item-action>
+            </v-list-item>
+          </div>
+        </div>
+
         <v-list-item
           v-else-if="item.link"
           :to="item.link"
@@ -238,6 +320,19 @@ import { updateVuetifyTheme } from '@/plugins/vuetify';
 import { debugLog } from '@/utils/debug';
 import { hasNewFeaturesInPath } from '@/shared/composables/useFeatureNotifications';
 
+/** A row inside an expandable parent's submenu. */
+interface NavigationChildItem {
+  title: string;
+  link: string;
+  /**
+   * Children inherit the parent's gate; this only narrows it further (e.g. the
+   * DRep registration sub-flag). Omitted means "inherit and show".
+   */
+  enabled?: boolean;
+  /** Amber health dot — mirrored onto the parent row so it survives collapse. */
+  alertDot?: boolean;
+}
+
 interface NavigationItem {
   title?: string;
   icon?: string;
@@ -252,12 +347,21 @@ interface NavigationItem {
   loading?: boolean;
   /** Brand spotlight item (Nexus): colored icon, animated gradient border. */
   special?: boolean;
+  /** Expandable parent: renders `children` as a submenu under this row. */
+  children?: NavigationChildItem[];
+  /** Amber health dot bubbled up from a child. */
+  alertDot?: boolean;
 }
 
 type NavigationLinkItem = NavigationItem & { link: string };
 type NavigationHrefItem = NavigationItem & { href: string };
 type NavigationHeaderItem = NavigationItem & { header: string };
-type NavigationItemUnion = NavigationLinkItem | NavigationHrefItem | NavigationHeaderItem;
+type NavigationGroupItem = NavigationItem & { link: string; children: NavigationChildItem[] };
+type NavigationItemUnion =
+  | NavigationLinkItem
+  | NavigationHrefItem
+  | NavigationHeaderItem
+  | NavigationGroupItem;
 
 const { t } = useTranslation();
 const changeLogRef = ref(changeLog)
@@ -327,6 +431,37 @@ const navLogo = computed(() => {
   }
 });
 
+/**
+ * Delegation-health alerts waiting on the user. Drives the amber dot on My
+ * governance and its mirror on the Governance parent row.
+ */
+// wired by delegation-alerts
+const governanceAlertCount = computed(() => 0);
+
+/**
+ * Governance submenu open state. It auto-opens on any governance route and
+ * otherwise keeps whatever the user last chose with the chevron.
+ */
+const governanceExpanded = ref(false);
+
+watch(() => vmProxy.$route?.path, (path) => {
+  if (path?.startsWith('/governance')) {
+    governanceExpanded.value = true;
+  }
+}, { immediate: true });
+
+function toggleNavGroup() {
+  governanceExpanded.value = !governanceExpanded.value;
+}
+
+function openNavGroup(item: NavigationItemUnion) {
+  governanceExpanded.value = true;
+  if (item.link && vmProxy.$route?.path !== item.link) {
+    // Duplicated navigation rejects — harmless when the row is clicked twice.
+    router.push(item.link).catch(() => undefined);
+  }
+}
+
 const items = computed((): NavigationItemUnion[] => {
   let isStakingEnabled = false;
   // Only parse address for Cardano-based chains
@@ -364,9 +499,28 @@ const items = computed((): NavigationItemUnion[] => {
     { title: t('navigation.transactions'), icon: 'mdi-swap-horizontal', link: '/transactions', enabled: networks.resolveTransactionsSupport(loggedWallet.value?.chain, loggedWallet.value?.network) && (loggedWallet.value?.chain === Blockchain.MIDNIGHT ? midnightTransactions.value.length > 0 : transactions.value.length > 0), notificationDot: hasNewFeaturesInPath(['transactions']) },
     { title: t('navigation.midnightProofServer'), icon: 'mdi-server-security', link: '/proof-server', enabled: isMidnight.value },
     { title: t('navigation.staking'), icon: assts.coinsStacked, link: '/staking', enabled: isStakingEnabled },
-    // Governance — mirrors the router's `governance` guard exactly (network
-    // support AND the master feature flag). Keep the two textually identical.
-    { title: t('navigation.governance'), icon: assts.governance, link: '/governance', enabled: networks.resolveGovernanceSupport(loggedWallet.value?.chain, loggedWallet.value?.network) && featureFlagsStore.isGovernanceEnabled() },
+    // Governance — the only expandable parent. `enabled` mirrors the router's
+    // `governance` guard exactly (network support AND the master feature flag);
+    // keep the two textually identical. Children inherit that gate, so only a
+    // narrower per-child flag is repeated below.
+    {
+      title: t('navigation.governance'),
+      icon: assts.governance,
+      // Clicking the row lands on My governance; the chevron only toggles.
+      link: '/governance/me',
+      enabled: networks.resolveGovernanceSupport(loggedWallet.value?.chain, loggedWallet.value?.network) && featureFlagsStore.isGovernanceEnabled(),
+      notificationDot: hasNewFeaturesInPath(['navigation', 'governance']),
+      alertDot: governanceAlertCount.value > 0,
+      children: [
+        { title: t('navigation.governanceMe'), link: '/governance/me', alertDot: governanceAlertCount.value > 0 },
+        { title: t('governance.dReps'), link: '/governance/dreps' },
+        { title: t('common.actions'), link: '/governance/actions' },
+        // Registration is a value-moving surface behind the voting sub-flag —
+        // mirrors the router's extra `governanceRegister` maintenance gate, so
+        // the item never leads to a redirect back to the dashboard.
+        { title: t('navigation.becomeDRep'), link: '/governance/register', enabled: featureFlagsStore.isGovernanceVotingEnabled() },
+      ].filter(child => child.enabled !== false),
+    },
     { title: t('navigation.dao'), icon: assts.dao, link: '/dao', enabled: networks.resolveDaoSupport(loggedWallet.value?.chain, loggedWallet.value?.network) },
     {
       title: t('navigation.geroCard'),
@@ -685,6 +839,63 @@ onUnmounted(() => {
 
 .menuItem ::v-deep .v-badge {
   overflow: visible !important;
+}
+
+/* ── Expandable nav group (Governance) ────────────────────────────────
+   A bordered raised container holds the parent row plus its submenu. The
+   rail down the left of the children is a hairline that turns accent on
+   the active child, matching the active-page treatment one level up. */
+.nav-group {
+  background: var(--g-raised);
+  border: 1px solid var(--g-hairline-2);
+  border-radius: var(--g-r-control);
+  margin-bottom: 4px;
+}
+
+.nav-group--open {
+  border-color: color-mix(in srgb, var(--g-accent) 25%, transparent);
+}
+
+.nav-group__actions {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--g-s-2);
+}
+
+.nav-group__children {
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--g-s-2) var(--g-s-2);
+}
+
+/* Two classes so the row height outranks Vuetify's `.v-list--dense .v-list-item`
+   on specificity alone. 19px aligns the rail under the parent row's icon. */
+.nav-group__children .nav-group__child {
+  min-height: 30px;
+  margin-left: 19px;
+  padding-left: 10px;
+  border-left: 1px solid var(--g-hairline-2);
+  border-radius: var(--g-r-chip);
+}
+
+.nav-group__children .nav-group__child--active {
+  background: color-mix(in srgb, var(--g-accent) 12%, transparent);
+  border-left-color: var(--g-accent);
+}
+
+.nav-group__children .nav-group__child--active .nav-group__child-title {
+  color: var(--g-accent);
+  font-weight: 550;
+}
+
+/* Delegation-health dot. Amber, quiet, and never animated. */
+.nav-dot {
+  display: inline-block;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--g-r-pill);
+  background: var(--g-warning);
 }
 
 /* ── Nexus spotlight item ─────────────────────────────────────────────
