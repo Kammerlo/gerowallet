@@ -282,7 +282,7 @@ async function loadVotingPower(): Promise<void> {
 
 // ---------------------------------------------------------------------------
 // Optimistic pending state — scan ALL pending txs for a vote on these actions
-// (the currentDrepTxIsPending pattern from CardanoGovernance.vue).
+// (the all-pending-tx scan pattern shared with MyGovernance).
 // ---------------------------------------------------------------------------
 
 const actionKeySet = computed(() => new Set(props.actions.map(action => displayId(action))));

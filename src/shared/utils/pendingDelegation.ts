@@ -4,9 +4,9 @@
  * The panel has no signing surface for certificate transactions — hardware
  * wallets, PassKey/PRF and Keystone all go through the dashboard's
  * `DRepDelegateDialog` — so "Confirm Delegation" parks the user's choice here
- * and opens `index.html#/governance`. The governance page picks it up (on mount,
- * or via `chrome.storage.onChanged` when that tab is already open) and opens the
- * delegate dialog with the transaction already built.
+ * and opens `index.html#/governance/dreps`. The DRep directory claims it through
+ * its deferred-intent queue (on mount, or via `chrome.storage.onChanged` when
+ * that tab is already open) and opens the delegate dialog once inputs are ready.
  *
  * Before this existed the panel opened the dashboard and dropped the selection
  * on the floor, so the button appeared to do nothing.

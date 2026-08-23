@@ -35,7 +35,7 @@ const { keys, transactions: txs } = toRefs(walletStore);
 const { capability } = useVoting();
 
 // drep129 is an array like every other key list; a watch wallet has an empty
-// one — guard it, never index blindly (same guard as CardanoGovernance.vue).
+// one — guard it, never index blindly (same guard the DRep views use).
 const drepId = computed(() => keys.value?.drep129?.[0]?.address ?? '');
 
 const visible = computed(

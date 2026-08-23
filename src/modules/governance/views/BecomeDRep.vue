@@ -839,7 +839,7 @@ const DREP_REGISTRATION_CERTS = [
 
 /**
  * True while a registration or retirement is submitted but not yet confirmed.
- * Mirrors the scan CardanoGovernance/useDelegation use: every pending tx is
+ * Mirrors the scan useDelegation uses: every pending tx is
  * checked, because an unrelated pending send must not hide this state.
  */
 const registrationPending = computed(() =>

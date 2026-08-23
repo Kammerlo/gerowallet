@@ -91,7 +91,8 @@ const featureFlagsState = Vue.observable<FeatureFlagsState>({
     isBitcoinEnabled: false,
     isTrezorWebUsbEnabled: false,
     isPoolOperatorEnabled: false,
-    isGovernanceEnabled: false,
+    // ⚠️ LOCAL TESTING ONLY — DO NOT COMMIT (should be false).
+    isGovernanceEnabled: true,
     isGovernanceVotingEnabled: false,
     isRealFiEnabled: false,
     isNexusWithdrawalEnabled: false,
@@ -162,7 +163,10 @@ export const featureFlagsStore = {
     featureFlagsState.flags.isBitcoinEnabled = featureFlagService.getFlag('isBitcoinEnabled', false);
     featureFlagsState.flags.isTrezorWebUsbEnabled = featureFlagService.getFlag('isTrezorWebUsbEnabled', false);
     featureFlagsState.flags.isPoolOperatorEnabled = featureFlagService.getFlag('isPoolOperatorEnabled', false);
-    featureFlagsState.flags.isGovernanceEnabled = featureFlagService.getFlag('isGovernanceEnabled', false);
+    // ⚠️ LOCAL TESTING ONLY — DO NOT COMMIT (fallback should be false).
+    // Forces the governance surface on before gero-sync serves `isGovernanceEnabled`.
+    // Revert with: git checkout src/stores/featureFlagsStore.ts
+    featureFlagsState.flags.isGovernanceEnabled = featureFlagService.getFlag('isGovernanceEnabled', true);
     featureFlagsState.flags.isGovernanceVotingEnabled = featureFlagService.getFlag('isGovernanceVotingEnabled', false);
     featureFlagsState.flags.isRealFiEnabled = featureFlagService.getFlag('isRealFiEnabled', false);
     featureFlagsState.flags.isNexusWithdrawalEnabled = featureFlagService.getFlag('isNexusWithdrawalEnabled', false);
