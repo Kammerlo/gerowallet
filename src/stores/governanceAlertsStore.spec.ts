@@ -31,9 +31,11 @@ vi.mock('@/db/wallet-db', () => ({ setWalletConfiguration: mockSetWalletConfigur
 vi.mock('@/api/blockchain-api', () => ({ default: { getDRepById: mockGetDRepById } }));
 
 import store, {
+  ALERT_CHECK_FAILED_KEY,
   ALERT_SETTINGS_KEY,
   ALERT_SNOOZES_KEY,
   DEFAULT_DISMISS_EPOCHS,
+  DEFAULT_INACTIVITY_WARN_AT,
   DEFAULT_RATIONALE_DROP_POINTS,
   evaluateAlerts,
   isAlertActive,
@@ -389,6 +391,93 @@ describe('store.evaluate', () => {
   });
 });
 
+describe('store.drepId: the "is there anything to watch" signal', () => {
+  it('names the DRep under watch when there is one', () => {
+    store.evaluate(account(), record({ expires_epoch_no: EXPIRES_AT_WARN }), EPOCH);
+    expect(store.state.drepId).toBe(DREP);
+  });
+
+  // A host surface gates its whole alerts UI on this. If it stayed non-null for
+  // a wallet with no DRep, that surface would answer "nothing to flag, your
+  // DRep is registered, active and voting" on the very screens that exist
+  // BECAUSE the wallet has no DRep.
+  it.each([
+    ['no delegation at all', withAccount({ drep_id: '' })],
+    ['an always-abstain delegation', withAccount({ drep_id: 'drep_always_abstain' })],
+    ['an always-no-confidence delegation', withAccount({ drep_id: 'drep_always_no_confidence' })],
+    ['an unregistered stake key', withAccount({ active: false })],
+  ])('is null for %s', (_label, acct) => {
+    store.evaluate(acct, record({ expires_epoch_no: EXPIRES_AT_WARN }), EPOCH);
+    expect(store.state.drepId).toBeNull();
+    expect(store.state.alerts).toEqual([]);
+  });
+
+  it('goes null again when a watched delegation is replaced by abstain', () => {
+    store.evaluate(account(), record({ expires_epoch_no: EXPIRES_AT_WARN }), EPOCH);
+    expect(store.state.drepId).toBe(DREP);
+    store.evaluate(withAccount({ drep_id: 'drep_always_abstain' }), null, EPOCH);
+    expect(store.state.drepId).toBeNull();
+  });
+
+  it('is null after refresh finds nothing to watch, and never raises loading', async () => {
+    mockWalletStore['account'] = withAccount({ drep_id: '' });
+    await store.refresh();
+    expect(store.state.drepId).toBeNull();
+    // Ordering matters: a host gating on `drepId || loading` must not flash a
+    // skeleton for a DRep that does not exist.
+    expect(store.state.loading).toBe(false);
+  });
+});
+
+describe('store.hydrate: the async config bag', () => {
+  it('does not latch on the empty config the liveQuery has not filled yet', () => {
+    store.reset();
+    mockWalletStore['config'] = {};
+
+    // First read at login: the bag is empty, so defaults stand and nothing changed.
+    expect(store.hydrate()).toBe(false);
+    expect(store.state.settings.inactivityWarnAt).toBe(DEFAULT_INACTIVITY_WARN_AT);
+
+    // The liveQuery delivers a moment later. Without the fix this read never
+    // happens, and the saved threshold plus every snooze stay lost for the
+    // session — which is how "remind me at 18" comes back after a reload.
+    mockWalletStore['config'] = {
+      [ALERT_SETTINGS_KEY]: { inactivityWarnAt: 12, rationaleDropEnabled: false },
+      [ALERT_SNOOZES_KEY]: { 'inactivity:drep1abc': 700 },
+    };
+    expect(store.hydrate()).toBe(true);
+    expect(store.state.settings.inactivityWarnAt).toBe(12);
+    expect(store.state.settings.rationaleDropEnabled).toBe(false);
+    expect(store.state.snoozes).toEqual({ 'inactivity:drep1abc': 700 });
+  });
+
+  it('latches once the config has actually been seen, so later churn is free', () => {
+    store.reset();
+    mockWalletStore['config'] = { [ALERT_SETTINGS_KEY]: { inactivityWarnAt: 12 } };
+    expect(store.hydrate()).toBe(true);
+
+    // An unrelated preference elsewhere in the app rewrites the bag. That must
+    // cost a compare, not a re-read and not a DRep lookup.
+    mockWalletStore['config'] = {
+      [ALERT_SETTINGS_KEY]: { inactivityWarnAt: 12 },
+      hideBalances: true,
+    };
+    expect(store.hydrate()).toBe(false);
+    expect(store.state.settings.inactivityWarnAt).toBe(12);
+  });
+
+  it('re-reads for a different wallet', () => {
+    store.reset();
+    mockWalletStore['config'] = { [ALERT_SETTINGS_KEY]: { inactivityWarnAt: 12 } };
+    expect(store.hydrate()).toBe(true);
+
+    mockWalletStore['loggedWallet'] = { id: 2, chain: 'Cardano', network: 'mainnet' };
+    mockWalletStore['config'] = { [ALERT_SETTINGS_KEY]: { inactivityWarnAt: 18 } };
+    expect(store.hydrate()).toBe(true);
+    expect(store.state.settings.inactivityWarnAt).toBe(18);
+  });
+});
+
 describe('store.snooze', () => {
   beforeEach(() => {
     store.evaluate(account(), record({ expires_epoch_no: EXPIRES_AT_WARN }), EPOCH);
@@ -523,7 +612,9 @@ describe('store.refresh', () => {
     await store.refresh();
     mockGetDRepById.mockRejectedValueOnce(new Error('indexer down'));
     await store.refresh();
-    expect(store.state.error).toBe('indexer down');
+    // The i18n KEY, not the upstream text: the store has no $t, and an axios
+    // string would reach a German user in English.
+    expect(store.state.errorKey).toBe(ALERT_CHECK_FAILED_KEY);
     expect(store.state.alerts.map((a) => a.kind)).toEqual(['inactivity']);
   });
 

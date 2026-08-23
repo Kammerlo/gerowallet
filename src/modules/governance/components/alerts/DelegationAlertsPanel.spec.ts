@@ -53,7 +53,7 @@ const { push, state } = vi.hoisted(() => {
       drepId: 'drep1abc',
       evaluatedAt: 1_700_000_000_000,
       loading: false,
-      error: null,
+      errorKey: null,
     },
   };
 });
@@ -70,6 +70,7 @@ vi.mock('@/stores/networkStore', () => ({
 
 vi.mock('@/stores/governanceAlertsStore', () => ({
   DEFAULT_SNOOZE_WARN_AT: 18,
+  drepActivityWindow: () => 20,
   default: {
     state,
     activeAlerts: () => state.alerts,
@@ -171,7 +172,7 @@ describe('DelegationAlertsPanel', () => {
     expect(html).toContain('governance.alerts.footer');
   });
 
-  it('shows the positive empty state when nothing is wrong', () => {
+  it('shows the positive empty state when a watched DRep has nothing wrong', () => {
     const alerts = state.alerts;
     state.alerts = [];
     try {
@@ -181,6 +182,54 @@ describe('DelegationAlertsPanel', () => {
       expect(wrapper.html()).toContain('governance.alerts.allHealthy');
     } finally {
       state.alerts = alerts;
+    }
+  });
+
+  // The all-healthy copy claims the DRep "is registered, active and voting".
+  // On registeredNoDRep / notInGovernance / a keyword delegation there is no
+  // DRep to make that claim about, and the host's hero says the opposite right
+  // above. The panel must render nothing at all, so mounting it unconditionally
+  // stays safe for any host.
+  it('renders nothing at all when there is no DRep to watch', () => {
+    const alerts = state.alerts;
+    const drepId = state.drepId;
+    state.alerts = [];
+    state.drepId = null;
+    try {
+      const wrapper = render();
+      expect(wrapper.find('.delegation-alerts').exists()).toBe(false);
+      expect(wrapper.html()).toBe('');
+      // Specifically not the "your DRep is healthy" claim.
+      expect(wrapper.text()).not.toContain('governance.alerts.allHealthy');
+      // And no settings card for alerts that can never fire.
+      expect(wrapper.text()).not.toContain('governance.alerts.settingsTitle');
+    } finally {
+      state.alerts = alerts;
+      state.drepId = drepId;
+    }
+  });
+
+  it('still shows the skeleton while a real DRep is being looked up', () => {
+    const alerts = state.alerts;
+    const drepId = state.drepId;
+    state.alerts = [];
+    state.drepId = null;
+    state.loading = true;
+    try {
+      expect(render().find('.delegation-alerts__loading').exists()).toBe(true);
+    } finally {
+      state.alerts = alerts;
+      state.drepId = drepId;
+      state.loading = false;
+    }
+  });
+
+  it('renders a failed check as a translated key, never raw upstream text', () => {
+    state.errorKey = 'governance.alerts.checkFailed';
+    try {
+      expect(render().html()).toContain('governance.alerts.checkFailed');
+    } finally {
+      state.errorKey = null;
     }
   });
 });

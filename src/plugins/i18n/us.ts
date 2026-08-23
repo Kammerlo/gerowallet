@@ -1210,6 +1210,7 @@ export default {
   'governance.alerts.allHealthy': 'Nothing to flag. Your DRep is registered, active and voting.',
   'governance.alerts.alwaysOn': 'Always on',
   'governance.alerts.atEpoch': 'epoch {epoch}',
+  'governance.alerts.checkFailed': 'Could not check your DRep just now. Anything shown below may be out of date.',
   'governance.alerts.chooseNewDRep': 'Choose a new DRep',
   'governance.alerts.dismiss': 'Dismiss',
   'governance.alerts.findReplacement': 'Find a replacement',

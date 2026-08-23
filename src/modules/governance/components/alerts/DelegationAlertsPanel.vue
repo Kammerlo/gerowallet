@@ -1,12 +1,12 @@
 <template>
-  <div class="delegation-alerts">
+  <div v-if="watching" class="delegation-alerts">
     <section class="delegation-alerts__feed glass-panel">
       <header class="delegation-alerts__head">
         <span class="t-label delegation-alerts__eyebrow">{{ $t('governance.alerts.title') }}</span>
         <AsOf :timestamp="state.evaluatedAt" />
       </header>
 
-      <ErrorState v-if="state.error" :message="state.error" retryable @retry="refresh()" />
+      <ErrorState v-if="state.errorKey" :message="$t(state.errorKey)" retryable @retry="refresh()" />
 
       <div v-else-if="state.loading && !alerts.length" class="delegation-alerts__loading">
         <v-skeleton-loader v-for="n in 2" :key="n" type="list-item-two-line" />
@@ -158,8 +158,10 @@ import ErrorState from '@/shared/components/feedback/ErrorState.vue';
 import GButton from '@/shared/components/GButton/GButton.vue';
 import { useTranslation } from '@/shared/composables/useTranslation';
 import filters from '@/shared/utils/filters';
+import { DEFAULT_DREP_ACTIVITY_EPOCHS } from '@/shared/composables/useDelegationHealth';
 import governanceAlertsStore, {
   DEFAULT_SNOOZE_WARN_AT,
+  drepActivityWindow,
   type GovernanceAlert,
 } from '@/stores/governanceAlertsStore';
 import NetworkStore from '@/stores/networkStore';
@@ -189,6 +191,21 @@ const WARN_AT_CHOICES = [10, 12, 15, 18];
 const alerts = computed(() => governanceAlertsStore.activeAlerts());
 
 /**
+ * Whether there is a DRep to say anything about at all.
+ *
+ * Without this the panel renders its "nothing to flag, your DRep is registered,
+ * active and voting" empty state on the very screens that exist BECAUSE the
+ * wallet has no DRep — flatly contradicting the hero above it on
+ * registeredNoDRep and notInGovernance, and misdescribing an always-abstain
+ * delegation as a healthy representative. The gate lives here rather than in
+ * the host so that mounting this component unconditionally is always safe.
+ *
+ * `loading` keeps the skeleton reachable: the store only raises it once it has
+ * a real DRep to look up, so a wallet with none never flashes one.
+ */
+const watching = computed(() => state.drepId !== null || state.loading);
+
+/**
  * At most one gradient CTA on the surface. Retirement and inactivity are
  * mutually exclusive by construction (the store suppresses the countdown once a
  * DRep has deregistered), so this resolves to a single alert or none.
@@ -197,8 +214,16 @@ const primaryAlertId = computed(
   () => alerts.value.find((alert) => alert.kind !== 'rationaleDrop')?.id ?? null,
 );
 
-/** The activity window the current alerts were measured against. */
-const activityWindow = computed(() => alerts.value[0]?.facts.activityWindow ?? 20);
+/**
+ * The activity window to state in the settings card: the one the current alerts
+ * were actually measured against, else the chain's own `drep_activity` from the
+ * epoch params, and only then CIP-1694's default. A literal here would misreport
+ * the settings card on any chain that moves the parameter.
+ */
+const activityWindow = computed(
+  () =>
+    alerts.value[0]?.facts.activityWindow ?? drepActivityWindow() ?? DEFAULT_DREP_ACTIVITY_EPOCHS,
+);
 
 /** The "remind me at N" target, kept in step with a moved warning threshold. */
 const snoozeTarget = computed(() =>
