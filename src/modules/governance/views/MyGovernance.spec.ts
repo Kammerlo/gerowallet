@@ -32,6 +32,7 @@ vi.mock('vue-router/composables', () => ({ useRouter: () => ({ push: vi.fn() }) 
 import MyGovernance from './MyGovernance.vue';
 import { walletStore } from '@/stores/walletStore';
 import { governanceStore } from '@/stores/governanceStore';
+import { networkStore } from '@/stores/networkStore';
 
 const $t = (key: string, values?: Record<string, unknown>): string =>
   values ? `${key}:${JSON.stringify(values)}` : key;
@@ -108,7 +109,15 @@ beforeEach(() => {
 afterEach(() => {
   wrapper?.destroy();
   wrapper = null;
+  // The tile tests below drive the epoch through the real store; leaving a tip
+  // behind would silently change every other case's expiry arithmetic.
+  networkStore.tip = null;
 });
+
+/** Captions under the three health tiles — the line each tile hangs off its fact. */
+function tileCaptions(w: Wrapper<Vue>) {
+  return w.findAll('.my-governance__tile .t-caption');
+}
 
 describe('MyGovernance', () => {
   it('offers the three unlock choices, and only them, when rewards are locked', async () => {
@@ -212,6 +221,62 @@ describe('MyGovernance', () => {
     // echoes them precisely so this stays a real assertion.
     expect(html).not.toContain('"pct":0');
     expect(html).toContain('governance.noVotesYet');
+  });
+
+  // The health tiles state facts. A tile whose caption is unknown must show
+  // LESS, never something that reads as a claim: "n/a" printed under a real
+  // date says the date is unknown, which is the opposite of true, and
+  // "stays active for 0 more epochs" is the exact falsehood the trust
+  // hierarchy discards a stale expiry to avoid.
+  describe('health tile captions', () => {
+    it('renders no caption at all when the countdown is unknown', async () => {
+      represented();
+      networkStore.tip = { epoch: 651 } as unknown as typeof networkStore.tip;
+      // `active: true` beside an already-passed expiry is the stale-index
+      // signature: delegationHealth sets expiryStale and nulls epochsLeft.
+      getDRepById.mockResolvedValue({
+        registered: true,
+        active: true,
+        expires_epoch_no: 629,
+        votes: [],
+      });
+
+      wrapper = mountPage();
+      await settle();
+
+      const html = wrapper.html();
+      // Neither the countdown nor the expiry it was derived from.
+      expect(html).not.toContain('governance.activeForEpochs');
+      expect(html).not.toContain('governance.expiresEpochLabel');
+      // And no filler standing in for them: "On-chain data" under a vote count
+      // says nothing the tile's own label did not already say.
+      expect(html).not.toContain('governance.onchainData');
+      // One caption survives — the long-run rationale line, which is a real
+      // fact about a record with no votes — and the two unknown ones are gone.
+      expect(tileCaptions(wrapper)).toHaveLength(1);
+      // The tiles themselves stay: they still carry the facts they do have.
+      expect(html).toContain('governance.lastVote');
+      expect(html).toContain('governance.votes');
+    });
+
+    it('still renders the caption when the countdown is coherent', async () => {
+      represented();
+      networkStore.tip = { epoch: 651 } as unknown as typeof networkStore.tip;
+      getDRepById.mockResolvedValue({
+        registered: true,
+        expires_epoch_no: 660,
+        votes: [],
+      });
+
+      wrapper = mountPage();
+      await settle();
+
+      const html = wrapper.html();
+      // 660 − 651 = 9 epochs left, and the stored expiry is worth stating.
+      expect(html).toContain('governance.activeForEpochs:{"n":9}');
+      expect(html).toContain('governance.expiresEpochLabel:{"n":660}');
+      expect(tileCaptions(wrapper)).toHaveLength(3);
+    });
   });
 
   // The delegation-alerts panel drops into the slot under the hero and raises

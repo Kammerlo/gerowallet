@@ -172,17 +172,76 @@ describe('DelegationAlertsPanel', () => {
     expect(html).toContain('governance.alerts.footer');
   });
 
-  it('shows the positive empty state when a watched DRep has nothing wrong', () => {
+  // Renamed from "shows the positive empty state ...": what this now guards is
+  // the COMPACTION itself. The `.empty-state` assertion below is the load-
+  // bearing one — without it nothing in the file would catch a regression back
+  // to the tall block that used to spend half the page saying "nothing wrong".
+  it('collapses to a compact strip, not a full empty-state block, when a watched DRep has nothing wrong', () => {
     const alerts = state.alerts;
     state.alerts = [];
     try {
       const wrapper = render();
       expect(wrapper.findAll('.delegation-alerts__card')).toHaveLength(0);
-      expect(wrapper.find('.empty-state').exists()).toBe(true);
+      expect(wrapper.find('.delegation-alerts__strip').exists()).toBe(true);
+      expect(wrapper.find('.empty-state').exists()).toBe(false);
+      // And no feed card either: the eyebrow heading over a line that says
+      // there is nothing to flag is the redundancy being removed.
+      expect(wrapper.find('.delegation-alerts__feed').exists()).toBe(false);
       expect(wrapper.html()).toContain('governance.alerts.allHealthy');
     } finally {
       state.alerts = alerts;
     }
+  });
+
+  // Every control the settings card used to display outright is still mounted
+  // and still wired; it is the disclosure that is shut, not the capability.
+  // `<details>` keeps its children in the DOM when closed, so "is it hidden?"
+  // has to be read off the `open` attribute, never off whether the nodes exist.
+  it('keeps the settings disclosure closed by default in both shapes', () => {
+    expect(render().find('details').attributes('open')).toBeUndefined();
+
+    const alerts = state.alerts;
+    state.alerts = [];
+    try {
+      expect(render().find('details').attributes('open')).toBeUndefined();
+    } finally {
+      state.alerts = alerts;
+    }
+  });
+
+  it('keeps every alert setting reachable from the compact strip', () => {
+    const alerts = state.alerts;
+    state.alerts = [];
+    try {
+      const wrapper = render();
+      const html = wrapper.html();
+      // The four thresholds, the rationale switch, the always-on retirement
+      // line, the unavailable push channel and the neutrality footnote.
+      expect(html).toContain('governance.alerts.settingsTitle');
+      expect(html).toContain('governance.alerts.settingsRationale');
+      expect(html).toContain('governance.alerts.settingsRetirement');
+      expect(html).toContain('governance.alerts.alwaysOn');
+      expect(html).toContain('governance.alerts.pushUnavailable');
+      expect(html).toContain('common.off');
+      expect(html).toContain('governance.alerts.footer');
+      expect(wrapper.findAll('.alert-settings .g-num')).toHaveLength(4);
+    } finally {
+      state.alerts = alerts;
+    }
+  });
+
+  // The compaction is for the state that has nothing to say. The moment the
+  // watchdog does have something, it takes the room back — that path is the
+  // whole point of the feature and must not be traded away for the tidier one.
+  it('expands to the full feed card the moment there is something to flag', () => {
+    const wrapper = render();
+    expect(wrapper.find('.delegation-alerts__feed').exists()).toBe(true);
+    expect(wrapper.find('.delegation-alerts__strip').exists()).toBe(false);
+    expect(wrapper.findAll('.delegation-alerts__card')).toHaveLength(2);
+    // Snooze, dismiss and the countdown track all still there.
+    expect(wrapper.html()).toContain('governance.alerts.remindMeAt');
+    expect(wrapper.html()).toContain('governance.alerts.dismiss');
+    expect(wrapper.find('.delegation-alerts__fill').exists()).toBe(true);
   });
 
   // The all-healthy copy claims the DRep "is registered, active and voting".

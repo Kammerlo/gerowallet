@@ -1,6 +1,22 @@
 <template>
   <div v-if="watching" class="delegation-alerts">
-    <section class="delegation-alerts__feed glass-panel">
+    <!-- Nothing to flag: one line, not two cards. The watchdog earns its room
+         on the screen only when it has something to say; until then it states
+         the fact and stays out of the way of the page's actual purpose. -->
+    <section v-if="healthy" class="delegation-alerts__strip">
+      <v-icon size="16" color="var(--g-success)">mdi-shield-check-outline</v-icon>
+      <span class="t-body-sm delegation-alerts__strip-text">{{ $t('governance.alerts.allHealthy') }}</span>
+      <AsOf :timestamp="state.evaluatedAt" />
+      <AlertSettings
+        class="delegation-alerts__disclosure"
+        :settings="settings"
+        :activity-window="activityWindow"
+        @warn-at="onWarnAtChange"
+        @rationale="onRationaleChange"
+      />
+    </section>
+
+    <section v-else class="delegation-alerts__feed glass-panel">
       <header class="delegation-alerts__head">
         <span class="t-label delegation-alerts__eyebrow">{{ $t('governance.alerts.title') }}</span>
         <AsOf :timestamp="state.evaluatedAt" />
@@ -11,12 +27,6 @@
       <div v-else-if="state.loading && !alerts.length" class="delegation-alerts__loading">
         <v-skeleton-loader v-for="n in 2" :key="n" type="list-item-two-line" />
       </div>
-
-      <EmptyState
-        v-else-if="!alerts.length"
-        icon="mdi-shield-check-outline"
-        :message="$t('governance.alerts.allHealthy')"
-      />
 
       <ul v-else class="delegation-alerts__list">
         <li
@@ -104,46 +114,12 @@
         </li>
       </ul>
 
-      <p class="t-caption delegation-alerts__footer">{{ $t('governance.alerts.footer') }}</p>
-    </section>
-
-    <section class="delegation-alerts__settings glass-panel">
-      <span class="t-label delegation-alerts__eyebrow">{{ $t('governance.alerts.settingsTitle') }}</span>
-
-      <div class="delegation-alerts__setting">
-        <span class="t-body-2 delegation-alerts__setting-label">{{ $t('governance.alerts.settingsInactivity') }}</span>
-        <span class="t-caption delegation-alerts__setting-value">
-          {{ $t('governance.alerts.settingsInactivityValue', { at: settings.inactivityWarnAt, window: activityWindow }) }}
-        </span>
-      </div>
-      <v-chip-group :value="settings.inactivityWarnAt" mandatory @change="onWarnAtChange">
-        <v-chip v-for="at in WARN_AT_CHOICES" :key="at" :value="at" small outlined class="g-num">
-          {{ at }}
-        </v-chip>
-      </v-chip-group>
-
-      <div class="delegation-alerts__setting">
-        <span class="t-body-2 delegation-alerts__setting-label">{{ $t('governance.alerts.settingsRationale') }}</span>
-        <v-switch
-          :input-value="settings.rationaleDropEnabled"
-          dense
-          hide-details
-          class="delegation-alerts__switch"
-          :aria-label="$t('governance.alerts.settingsRationale')"
-          @change="onRationaleChange"
-        />
-      </div>
-
-      <div class="delegation-alerts__setting">
-        <span class="t-body-2 delegation-alerts__setting-label">{{ $t('governance.alerts.settingsRetirement') }}</span>
-        <span class="t-caption delegation-alerts__setting-value">{{ $t('governance.alerts.alwaysOn') }}</span>
-      </div>
-
-      <div class="delegation-alerts__setting">
-        <span class="t-body-2 delegation-alerts__setting-label">{{ $t('governance.alerts.settingsPush') }}</span>
-        <span class="t-caption delegation-alerts__setting-muted">{{ $t('common.off') }}</span>
-      </div>
-      <p class="t-caption delegation-alerts__footer">{{ $t('governance.alerts.pushUnavailable') }}</p>
+      <AlertSettings
+        :settings="settings"
+        :activity-window="activityWindow"
+        @warn-at="onWarnAtChange"
+        @rationale="onRationaleChange"
+      />
     </section>
   </div>
 </template>
@@ -152,8 +128,8 @@
 import { computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router/composables';
 
+import AlertSettings from '@/modules/governance/components/alerts/AlertSettings.vue';
 import AsOf from '@/modules/governance/components/actions/AsOf.vue';
-import EmptyState from '@/shared/components/feedback/EmptyState.vue';
 import ErrorState from '@/shared/components/feedback/ErrorState.vue';
 import GButton from '@/shared/components/GButton/GButton.vue';
 import { useTranslation } from '@/shared/composables/useTranslation';
@@ -177,6 +153,12 @@ import NetworkStore from '@/stores/networkStore';
  *
  * The replacement CTAs route to the DRep DIRECTORY, never to a named DRep — the
  * wallet does not put candidates forward.
+ *
+ * TWO SHAPES, one component. With something to flag it is the full feed card,
+ * unchanged: severity hairlines, the countdown track, snooze and dismiss. With
+ * nothing to flag it is a single line, because a watchdog that has found
+ * nothing has no claim on half the page — and the settings it used to shout
+ * about live behind a closed disclosure in both shapes.
  */
 
 const router = useRouter();
@@ -185,10 +167,17 @@ const { t } = useTranslation();
 const state = governanceAlertsStore.state;
 const settings = computed(() => state.settings);
 
-/** How far into the window the warning may be moved. Endpoints, not advice. */
-const WARN_AT_CHOICES = [10, 12, 15, 18];
-
 const alerts = computed(() => governanceAlertsStore.activeAlerts());
+
+/**
+ * Nothing to say, so say it in one line.
+ *
+ * Deliberately the narrowest of the four states: a failed check still owes the
+ * user its error, and a check still running still owes it a skeleton. Only
+ * "watched, looked, found nothing" collapses — anything else keeps the feed
+ * card, so the compaction can never swallow a fact.
+ */
+const healthy = computed(() => !state.errorKey && !state.loading && alerts.value.length === 0);
 
 /**
  * Whether there is a DRep to say anything about at all.
@@ -320,14 +309,13 @@ function refresh(): void {
   void governanceAlertsStore.refresh();
 }
 
-function onWarnAtChange(value: number | undefined): void {
-  if (typeof value !== 'number') return;
+function onWarnAtChange(value: number): void {
   governanceAlertsStore.setSettings({ inactivityWarnAt: value });
   refresh();
 }
 
-function onRationaleChange(value: boolean | null): void {
-  governanceAlertsStore.setSettings({ rationaleDropEnabled: !!value });
+function onRationaleChange(value: boolean): void {
+  governanceAlertsStore.setSettings({ rationaleDropEnabled: value });
   refresh();
 }
 
@@ -347,13 +335,39 @@ onMounted(() => {
   gap: var(--g-s-4);
 }
 
-.delegation-alerts__feed,
-.delegation-alerts__settings {
+.delegation-alerts__feed {
   display: flex;
   flex-direction: column;
   gap: var(--g-s-3);
   padding: var(--g-s-5);
   border-radius: var(--g-r-card);
+}
+
+/* Solid, not glass: glass means "this floats above content", and a one-line
+   status row is the most static thing on the page. */
+.delegation-alerts__strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--g-s-3);
+  row-gap: var(--g-s-2);
+  min-height: var(--g-row-h-panel);
+  padding: 0 var(--g-s-4);
+  background: var(--g-surface);
+  border: 1px solid var(--g-hairline-1);
+  border-radius: var(--g-r-control);
+}
+.delegation-alerts__strip-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--g-text-2);
+}
+/* Opened, the disclosure drops to its own full-width line rather than being
+   crushed into a 48px row. Attribute selector, no JS. */
+.delegation-alerts__disclosure[open] {
+  flex-basis: 100%;
+  order: 2;
+  padding-bottom: var(--g-s-3);
 }
 
 .delegation-alerts__head {
@@ -487,32 +501,9 @@ onMounted(() => {
   gap: var(--g-s-2);
 }
 
-.delegation-alerts__footer {
-  margin: 0;
-  padding-top: var(--g-s-3);
-  border-top: 1px solid var(--g-hairline-1);
-  color: var(--g-text-3);
-}
-
-.delegation-alerts__setting {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--g-s-3);
-  min-height: var(--g-row-h-panel);
-}
-.delegation-alerts__setting-label {
-  color: var(--g-text-2);
-}
-.delegation-alerts__setting-value {
-  color: var(--g-accent);
-}
-.delegation-alerts__setting-muted {
-  color: var(--g-text-3);
-}
-.delegation-alerts__switch {
-  margin: 0;
-  padding: 0;
-  flex: none;
+@media (max-width: 720px) {
+  .delegation-alerts__strip-text {
+    flex-basis: 100%;
+  }
 }
 </style>

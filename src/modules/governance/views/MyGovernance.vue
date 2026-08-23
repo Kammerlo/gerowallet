@@ -74,12 +74,14 @@
           <div class="my-governance__tile">
             <span class="t-label">{{ $t('governance.lastVote') }}</span>
             <span class="t-heading g-num">{{ lastVoteDisplay }}</span>
-            <span class="t-caption">{{ activityDisplay }}</span>
+            <!-- No caption at all when the countdown is unknown: see
+                 activityDisplay. A tile may show less; it may not imply more. -->
+            <span v-if="activityDisplay" class="t-caption">{{ activityDisplay }}</span>
           </div>
           <div class="my-governance__tile">
             <span class="t-label">{{ $t('governance.votes') }}</span>
             <span class="t-heading g-num">{{ formatInt(health.voteCount) }}</span>
-            <span class="t-caption">{{ expiresDisplay }}</span>
+            <span v-if="expiresDisplay" class="t-caption">{{ expiresDisplay }}</span>
           </div>
         </div>
 
@@ -333,20 +335,31 @@ const lastVoteDisplay = computed(() =>
     : new Date(health.value.lastVoteAt * 1000).toLocaleDateString(),
 );
 
-// A stale-nulled countdown reads n/a here: "stays active for 0 more epochs"
-// would be the exact false claim the trust hierarchy exists to prevent.
+/**
+ * The countdown caption, or NOTHING.
+ *
+ * `epochsLeft` is null in exactly two cases: the expiry was never known, or
+ * `health.expiryStale` made the trust hierarchy throw it away. Rendering
+ * "stays active for 0 more epochs" would be the false claim that hierarchy
+ * exists to prevent — but so is answering the question with "n/a". The tile
+ * above it already carries a real date; captioning that date "n/a" reads as if
+ * the DATE were unknown, which is the opposite of true. An absent caption is
+ * the honest render: the tile shows the fact it has and claims nothing else.
+ */
 const activityDisplay = computed(() =>
   health.value.epochsLeft === null
-    ? notAvailable.value
+    ? ''
     : String(t('governance.activeForEpochs', { n: health.value.epochsLeft })),
 );
 
-// A provably stale expiry (health.expiryStale) is not shown at all: printing
-// "Expires epoch 629" at epoch 651 beside an active DRep is misinformation.
+// Same rule for the expiry: a provably stale one (health.expiryStale) is not
+// shown at all, because printing "Expires epoch 629" at epoch 651 beside an
+// active DRep is misinformation. Nor is it papered over with a filler line —
+// "On-chain data" under a vote count says nothing the label did not already.
 const expiresDisplay = computed(() =>
   record.value?.expires_epoch_no && !health.value.expiryStale
     ? String(t('governance.expiresEpochLabel', { n: record.value.expires_epoch_no }))
-    : String(t('governance.onchainData')),
+    : '',
 );
 
 /**
