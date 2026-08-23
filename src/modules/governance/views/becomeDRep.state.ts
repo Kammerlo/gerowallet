@@ -29,9 +29,10 @@ export interface DRepRegistryRecord {
  *     on the retire panel forever, unable to register again.
  *   - The field is OPTIONAL. `=== true` would treat a row whose `registered`
  *     the backend never projected as "not registered", offering an already
- *     registered DRep a second registration: it would lock another deposit and
- *     be rejected on-chain. Given this projection has dropped fields before,
- *     that is the more dangerous failure of the two.
+ *     registered DRep a second registration: a deposit-bearing signature on a
+ *     transaction the chain rejects, and a confusing dead end. Given this
+ *     projection has dropped fields before, that is the more dangerous
+ *     failure of the two.
  *
  * So only an explicit `false` counts as retirement, which is exactly the rule
  * `useDelegationHealth` states: "`registered: false` is retirement".
