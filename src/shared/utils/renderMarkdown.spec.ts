@@ -313,6 +313,123 @@ describe('renderMarkdown, a [n] marker inside link text', () => {
   });
 });
 
+// The header above REFERENCE_MARKER_ATTR names three attribute values that vary
+// with author input and gives each a reason. A reason nothing checks is a
+// comment the next reader will relax. These enforce the two that are shaped by
+// a pattern rather than by escaping.
+describe('renderMarkdown, the author-derived attribute values keep their shape', () => {
+  it('writes nothing but digits into the reference attribute', () => {
+    const out = renderMarkdown('See [7] and [999].', { hasReference: () => true });
+    const values = [...out.matchAll(new RegExp(`${REFERENCE_MARKER_ATTR}="([^"]*)"`, 'g'))].map(m => m[1]);
+    expect(values).toEqual(['7', '999']);
+    // The claim is not "it is escaped", it is that a quote, a space or a letter
+    // cannot occur in it at all — that is what makes interpolating it safe.
+    for (const value of values) expect(value).toMatch(/^\d{1,3}$/);
+  });
+
+  it('does not treat a four-digit marker as a marker at all', () => {
+    // `\d{1,3}` is the constraint the digits-only claim rests on, so the far
+    // side of it is worth pinning too: no attribute is written, and the text
+    // survives intact rather than being silently truncated to three digits.
+    const out = renderMarkdown('See [1000].', { hasReference: () => true });
+    expect(out).toBe('<p>See [1000].</p>');
+    expect(out).not.toContain(REFERENCE_MARKER_ATTR);
+  });
+
+  it('writes nothing but a level 1..6 into the heading class', () => {
+    // `lvl` is the LENGTH of a `#{1,6}` run, never a substring of author text.
+    for (let lvl = 1; lvl <= 6; lvl += 1) {
+      expect(renderMarkdown(`${'#'.repeat(lvl)} T`)).toBe(`<div class="md-h md-h${lvl}">T</div>`);
+    }
+    // Seven hashes is not a heading, so no class is built from it.
+    expect(renderMarkdown('####### T')).toBe('<p>####### T</p>');
+  });
+});
+
+// Not an injection — the value stays escaped and stays quoted — but the
+// destination stops being the author's. A wallet that sends someone to a URL
+// nobody wrote is the same class of defect as one that renders a tag nobody
+// wrote.
+describe('renderMarkdown, a URL cannot absorb constructed markup', () => {
+  it('does not fold a code span in the URL into the href', () => {
+    const out = renderMarkdown('[t](https://a.test/`x`)');
+    // The link does not form: the reader is sent nowhere, rather than to
+    // `https://a.test/<code>x</code>`.
+    expect(out).not.toContain('<a ');
+    expect(out).not.toContain('href');
+    expect(out).toContain('x');
+  });
+
+  it('does not fold bold in the URL into the href', () => {
+    const out = renderMarkdown('[t](https://a.test/**y**.png)');
+    expect(out).not.toContain('<a ');
+    expect(out).not.toContain('href');
+    expect(out).toContain('y');
+  });
+
+  it('never emits an href containing a tag, whatever the URL was spelled like', () => {
+    const shapes = [
+      '[t](https://a.test/`x`)',
+      '[t](https://a.test/**y**.png)',
+      '[t](https://a.test/`a`/**b**/c)',
+      '[t](https://a.test/x) then [u](https://b.test/`z`)',
+    ];
+    for (const shape of shapes) {
+      const out = renderMarkdown(shape, { hasReference: () => true });
+      expect(out, shape).not.toMatch(/href="[^"]*[<>]/);
+      expect(out, shape).not.toMatch(/md-slot-/);
+    }
+  });
+
+  it('still links every URL that is only unusual, not corrupted', () => {
+    // `<`/`>` are the only characters this excludes, and an author who types
+    // one has `&lt;` here — so nothing an author can write loses its link.
+    const out = renderMarkdown('[a](https://a.test/doc[12].pdf) [b](https://b.test/x?q=1&y=2) [c](https://c.test/a<b)');
+    expect(out).toContain('href="https://a.test/doc[12].pdf"');
+    expect(out).toContain('href="https://b.test/x?q=1&amp;y=2"');
+    expect(out).toContain('href="https://c.test/a&lt;b"');
+    expect(out.match(/<a /g)).toHaveLength(3);
+  });
+});
+
+// renderBlocks recursed once per blockquote level and renderList once per
+// indentation level, both driven by author text: `'> '.repeat(5000)` threw
+// RangeError. The throw lands inside the computed that renders a proposal body,
+// so a crafted action blanked the proposal view for everyone who opened it.
+describe('renderMarkdown, nesting depth is bounded', () => {
+  it('survives a blockquote nested thousands deep, with the text still in the output', () => {
+    const out = renderMarkdown(`${'> '.repeat(5000)}ruinous`);
+    expect(out).toContain('ruinous');
+    // Capped, not unbounded — and the quote markers past the cap are visible
+    // text rather than dropped content.
+    expect((out.match(/<blockquote>/g) ?? []).length).toBeLessThanOrEqual(16);
+    expect(out).toContain('&gt;');
+  });
+
+  it('survives a list indented thousands deep, keeping every single item', () => {
+    const lines: string[] = [];
+    for (let i = 0; i < 5000; i += 1) lines.push(`${' '.repeat(i)}- item${i}`);
+    const out = renderMarkdown(lines.join('\n'));
+    expect((out.match(/<li>/g) ?? []).length).toBe(5000);
+    expect(out).toContain('item0');
+    expect(out).toContain('item4999');
+    expect((out.match(/<ul>/g) ?? []).length).toBeLessThanOrEqual(16);
+  });
+
+  it('leaves nesting a real document reaches exactly as it was', () => {
+    expect(renderMarkdown('> > deep enough')).toBe(
+      '<blockquote><blockquote><p>deep enough</p></blockquote></blockquote>',
+    );
+    expect(renderMarkdown('- a\n  - b\n    - c')).toBe(
+      '<ul><li>a<ul><li>b<ul><li>c</li></ul></li></ul></li></ul>',
+    );
+    // A list inside a quote, the deepest shape the mainnet census found.
+    expect(renderMarkdown('> - a\n>   - b')).toBe(
+      '<blockquote><ul><li>a<ul><li>b</li></ul></li></ul></blockquote>',
+    );
+  });
+});
+
 // Governance metadata is authored by whoever submitted the action — anyone can
 // submit one. These cases pin the escape-first contract for every construct the
 // governance surface added, because a table cell or a quote must not become an

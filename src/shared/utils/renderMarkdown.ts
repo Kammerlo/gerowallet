@@ -4,10 +4,14 @@
  * SAFETY MODEL (do not change the order): ALL input is HTML-escaped FIRST, then
  * a small markdown subset is rendered on the escaped text. Nothing an author
  * wrote can ever reach the DOM as markup — the only tags in the output are the
- * ones this file constructs itself. Exactly one attribute VALUE in the output
- * comes from the author, a link's `href`, and what makes it safe is stated
- * where it is built: the regex admits nothing but an `http(s)://` URL, and
- * escaping has already turned every `"` into `&quot;`.
+ * ones this file constructs itself.
+ *
+ * Author input reaches the output as escaped TEXT, which is the whole design,
+ * and in attribute VALUES, which is where the care goes. Those values are not
+ * all alike: one carries the author's own bytes and two are numbers this file
+ * computes from a match. All three are listed, with the reason each is safe,
+ * above `REFERENCE_MARKER_ATTR`. Read that list before adding an attribute, and
+ * extend it when you do.
  *
  * Both callers hand this function text they do not control:
  *  - agent chat replies (a token name inside an LLM answer), and
@@ -41,18 +45,30 @@
  * The marker is a real `<button>`, not a link. A bare `#fragment` href is not
  * a same-document jump in this app: the extension runs a HASH-MODE router, so
  * clicking one REPLACES the route and reloading that address lands on the
- * wallet home instead of the proposal. The value is written from the digits the
- * regex matched (`\d{1,3}`), so it is always a plain number and never author
- * text.
+ * wallet home instead of the proposal.
  *
- * That is this attribute's guarantee, not a blanket one, and the difference
- * matters to whoever edits next. The renderer DOES emit one attribute whose
- * value came from the author: a link's `href`. It is safe for two specific
- * reasons, and only while both hold — the link regex admits nothing but an
- * `http(s)://` URL, so no `javascript:` or `data:` value can reach it, and
- * escaping ran first, so every `"` inside it is already `&quot;` and the value
- * cannot close its own quote. Every other attribute in the output is a
- * constant this file writes.
+ * ATTRIBUTE VALUES THAT VARY WITH AUTHOR INPUT. Three, and each is safe for its
+ * own reason. All three reasons must keep holding; none of them covers another,
+ * so weakening one is not paid for by the other two:
+ *
+ *  1. a link's `href` — the ONLY one that carries the author's own bytes. Two
+ *     things make it safe. The link pattern admits nothing but an `http(s)://`
+ *     URL, so no `javascript:` or `data:` value can reach it; and escaping ran
+ *     first, so every `"` inside it is already `&quot;` and the value cannot
+ *     close the quote it sits in. The same pattern also stops the destination
+ *     at `<` or `>` so it cannot absorb this file's own markup — that one is
+ *     about a correct destination rather than injection, and it is argued
+ *     where `LINK` is built.
+ *  2. this attribute, `data-md-ref` — written from a `\d{1,3}` match put
+ *     through `Number()`. At most three DIGITS: it cannot contain a quote, a
+ *     space or a letter at all, so there is nothing in it to escape.
+ *  3. a heading's `class="md-h md-h{lvl}"` — `lvl` is the LENGTH of a `#{1,6}`
+ *     run, so it is an integer 1..6 and never a substring of author text.
+ *
+ * Everything else this file writes as an attribute is a literal constant:
+ * `target`, `rel`, `type`, `class="md-ref"` and `class="md-table"`. That list
+ * and the three above are the whole set — `grep '="'` over this file to check
+ * it after any change, because the next reader will trust what is written here.
  */
 export const REFERENCE_MARKER_ATTR = 'data-md-ref';
 
@@ -113,7 +129,37 @@ function escapeHtml(s: string): string {
  */
 const INLINE_TEXT = /(?:[^[\]]|\[[^[\]]*\])/.source;
 const IMAGE = new RegExp(`!\\[${INLINE_TEXT}*\\]\\([^\\s)]*\\)`, 'g');
-const LINK = new RegExp(`\\[(${INLINE_TEXT}+)\\]\\((https?:\\/\\/[^\\s)]+)\\)`, 'g');
+
+/**
+ * A link's destination stops at `<` or `>`. That is what keeps this file's own
+ * markup out of an `href`.
+ *
+ * Code spans and bold have already been rendered INTO the string by the time
+ * this runs, so `[t](https://a.test/`x`)` reads here as
+ * `[t](https://a.test/<md-slot-0>)`, and `**y**` in a URL reads as
+ * `<strong>y</strong>`. A destination class of `[^\s)]+` swallowed those, and
+ * the anchor came out pointing at `https://a.test/<code>x</code>`. Not an
+ * injection — the value stayed escaped and stayed quoted — but a destination
+ * the author never wrote, and a wallet must not hand a user one of those.
+ *
+ * Of the two honest outcomes, this is the one that sends the reader nowhere:
+ * the link simply does not form and the line stays visible literal text. The
+ * other, resolving to the author's literal URL, would mean matching links
+ * BEFORE code spans, and then an anchor could form inside a `code` span — a
+ * strictly worse trade, because "nothing formats inside code" is the rule the
+ * inline ordering exists to protect.
+ *
+ * The only links it costs are the ones that were already coming out corrupted.
+ * Escaping ran first, so an author who typed `<` in a URL arrives here as
+ * `&lt;` and still matches — every raw `<` left in the string at this point was
+ * written by this file, not by them. So the exclusion can only ever reject a
+ * destination that this renderer had already rewritten.
+ *
+ * `IMAGE` keeps the wider class on purpose: it must stay a SUPERSET of this
+ * pattern (see `INLINE_TEXT`), and it builds no attribute at all, since its
+ * match is held verbatim as text.
+ */
+const LINK = new RegExp(`\\[(${INLINE_TEXT}+)\\]\\((https?:\\/\\/[^\\s<>)]+)\\)`, 'g');
 
 /** Placeholder shape. Angle-bracketed on purpose — see `renderInline`. */
 const SLOT = 'md-slot-';
@@ -189,9 +235,11 @@ function renderInline(escaped: string, options: RenderMarkdownOptions): string {
   s = s.replace(IMAGE, match => lift(slots, match));
 
   // links [text](http(s)://url) only - any other scheme is left as literal text.
-  // `url` is the one author-derived attribute value this renderer emits: the
-  // pattern restricts the scheme, and escaping already turned every `"` in it
-  // into `&quot;`, so it cannot close the quote it sits in.
+  // `url` is the one attribute value in this renderer that carries the author's
+  // own bytes: the pattern restricts the scheme, escaping already turned every
+  // `"` in it into `&quot;` so it cannot close the quote it sits in, and the
+  // pattern stops at `<`/`>` so it cannot absorb markup. See `LINK` and
+  // `REFERENCE_MARKER_ATTR`.
   s = s.replace(LINK, (_m, text, url) =>
     lift(slots, `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`),
   );
@@ -202,14 +250,39 @@ function renderInline(escaped: string, options: RenderMarkdownOptions): string {
     s = s.replace(/\[(\d{1,3})\]/g, (marker, digits) => {
       const index = Number(digits);
       if (!has(index)) return marker;
-      // A button, not an anchor: see REFERENCE_MARKER_ATTR. The only attribute
-      // value that varies is `index`, which came from `\d{1,3}`.
+      // A button, not an anchor: see REFERENCE_MARKER_ATTR. The only value that
+      // varies in THIS tag is `index`, and it came from `\d{1,3}`.
       return `<button type="button" class="md-ref" ${REFERENCE_MARKER_ATTR}="${index}">${marker}</button>`;
     });
   }
 
   return restoreSlots(s, slots);
 }
+
+/**
+ * How many levels of block nesting may open before nesting stops and flattening
+ * begins. Blockquotes and list indentation share this budget, because they
+ * share a call stack.
+ *
+ * Both `renderBlocks` and `renderList` recurse once per level, and the level
+ * count is author text. Uncapped, `'> '.repeat(5000)` — a few bytes of CIP-108
+ * metadata — raises `RangeError: Maximum call stack size exceeded`, and about
+ * 20,000 levels of list indentation does the same. That throw happens inside
+ * the computed that renders a proposal body, so the proposal view breaks for
+ * everyone who opens that action. Anyone can submit a governance action, so
+ * this is reachable, not theoretical.
+ *
+ * 16 sits in the wide gap between the two: no real document reaches it (a
+ * 16-deep list has spent 32 columns on indentation before its first word, and a
+ * 16-deep quote 32 characters on `>` markers), and it is orders of magnitude
+ * below the thousands of frames it takes to exhaust the stack.
+ *
+ * Past the cap, content is KEPT and only the extra nesting is dropped: a quote
+ * marker stays the literal `>` it already is in the escaped text, and an
+ * over-indented item becomes an item at the deepest open list. Dropping a
+ * proposal's words because they were indented would be its own kind of lie.
+ */
+const MAX_BLOCK_DEPTH = 16;
 
 interface ListItemLine {
   indent: number;
@@ -238,6 +311,7 @@ function renderList(
   lines: string[],
   start: number,
   options: RenderMarkdownOptions,
+  depth: number,
 ): { html: string; next: number } {
   const first = listAt(lines[start]) as ListItemLine;
   const tag = first.ordered ? 'ol' : 'ul';
@@ -249,7 +323,14 @@ function renderList(
     if (!item || item.indent < first.indent) break;
     if (item.indent > first.indent) {
       if (!items.length) break;
-      const nested = renderList(lines, i, options);
+      if (depth >= MAX_BLOCK_DEPTH) {
+        // At the cap (see MAX_BLOCK_DEPTH): keep the item's words, spend no
+        // further stack on its indentation. It joins this list as a sibling.
+        items.push(renderInline(item.text, options));
+        i += 1;
+        continue;
+      }
+      const nested = renderList(lines, i, options, depth + 1);
       items[items.length - 1] += nested.html;
       i = nested.next;
       continue;
@@ -287,6 +368,8 @@ function renderTable(
   start: number,
   options: RenderMarkdownOptions,
 ): { html: string; next: number } {
+  // No depth parameter: a table's cells are inline-only, so this never recurses
+  // back into the block pass and cannot deepen the stack.
   const header = splitRow(lines[start]);
   let i = start + 2;
   const body: string[][] = [];
@@ -306,8 +389,14 @@ function renderTable(
   };
 }
 
-/** Block-level pass over already-escaped lines. */
-function renderBlocks(lines: string[], options: RenderMarkdownOptions): string {
+/**
+ * Block-level pass over already-escaped lines.
+ *
+ * `depth` is how many block levels are already open above these lines, and it
+ * is what keeps author-controlled nesting off the call stack — see
+ * MAX_BLOCK_DEPTH.
+ */
+function renderBlocks(lines: string[], options: RenderMarkdownOptions, depth: number): string {
   const out: string[] = [];
   let para: string[] = [];
   let i = 0;
@@ -345,15 +434,18 @@ function renderBlocks(lines: string[], options: RenderMarkdownOptions): string {
       continue;
     }
 
-    // `>` was escaped to `&gt;` by the time it gets here.
-    if (/^&gt;\s?/.test(trimmed)) {
+    // `>` was escaped to `&gt;` by the time it gets here. At MAX_BLOCK_DEPTH the
+    // marker stops being a marker: the line falls through to the paragraph
+    // branch below, where its `>` characters render as the visible text they
+    // already are. Nothing is dropped, and nothing recurses.
+    if (depth < MAX_BLOCK_DEPTH && /^&gt;\s?/.test(trimmed)) {
       flushPara();
       const inner: string[] = [];
       while (i < lines.length && /^&gt;\s?/.test(lines[i].trim())) {
         inner.push(lines[i].trim().replace(/^&gt;\s?/, ''));
         i += 1;
       }
-      out.push(`<blockquote>${renderBlocks(inner, options)}</blockquote>`);
+      out.push(`<blockquote>${renderBlocks(inner, options, depth + 1)}</blockquote>`);
       continue;
     }
 
@@ -367,7 +459,7 @@ function renderBlocks(lines: string[], options: RenderMarkdownOptions): string {
 
     if (listAt(raw)) {
       flushPara();
-      const list = renderList(lines, i, options);
+      const list = renderList(lines, i, options, depth + 1);
       out.push(list.html);
       i = list.next;
       continue;
@@ -384,5 +476,5 @@ function renderBlocks(lines: string[], options: RenderMarkdownOptions): string {
 /** Render a markdown document to a safe HTML string. */
 export function renderMarkdown(src: string, options: RenderMarkdownOptions = {}): string {
   const normalized = (src || '').replace(/\r\n/g, '\n');
-  return renderBlocks(escapeHtml(normalized).split('\n'), options);
+  return renderBlocks(escapeHtml(normalized).split('\n'), options, 0);
 }
