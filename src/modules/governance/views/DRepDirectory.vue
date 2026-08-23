@@ -258,11 +258,18 @@ import {
   epochInflow,
 } from '@/shared/utils/drepView';
 import { parseDRepId, sameDRep, toCip129 } from '@/shared/utils/drepId';
-import { compareLovelace } from '@/shared/utils/lovelace';
+import { compareLovelace, toLovelace } from '@/shared/utils/lovelace';
 import { formatInt } from '@/shared/utils/format';
 import filters from '@/shared/utils/filters';
 import networks from '@/utils/networks';
 import { debugLog } from '@/utils/debug';
+import snackbar from '@/plugins/snackbar';
+import {
+  onPendingDRepDelegation,
+  takePendingDRepDelegation,
+  type PendingDRep,
+  type PendingDRepDelegation,
+} from '@/shared/utils/pendingDelegation';
 import GButton from '@/shared/components/GButton/GButton.vue';
 import EmptyState from '@/shared/components/feedback/EmptyState.vue';
 import ErrorState from '@/shared/components/feedback/ErrorState.vue';
@@ -588,28 +595,48 @@ async function onDelegatePredefined(kind: PredefinedDRep): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// `?choice=` handoff from MyGovernance
+// Deferred delegation intents
 // ---------------------------------------------------------------------------
 
 /**
- * MyGovernance's locked-rewards hero routes its abstain / no-confidence cards
- * here as `?choice=`, rather than building the certificate inline. This picks
- * that up, points at the matching card and opens the SAME predefined delegate
- * flow the cards themselves use.
+ * Two surfaces hand a delegation to this page rather than building it
+ * themselves, and both land in the same queue:
  *
- * It deliberately does not fire on mount. A tab opened straight from that hero
- * mounts well before its wallet data lands, and building then would hit a null
- * `epochParams` or, worse, mistake a not-yet-loaded account for an unregistered
- * stake key and attach a registration certificate the chain would reject. So it
- * waits for the same readiness signal the side-panel handoff waits for.
+ *  - MyGovernance's locked-rewards hero routes its abstain / no-confidence cards
+ *    here as `?choice=`.
+ *  - The side panel has no signing surface for certificates (hardware, PassKey
+ *    and Keystone all live in DRepDelegateDialog), so it parks the choice via
+ *    `setPendingDRepDelegation` and opens this route.
+ *
+ * Neither fires on mount. A tab opened straight from either surface mounts well
+ * before its wallet data lands, and building then would hit a null `epochParams`
+ * or, worse, mistake a not-yet-loaded account for an unregistered stake key and
+ * attach a registration certificate the chain would reject. Both wait on
+ * `delegationInputsReady`.
  */
-const pendingChoice = ref<PredefinedDRep | null>(null);
+type PendingIntent =
+  | { kind: PredefinedDRep }
+  | { kind: 'drep'; drep: PendingDRep };
+
+const pendingIntent = ref<PendingIntent | null>(null);
 const highlightedChoice = ref<PredefinedDRep | null>(null);
 const predefinedEl = ref<HTMLElement | null>(null);
 
 function asChoice(value: unknown): PredefinedDRep | null {
   return value === 'abstain' || value === 'noConfidence' ? value : null;
 }
+
+/** Narrow a parked handoff to something this page can act on. */
+function asIntent(pending: PendingDRepDelegation): PendingIntent | null {
+  if (pending.kind === 'drep') {
+    return pending.drep?.id ? { kind: 'drep', drep: pending.drep } : null;
+  }
+  const choice = asChoice(pending.kind);
+  return choice ? { kind: choice } : null;
+}
+
+/** Unsubscribe for the storage listener below. */
+let stopPendingListener: (() => void) | null = null;
 
 const delegationInputsReady = computed(
   () =>
@@ -621,15 +648,41 @@ const delegationInputsReady = computed(
     !!walletStore.utxos,
 );
 
-async function runPendingChoice(): Promise<void> {
-  const choice = pendingChoice.value;
-  if (!choice || !delegationInputsReady.value) return;
-  pendingChoice.value = null; // claim it before any await — the watcher can re-fire
-  await delegateToPredefined(choice);
+async function runPendingIntent(): Promise<void> {
+  const intent = pendingIntent.value;
+  if (!intent || !delegationInputsReady.value) return;
+  pendingIntent.value = null; // claim it before any await — the watcher can re-fire
+
+  if (intent.kind !== 'drep') {
+    await delegateToPredefined(intent.kind);
+    return;
+  }
+
+  const drep = intent.drep;
+  // Re-delegating to the DRep you already have builds a transaction that changes
+  // nothing. Arriving from the panel that would look exactly like the bug this
+  // handoff exists to fix, so say it out loud instead of silently doing nothing.
+  if (sameDRep(drep.id, walletStore.account?.drep_id)) {
+    snackbar.setError(String(t('governance.alreadyDelegatedToDRep')));
+    return;
+  }
+
+  await delegateToDRep({
+    id: drep.id,
+    name: drep.name,
+    image: drep.image,
+    delegators: drep.delegators,
+    votes: drep.votes,
+    // Parked records predate the BigInt precision fix, so this arrives as a
+    // string, a number or a bigint. toLovelace normalises all three.
+    voting_power: toLovelace(drep.voting_power),
+    hex: drep.hex,
+    has_script: drep.has_script,
+  });
 }
 
 watch(delegationInputsReady, () => {
-  void runPendingChoice();
+  void runPendingIntent();
 });
 
 /** Bring the named card into view once the list it sits under has rendered. */
@@ -648,22 +701,39 @@ function revealChoice(): void {
 // The cards only exist once rows have rendered, so the scroll waits for data.
 watch(rows, () => revealChoice());
 
-onMounted(() => {
+onMounted(async () => {
   // A `?drep=` deep link from global search pre-fills the search box, exactly
   // as the pre-split surface did.
   const query = instance?.proxy?.$route?.query?.['drep'];
   if (typeof query === 'string' && query) search.value = query;
 
+  // Keep listening for a handoff parked while this tab is already open: the
+  // panel focuses an existing dashboard tab sitting on this route, so nothing
+  // remounts and onMounted never runs again.
+  stopPendingListener = onPendingDRepDelegation(pending => {
+    pendingIntent.value = asIntent(pending);
+    void runPendingIntent();
+  });
+
   const choice = asChoice(instance?.proxy?.$route?.query?.['choice']);
   if (choice) {
-    pendingChoice.value = choice;
+    pendingIntent.value = { kind: choice };
     highlightedChoice.value = choice;
     // Strip the query once claimed. Leaving it would re-open a signing dialog
     // on every refresh or back-navigation to this URL, which the user never
     // asked for a second time.
     router.replace({ name: 'governanceDReps' }).catch(() => undefined);
-    void runPendingChoice();
+  } else {
+    // Only read the parked handoff when the URL is not already carrying an
+    // intent: takePendingDRepDelegation consumes it, and clearing one the user
+    // will not see acted on would lose it silently.
+    const parked = await takePendingDRepDelegation();
+    if (parked) {
+      pendingIntent.value = asIntent(parked);
+      highlightedChoice.value = asChoice(parked.kind);
+    }
   }
+  void runPendingIntent();
 
   void load(1);
 
@@ -679,6 +749,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (searchTimer) clearTimeout(searchTimer);
+  stopPendingListener?.();
+  stopPendingListener = null;
 });
 </script>
 
