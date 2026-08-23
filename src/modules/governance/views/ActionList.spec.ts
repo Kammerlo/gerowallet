@@ -1,0 +1,238 @@
+// The stat strip is a projection of the votes join, and the only thing worth
+// pinning down about it is HONESTY: an unreachable votes endpoint must read as
+// "not available", never as "0 actions awaiting your vote". That difference is
+// the whole reason the store distinguishes `unavailable` from `ready`, and this
+// file proves the view actually carries the distinction through to the DOM.
+//
+// Everything with a network call or a router behind it is mocked. The Vuetify
+// layer is stubbed; GButton / EmptyState / ErrorState are `<script setup>`
+// imports that Vue 2.7 resolves lexically, so they render for real.
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mount, type Wrapper } from '@vue/test-utils';
+import Vue from 'vue';
+
+const listProposals = vi.fn();
+const getProposalVotes = vi.fn();
+
+vi.mock('@/api/governance-api', () => ({
+  default: {
+    listProposals: (...args: unknown[]) => listProposals(...args),
+    getProposal: vi.fn(),
+    getVotingSummary: vi.fn(),
+    getProposalVotes: (...args: unknown[]) => getProposalVotes(...args),
+  },
+}));
+
+const getDRepById = vi.fn();
+vi.mock('@/api/blockchain-api', () => ({
+  default: { getDRepById: (...args: unknown[]) => getDRepById(...args) },
+}));
+
+vi.mock('@/modules/governance/dialogs/CastVoteDialog.vue', () => ({
+  default: { name: 'CastVoteDialog', props: ['isOpen', 'actions'], render: () => null },
+}));
+
+vi.mock('vue-router/composables', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+
+// @ts-ignore — tsconfig ships no `*.vue` shim; vite resolves this fine.
+import ActionList from './ActionList.vue';
+import governanceActionsStore from '@/stores/governanceActionsStore';
+import { walletStore } from '@/stores/walletStore';
+import NetworkStore from '@/stores/networkStore';
+
+/** Echoes params so a wrong interpolated number cannot hide inside the key. */
+const $t = (key: string, values?: Record<string, unknown>): string =>
+  values ? `${key}:${JSON.stringify(values)}` : key;
+
+const DREP = 'drep1ytjyvm958ywjkp57f8wm3havj72lc653tp7ajttxxt6ftgcmcmdk2';
+
+function proposal(id: string, over: Record<string, unknown> = {}) {
+  return {
+    govActionId: id,
+    txHash: id.split('#')[0].padEnd(64, '0'),
+    index: 0,
+    type: 'InfoAction',
+    status: 'active',
+    expiresEpoch: 660,
+    anchorUrl: 'https://example.test/a.json',
+    title: `Action ${id}`,
+    ...over,
+  };
+}
+
+function votesPage(rows: Array<{ drepId: string; vote: string }>) {
+  return {
+    items: rows.map(r => ({ voterRole: 'DRep', voterHash: null, txHash: null, ...r })),
+    page: 1,
+    pageSize: 200,
+    total: rows.length,
+  };
+}
+
+function mountPage(): Wrapper<Vue> {
+  return mount(ActionList, {
+    mocks: { $t },
+    stubs: {
+      'v-icon': true,
+      'v-chip': true,
+      'v-chip-group': true,
+      'v-skeleton-loader': true,
+      'v-pagination': true,
+      AsOf: true,
+      'v-btn': {
+        inheritAttrs: false,
+        template: '<button v-bind="$attrs" v-on="$listeners"><slot /></button>',
+      },
+    },
+  });
+}
+
+/** Let the mounted list fetch and the votes join that follows it both settle. */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 6; i += 1) {
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await Vue.nextTick();
+  }
+}
+
+let wrapper: Wrapper<Vue> | null = null;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  governanceActionsStore.reset();
+  walletStore.loggedWallet = { chain: 'Cardano', network: 'Mainnet', stakeAddress: 'stake1uexample' } as never;
+  walletStore.keys = null;
+  walletStore.account = { drep_id: DREP } as never;
+  getDRepById.mockResolvedValue(null);
+  // Current epoch 650 against expiry 660 = 10 epochs = about 50 days.
+  vi.spyOn(NetworkStore, 'getCurrentEpoch').mockReturnValue(650);
+});
+
+afterEach(() => {
+  wrapper?.destroy();
+  wrapper = null;
+  vi.restoreAllMocks();
+});
+
+describe('ActionList stat strip', () => {
+  it('reports the awaiting count as not available when the votes endpoint is down', async () => {
+    listProposals.mockResolvedValue({
+      items: [proposal('a#0'), proposal('b#0')],
+      page: 1,
+      pageSize: 50,
+      total: 2,
+    });
+    // This is the live production case: /api/governance/* still 404s.
+    getProposalVotes.mockRejectedValue(new Error('404 Not Found'));
+
+    wrapper = mountPage();
+    await settle();
+
+    const html = wrapper.html();
+    expect(html).toContain('governance.stats.voteCheckUnavailable');
+    // The open count is real and must still render...
+    expect(html).toContain('governance.stats.open');
+    // ...but the awaiting figure must NOT have become a zero.
+    expect(governanceActionsStore.state.yourVotes.status).toBe('unavailable');
+    expect(html).toContain('common.notAvailable');
+  });
+
+  it('counts the open actions this wallet has not voted on', async () => {
+    listProposals.mockResolvedValue({
+      items: [proposal('a#0'), proposal('b#0'), proposal('c#0', { status: 'enacted' })],
+      page: 1,
+      pageSize: 50,
+      total: 3,
+    });
+    getProposalVotes.mockImplementation(async (govActionId: string) =>
+      govActionId === 'a#0' ? votesPage([{ drepId: DREP, vote: 'Yes' }]) : votesPage([]),
+    );
+
+    wrapper = mountPage();
+    await settle();
+
+    expect(governanceActionsStore.state.yourVotes.status).toBe('ready');
+    // Two open, one voted, so exactly one awaits. The settled action is neither
+    // scanned nor counted as open.
+    expect(governanceActionsStore.state.yourVotes.scanned).toBe(2);
+    const html = wrapper.html();
+    expect(html).toContain('governance.stats.awaitingYourDRep');
+    expect(html).not.toContain('governance.stats.voteCheckUnavailable');
+  });
+
+  it('labels the badge for the delegating wallet, not for a self-DRep', async () => {
+    listProposals.mockResolvedValue({ items: [proposal('a#0')], page: 1, pageSize: 50, total: 1 });
+    getProposalVotes.mockResolvedValue(votesPage([]));
+
+    wrapper = mountPage();
+    await settle();
+
+    const html = wrapper.html();
+    // The wallet delegated to someone: it is the DRep that has not voted.
+    expect(html).toContain('governance.yourDRepHasntVoted');
+    expect(html).not.toContain('governance.youHaventVoted');
+  });
+
+  it('says nothing about votes at all when the wallet has no DRep', async () => {
+    walletStore.account = { drep_id: '' } as never;
+    listProposals.mockResolvedValue({ items: [proposal('a#0')], page: 1, pageSize: 50, total: 1 });
+
+    wrapper = mountPage();
+    await settle();
+
+    expect(getProposalVotes).not.toHaveBeenCalled();
+    const html = wrapper.html();
+    expect(html).toContain('governance.stats.noVotingIdentity');
+    // No badge is claimed on the row either way.
+    expect(html).not.toContain('governance.yourDRepHasntVoted');
+    expect(html).not.toContain('governance.youHaventVoted');
+  });
+
+  it('makes no votes request for the predefined always-abstain DRep', async () => {
+    walletStore.account = { drep_id: 'drep_always_abstain' } as never;
+    listProposals.mockResolvedValue({ items: [proposal('a#0')], page: 1, pageSize: 50, total: 1 });
+
+    wrapper = mountPage();
+    await settle();
+
+    // The keyword DReps cast no votes, so there is nothing to join against.
+    expect(getProposalVotes).not.toHaveBeenCalled();
+  });
+
+  it('tints the days-left chip only once the action is actually closing soon', async () => {
+    listProposals.mockResolvedValue({
+      items: [
+        // 651 - 650 = 1 epoch = about 5 days: closing soon.
+        proposal('soon#0', { expiresEpoch: 651 }),
+        // 660 - 650 = 10 epochs = about 50 days: not soon.
+        proposal('later#0', { expiresEpoch: 660 }),
+      ],
+      page: 1,
+      pageSize: 50,
+      total: 2,
+    });
+    getProposalVotes.mockResolvedValue(votesPage([]));
+
+    wrapper = mountPage();
+    await settle();
+
+    expect(wrapper.findAll('.action-row__chip--warn')).toHaveLength(1);
+    const html = wrapper.html();
+    expect(html).toContain('governance.approxDaysLeft:{"n":5}');
+    expect(html).toContain('governance.approxDaysLeft:{"n":50}');
+    // One of the two is inside the 15-day window.
+    expect(html).toContain('governance.stats.closingWithin:{"n":15}');
+  });
+
+  it('surfaces a retryable error instead of a strip full of zeroes', async () => {
+    listProposals.mockRejectedValue(new Error('upstream down'));
+
+    wrapper = mountPage();
+    await settle();
+
+    const html = wrapper.html();
+    expect(html).toContain('upstream down');
+    // The strip is gone rather than reporting 0 open / 0 decided.
+    expect(html).not.toContain('governance.stats.open');
+  });
+});

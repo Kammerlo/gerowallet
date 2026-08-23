@@ -184,7 +184,9 @@ describe('loadYourVotes', () => {
     await store.loadYourVotes('Mainnet', { drepId: DREP_BECH32, kind: 'self' });
 
     expect(store.state.yourVotes.status).toBe('partial');
-    expect(store.state.yourVotes.resolved).toBe(2);
+    // The failed action is absent from `resolved`, so the row badge reads
+    // UNKNOWN for it rather than "has not voted".
+    expect(store.state.yourVotes.resolved).toEqual(['a0#0', 'a1#0']);
     // Two known-unvoted, and the third is not guessed at.
     expect(awaitingVoteCount(store.state.yourVotes)).toBe(2);
   });

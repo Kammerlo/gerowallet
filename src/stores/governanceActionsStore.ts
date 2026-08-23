@@ -35,6 +35,14 @@ export interface VoterIdentity {
  */
 export type YourVotesStatus = 'idle' | 'loading' | 'ready' | 'partial' | 'unavailable';
 
+/**
+ * What the join established for ONE action. `unknown` is not a failure state at
+ * the row level: it covers "outside the capped scan" as well as "the lookup did
+ * not come back", and both mean the row must stay silent rather than claim the
+ * vote was not cast.
+ */
+export type RowVoteStatus = 'unknown' | 'voted' | 'awaiting';
+
 export interface YourVotesState {
   status: YourVotesStatus;
   identityKind: VoterIdentityKind | null;
@@ -42,8 +50,12 @@ export interface YourVotesState {
   byAction: Record<string, string>;
   /** Open actions the scan covered, after the cap. */
   scanned: number;
-  /** Of those, how many actually came back. */
-  resolved: number;
+  /**
+   * govActionIds whose votes actually came back. Absence from this list means
+   * UNKNOWN, not "did not vote" — the per-row badge needs that distinction, so
+   * the ids are kept rather than just their count.
+   */
+  resolved: string[];
 }
 
 /**
@@ -83,7 +95,7 @@ export interface GovernanceActionsState {
 }
 
 function emptyYourVotes(): YourVotesState {
-  return { status: 'idle', identityKind: null, byAction: {}, scanned: 0, resolved: 0 };
+  return { status: 'idle', identityKind: null, byAction: {}, scanned: 0, resolved: [] };
 }
 
 /**
@@ -94,7 +106,7 @@ function emptyYourVotes(): YourVotesState {
  */
 export function awaitingVoteCount(yourVotes: YourVotesState): number | null {
   if (yourVotes.status !== 'ready' && yourVotes.status !== 'partial') return null;
-  return Math.max(0, yourVotes.resolved - Object.keys(yourVotes.byAction).length);
+  return Math.max(0, yourVotes.resolved.length - Object.keys(yourVotes.byAction).length);
 }
 
 const state = Vue.observable<GovernanceActionsState>({
@@ -211,12 +223,12 @@ const actions = {
       identityKind: identity.kind,
       byAction: {},
       scanned: open.length,
-      resolved: 0,
+      resolved: [],
     };
     if (!open.length) return;
 
     const byAction: Record<string, string> = {};
-    let resolved = 0;
+    const resolved: string[] = [];
 
     for (let i = 0; i < open.length; i += concurrency) {
       const batch = open.slice(i, i + concurrency);
@@ -227,16 +239,18 @@ const actions = {
       );
       results.forEach((result, j) => {
         if (result.status !== 'fulfilled') return;
-        resolved += 1;
+        const govActionId = batch[j].govActionId;
+        resolved.push(govActionId);
         // Match on the credential, never on the display string: the wallet holds
         // one id form and the vote row may carry another.
         const match = (result.value?.items ?? []).find(vote => sameDRep(vote.drepId, identity.drepId));
-        if (match) byAction[batch[j].govActionId] = String(match.vote);
+        if (match) byAction[govActionId] = String(match.vote);
       });
     }
 
     state.yourVotes = {
-      status: resolved === 0 ? 'unavailable' : resolved < open.length ? 'partial' : 'ready',
+      status:
+        resolved.length === 0 ? 'unavailable' : resolved.length < open.length ? 'partial' : 'ready',
       identityKind: identity.kind,
       byAction,
       scanned: open.length,
