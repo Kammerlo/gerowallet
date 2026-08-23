@@ -77,64 +77,79 @@
           />
         </div>
 
+        <!-- CIP-108 bodies are markdown documents, not captions: headings,
+             tables and lists all appear in real proposals. Everything is
+             HTML-escaped before a single markdown rule runs, so a proposal
+             author cannot get markup into this page. -->
         <section v-if="action.abstractText" class="action-detail__section">
           <h2 class="t-heading">{{ $t('governance.abstract') }}</h2>
-          <p class="t-body-2 action-detail__prose">{{ action.abstractText }}</p>
+          <div class="g-prose" v-html="renderedAbstract"></div>
         </section>
         <section v-if="action.motivation" class="action-detail__section">
           <h2 class="t-heading">{{ $t('governance.motivation') }}</h2>
-          <p class="t-body-2 action-detail__prose">{{ action.motivation }}</p>
+          <div class="g-prose" v-html="renderedMotivation"></div>
         </section>
         <section v-if="action.rationale" class="action-detail__section">
           <h2 class="t-heading">{{ $t('governance.rationale') }}</h2>
-          <p class="t-body-2 action-detail__prose">{{ action.rationale }}</p>
+          <div class="g-prose" v-html="renderedRationale"></div>
         </section>
 
         <section v-if="anchorHref || referenceLinks.length" class="action-detail__section">
           <h2 class="t-heading">{{ $t('governance.references') }}</h2>
-          <div class="action-detail__links">
-            <a
-              v-if="anchorHref"
-              :href="anchorHref"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="action-detail__link t-body-2"
+          <!-- The anchor document is not a numbered reference, so it sits
+               outside the list the [n] markers point into. -->
+          <a
+            v-if="anchorHref"
+            :href="anchorHref"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="action-detail__link t-body-2"
+          >
+            <v-icon x-small class="mr-1">mdi-file-document-outline</v-icon>
+            {{ $t('governance.metadataDocument') }}
+          </a>
+          <ol v-if="referenceLinks.length" class="action-detail__references">
+            <li
+              v-for="link in referenceLinks"
+              :id="`gov-ref-${link.number}`"
+              :key="`${link.href}-${link.number}`"
+              class="action-detail__reference"
             >
-              <v-icon x-small class="mr-1">mdi-file-document-outline</v-icon>
-              {{ $t('governance.metadataDocument') }}
-            </a>
-            <a
-              v-for="(link, i) in referenceLinks"
-              :key="`${link.href}-${i}`"
-              :href="link.href"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="action-detail__link t-body-2"
-            >
-              <v-icon x-small class="mr-1">{{ link.icon }}</v-icon>
-              {{ link.label }}
-            </a>
-          </div>
+              <a
+                :href="link.href"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="action-detail__link t-body-2"
+              >
+                <v-icon x-small class="mr-1">{{ link.icon }}</v-icon>
+                {{ link.label }}
+              </a>
+            </li>
+          </ol>
+          <p class="t-caption action-detail__note">{{ $t('governance.externalLinksNote') }}</p>
         </section>
       </div>
 
-      <!-- Positions (cast votes) -->
+      <!-- Positions (cast votes).
+           Each row is that voter's STANDING position: the endpoint collapses
+           re-votes, so there is exactly one row per voter and no history to
+           order (verified against mainnet, 52 rows / 52 distinct voters). It
+           does carry a block time, which is where the per-row date comes from
+           wherever the projection passes it through. -->
       <div v-else-if="tab === 'positions'" class="action-detail__body">
-        <EmptyState v-if="!state.currentVotes.length" :message="$t('governance.noVotesYet')" />
-        <div v-else class="action-detail__votes">
-          <!-- The votes endpoint returns one row per voter with no timestamp or
-               epoch, so a re-vote cannot be ordered against its predecessor.
-               What IS certain is that each row is that voter's standing
-               position, and that is all this says. -->
-          <p class="action-detail__votes-note t-caption">{{ $t('governance.positionsLatestOnly') }}</p>
-          <div v-for="(vote, i) in state.currentVotes" :key="i" class="action-detail__vote-row">
-            <span class="t-caption action-detail__vote-role">{{ roleLabel(vote.voterRole) }}</span>
-            <span class="g-mono t-caption action-detail__vote-voter">{{ voterId(vote) }}</span>
-            <span class="t-body-2" :class="`action-detail__vote--${String(vote.vote).toLowerCase()}`">
-              {{ voteLabel(vote.vote) }}
-            </span>
-          </div>
-        </div>
+        <PositionsPanel
+          :votes="state.currentVotes"
+          :total="state.votesTotal"
+          :loading="state.votesLoading"
+          :error="state.votesError"
+          :truncated="state.votesTruncated"
+          :identity="voterIdentity"
+          :action-open="actionIsOpen"
+          :chain="chain"
+          :network="network"
+          @retry="loadVotes()"
+          @open-drep="openDRep"
+        />
       </div>
 
       <!-- On-chain payload -->
@@ -165,18 +180,22 @@ import type { Composition } from '@/shared/utils/govTally';
 import { evaluateThresholds } from '@/shared/utils/govThresholds';
 import type { BodyResult, GovThresholdParams } from '@/shared/utils/govThresholds';
 import { epochsRemaining, daysRemaining, isOpen } from '@/shared/utils/govLifecycle';
-import { toSafeLinks, safeExternalHref, parseSafeUrl } from '@/shared/utils/externalLink';
+import { safeExternalHref } from '@/shared/utils/externalLink';
+import { renderMarkdown } from '@/shared/utils/renderMarkdown';
+import { governanceStatus } from '@/shared/composables/useGovernanceStatus';
 import { useTranslation } from '@/shared/composables/useTranslation';
 import StatusPill from '@/modules/governance/components/actions/StatusPill.vue';
 import AnchorBadge from '@/modules/governance/components/actions/AnchorBadge.vue';
 import AsOf from '@/modules/governance/components/actions/AsOf.vue';
 import BodyTallyCard from '@/modules/governance/components/actions/BodyTallyCard.vue';
 import VoteCta from '@/modules/governance/components/actions/VoteCta.vue';
+import PositionsPanel from '@/modules/governance/components/actions/PositionsPanel.vue';
+import type { PositionIdentity } from '@/modules/governance/components/actions/positions';
+import { referenceHrefResolver, toReferenceLinks } from '@/modules/governance/components/actions/references';
 import CastVoteDialog from '@/modules/governance/dialogs/CastVoteDialog.vue';
 import EmptyState from '@/shared/components/feedback/EmptyState.vue';
 import ErrorState from '@/shared/components/feedback/ErrorState.vue';
 import GButton from '@/shared/components/GButton/GButton.vue';
-import type { GovVote } from '@/api/governance.types';
 
 const TABS = [
   { id: 'overview', labelKey: 'governance.overview' },
@@ -191,6 +210,7 @@ const { t } = useTranslation();
 const state = governanceActionsStore.state;
 
 const network = computed(() => String(walletStore.loggedWallet?.network ?? ''));
+const chain = computed(() => String(walletStore.loggedWallet?.chain ?? ''));
 const currentEpoch = computed(() => NetworkStore.getCurrentEpoch());
 
 const govActionId = computed(() =>
@@ -363,12 +383,45 @@ const anchorFailureReason = computed<'fetchFailed' | null>(() => {
 /** Anchor and reference URLs are author-controlled — everything goes through the safe-link parser. */
 const anchorHref = computed(() => safeExternalHref(action.value?.anchorUrl));
 
-const referenceLinks = computed(() => {
-  const references = action.value?.references ?? [];
-  return toSafeLinks(references).map((link, i) => {
-    const label = references[i]?.label;
-    return { ...link, label: label || parseSafeUrl(link.href)?.hostname || link.href };
+const referenceLinks = computed(() => toReferenceLinks(action.value?.references));
+
+const referenceHref = computed(() => referenceHrefResolver(referenceLinks.value));
+
+/**
+ * Proposal prose, rendered through the shared escape-first markdown renderer.
+ *
+ * Anyone can submit a governance action, so these three fields are
+ * attacker-controlled. `renderMarkdown` escapes every byte to HTML entities
+ * BEFORE applying any markdown rule, which is the only reason `v-html` is safe
+ * here — it must never receive anything but this function's output.
+ */
+function renderProse(source: string | null | undefined): string {
+  return source ? renderMarkdown(source, { referenceHref: referenceHref.value }) : '';
+}
+
+const renderedAbstract = computed(() => renderProse(action.value?.abstractText));
+const renderedMotivation = computed(() => renderProse(action.value?.motivation));
+const renderedRationale = computed(() => renderProse(action.value?.rationale));
+
+const actionIsOpen = computed(() => isOpen(action.value?.status));
+
+/**
+ * Whose position the panel should call out.
+ *
+ * A wallet delegated to its OWN registered DRep votes as itself, and the two
+ * read differently ("You have not voted" vs "Your DRep has not voted"), so the
+ * kind travels with the id. Derived from state already in hand — this costs no
+ * request, and the keyword DReps are handled downstream rather than filtered
+ * out here, because "your delegation is a standing position" is itself the
+ * honest answer for them.
+ */
+const voterIdentity = computed<PositionIdentity | null>(() => {
+  const status = governanceStatus({
+    account: walletStore.account,
+    ownDRepIds: walletStore.keys?.drep129,
   });
+  if (!status.drepId) return null;
+  return { drepId: status.drepId, kind: status.isSelf ? 'self' : 'delegated' };
 });
 
 const formattedGovAction = computed(() => {
@@ -378,21 +431,6 @@ const formattedGovAction = computed(() => {
     return String(action.value?.govAction);
   }
 });
-
-function roleLabel(role: string): string {
-  const key = { DRep: 'governance.dRep', SPO: 'governance.spo', ConstitutionalCommittee: 'governance.constitutionalCommittee' }[role];
-  return key ? String(t(key)) : role;
-}
-
-function voteLabel(vote: string): string {
-  const key = { Yes: 'common.yes', No: 'common.no', Abstain: 'governance.abstain' }[vote];
-  return key ? String(t(key)) : vote;
-}
-
-function voterId(vote: GovVote): string {
-  const id = vote.drepId || vote.voterHash || '';
-  return id.length > 20 ? `${id.slice(0, 12)}…${id.slice(-6)}` : id;
-}
 
 function setTab(next: string): void {
   if (next === tab.value) return;
@@ -407,13 +445,24 @@ function goBack(): void {
   router.push({ name: 'governanceActions' });
 }
 
-// Votes are loaded lazily, the first time the positions tab is opened.
+function loadVotes(): void {
+  governanceActionsStore.loadActionVotes(govActionId.value, network.value);
+}
+
+/** Only DReps have a profile page; the row withholds the affordance otherwise. */
+function openDRep(drepId: string): void {
+  if (!drepId) return;
+  router.push({ name: 'governanceDRep', params: { drepId } }).catch(() => undefined);
+}
+
+// Votes are loaded lazily, the first time the positions tab is opened. The
+// guard is `votesLoaded`, not `currentVotes.length`: an action nobody has voted
+// on, and one whose lookup failed, would otherwise both re-fetch on every tab
+// switch. Retrying after a failure is the retry button's job.
 watch(
   () => tab.value,
   next => {
-    if (next === 'positions' && !state.currentVotes.length) {
-      governanceActionsStore.loadActionVotes(govActionId.value, network.value);
-    }
+    if (next === 'positions' && !state.votesLoaded && !state.votesLoading) loadVotes();
   },
 );
 
@@ -493,7 +542,7 @@ onMounted(() => reload());
   padding: var(--g-s-4);
   color: var(--g-text-2);
 }
-.action-detail__votes-note {
+.action-detail__note {
   margin: 0 0 var(--g-s-1);
   color: var(--g-text-3);
 }
@@ -507,16 +556,21 @@ onMounted(() => reload());
   flex-direction: column;
   gap: var(--g-s-2);
 }
-.action-detail__prose {
+.action-detail__references {
   margin: 0;
-  color: var(--g-text-2);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.action-detail__links {
+  padding-left: var(--g-s-5);
   display: flex;
   flex-direction: column;
   gap: var(--g-s-1);
+}
+.action-detail__reference::marker {
+  color: var(--g-text-3);
+}
+/* Jumping from a [n] marker in the prose highlights its entry — no JS, no
+   animation, just the fragment the marker points at. */
+.action-detail__reference:target {
+  background: var(--g-raised);
+  border-radius: var(--g-r-control);
 }
 .action-detail__link {
   display: inline-flex;
@@ -527,41 +581,6 @@ onMounted(() => reload());
 }
 .action-detail__link:hover {
   color: var(--g-text-1);
-}
-.action-detail__votes {
-  display: flex;
-  flex-direction: column;
-  gap: var(--g-s-1);
-}
-.action-detail__vote-row {
-  display: flex;
-  align-items: center;
-  gap: var(--g-s-3);
-  padding: var(--g-s-2) var(--g-s-3);
-  background: var(--g-surface);
-  border: 1px solid var(--g-hairline-1);
-  border-radius: var(--g-r-control);
-}
-.action-detail__vote-role {
-  color: var(--g-text-3);
-  flex-shrink: 0;
-  min-width: 48px;
-}
-.action-detail__vote-voter {
-  color: var(--g-text-2);
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.action-detail__vote--yes {
-  color: var(--g-success);
-}
-.action-detail__vote--no {
-  color: var(--g-error);
-}
-.action-detail__vote--abstain {
-  color: var(--g-text-3);
 }
 .action-detail__json {
   margin: 0;
