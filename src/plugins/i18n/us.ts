@@ -2513,7 +2513,6 @@ export default {
   'staking.depositFeeReturn': 'Deposit Fee Return',
   'staking.discord': 'Discord',
   'staking.drepDelegationRequired': 'DRep delegation required to withdraw rewards. Visit the Governance tab to delegate.',
-  'staking.drepDelegationRequiredDesc': 'On Cardano, you must be delegated to a DRep (Delegated Representative) to withdraw staking rewards. Please visit the Governance tab to delegate to a DRep before withdrawing your rewards.',
   'staking.drepDelegationRequiredTitle': 'DRep Delegation Required',
   'staking.unstakeDrepRequiredDesc': 'Unstaking claims your pending rewards, and on Cardano rewards can only be withdrawn while delegated to a DRep. Delegate to a DRep first, then unstake.',
   'staking.earnRewards': 'Earn rewards by staking your',
