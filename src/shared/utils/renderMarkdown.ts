@@ -171,25 +171,62 @@ function lift(slots: string[], html: string): string {
 }
 
 /**
+ * Every token in a string, found in ONE scan. Same spelling `lift` writes.
+ *
+ * Reused across calls on purpose: `String.prototype.replace` resets a global
+ * pattern's `lastIndex` before it starts, and the callback below runs no regex
+ * of its own, so there is no shared cursor to trip over.
+ */
+const SLOT_TOKEN = new RegExp(`<${SLOT}(\\d+)>`, 'g');
+
+/**
  * Put every lifted fragment back, leaving no token behind for ANY nesting.
  *
- * Highest slot first. A slot's contents were built from the string as it stood
- * when that slot was created, so it can only ever mention slots that already
- * existed — strictly lower-numbered ones. Walking down therefore reveals only
- * tokens the loop has not reached yet, and the result is placeholder-free by
- * construction rather than by the caller having guessed the nesting right.
+ * A slot's contents were built from the string as it stood when that slot was
+ * created, so it can only ever mention slots that already existed — strictly
+ * LOWER-numbered ones. The references form a DAG whose edges all point
+ * downwards, and that is what makes a single ASCENDING sweep enough: by the
+ * time slot `i` is expanded every slot it can name is already complete, so it
+ * is finished once and never revisited. One final pass over the document then
+ * resolves what is left against fragments that are already whole.
  *
- * `split`/`join` rather than `String.replace`: a stored fragment is part
- * author text, and `$&` or `$'` inside a replacement STRING would be expanded
- * as a substitution pattern.
+ * The same invariant is the termination argument. There is no fixed point being
+ * iterated towards and nothing counting rounds: the loop runs `slots.length`
+ * times and `expand` is one non-recursive scan.
+ *
+ * COST. The predecessor walked the table from the top and split the WHOLE
+ * document on each token in turn — O(slots x document). It needed no nesting to
+ * hurt, so the depth cap above did not cover it: a FLAT proposal body carrying
+ * a few thousand code spans and links froze the proposal view exactly as the
+ * unbounded recursion did, and anyone can submit a governance action. This
+ * touches each fragment once, so the work follows total content rather than the
+ * product of the two.
+ *
+ * SUBSTITUTION PATTERNS. The replacement is a CALLBACK and never a replacement
+ * STRING. A stored fragment is part author text, and `$&`, `$'` or `$1` inside
+ * a replacement string would be expanded as a substitution pattern; a
+ * callback's return value is inserted verbatim, so it cannot be. That is the
+ * property the old `split`/`join` was there for, kept by other means.
+ *
+ * FORGERY. Escaping ran first, so every `<` an author wrote is already `&lt;`
+ * and every token still in the string was written by this file: a proposal that
+ * types `<md-slot-0>` gets it back as visible text and collects nobody's
+ * fragment.
  */
 function restoreSlots(s: string, slots: string[]): string {
-  let out = s;
-  for (let i = slots.length - 1; i >= 0; i -= 1) {
-    const token = `<${SLOT}${i}>`;
-    if (out.includes(token)) out = out.split(token).join(slots[i]);
-  }
-  return out;
+  const resolved: string[] = [];
+
+  const expand = (text: string): string =>
+    text.replace(SLOT_TOKEN, (token, digits) => {
+      const i = Number(digits);
+      // Downward-only references mean the slot named here is always finished
+      // already. The bound check keeps `expand` total; it is not a live branch.
+      return i < resolved.length ? resolved[i] : token;
+    });
+
+  for (let i = 0; i < slots.length; i += 1) resolved.push(expand(slots[i]));
+
+  return expand(s);
 }
 
 /**
@@ -216,11 +253,12 @@ function restoreSlots(s: string, slots: string[]): string {
  *     anchor, which would be a control inside a control.
  *  5. `[n]` markers, over what is left: plain text only.
  *
- * Restore is `restoreSlots`, outermost-first. The old inner-last order assumed
- * a slot could never contain another slot, which `[![alt](img)](href)` — a
- * linked banner, ordinary in CIP-108 bodies — disproves: the image slot ends
- * up INSIDE the link slot, so restoring images first found nothing to do and
- * the raw token reached the DOM.
+ * Restore is `restoreSlots`, which finishes each slot in ascending order and
+ * then sweeps the document once. A slot CAN hold another slot — in
+ * `[![alt](img)](href)`, a linked banner and ordinary in CIP-108 bodies, the
+ * image slot ends up INSIDE the link slot — which is what an early version
+ * restoring images before links got wrong: it found nothing to do and the raw
+ * token reached the DOM.
  */
 function renderInline(escaped: string, options: RenderMarkdownOptions): string {
   const slots: string[] = [];

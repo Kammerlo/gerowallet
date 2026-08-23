@@ -258,6 +258,26 @@ describe('renderMarkdown, no internal placeholder survives to the output', () =>
         ' and <code>code</code></p>',
     );
   });
+
+  it('never expands a substitution pattern an author wrote into a fragment', () => {
+    // `$&`, `$'`, `` $` `` and `$1` are special ONLY in a replacement string. A
+    // stored fragment is part author text, so putting one back with
+    // `replace(token, fragment)` would splice surrounding document text in at
+    // those spellings. Escaping does not cover this: only `&` of the four is an
+    // escaped character, and `$&amp;` still opens with `$&`.
+    expect(renderMarkdown('head `$&` tail')).toBe('<p>head <code>$&amp;</code> tail</p>');
+    expect(renderMarkdown("a `$'` b `$1` c")).toBe("<p>a <code>$'</code> b <code>$1</code> c</p>");
+    // `` $` `` cannot sit in a code span, so link text carries that one.
+    expect(renderMarkdown('[a $` b](https://a.test/)')).toBe(
+      '<p><a href="https://a.test/" target="_blank" rel="noopener noreferrer">a $` b</a></p>',
+    );
+    // And where the fragment is restored INTO another fragment rather than into
+    // the document — a code span inside link text.
+    expect(renderMarkdown("[see `$&` and `$'`](https://a.test/)")).toBe(
+      '<p><a href="https://a.test/" target="_blank" rel="noopener noreferrer">' +
+        "see <code>$&amp;</code> and <code>$'</code></a></p>",
+    );
+  });
 });
 
 // A reference marker inside LINK TEXT used to cost the anchor outright: the
@@ -392,6 +412,20 @@ describe('renderMarkdown, a URL cannot absorb constructed markup', () => {
   });
 });
 
+/** Deepest chain of block containers in a rendered document. */
+function maxBlockNesting(html: string): number {
+  const root = document.createElement('div');
+  root.innerHTML = html;
+  let max = 0;
+  const walk = (node: Element, depth: number): void => {
+    const next = /^(BLOCKQUOTE|UL|OL)$/.test(node.tagName) ? depth + 1 : depth;
+    if (next > max) max = next;
+    for (const child of Array.from(node.children)) walk(child, next);
+  };
+  for (const child of Array.from(root.children)) walk(child, 0);
+  return max;
+}
+
 // renderBlocks recursed once per blockquote level and renderList once per
 // indentation level, both driven by author text: `'> '.repeat(5000)` threw
 // RangeError. The throw lands inside the computed that renders a proposal body,
@@ -427,6 +461,101 @@ describe('renderMarkdown, nesting depth is bounded', () => {
     expect(renderMarkdown('> - a\n>   - b')).toBe(
       '<blockquote><ul><li>a<ul><li>b</li></ul></li></ul></blockquote>',
     );
+  });
+
+  // Each case above drives ONE construct to the cap. The budget is shared
+  // between them precisely because they share a call stack, and it is a MIXED
+  // document that decides whether the sharing is real — so these two exercise
+  // the shapes the single-construct cases cannot reach.
+  it('spends one shared budget across a blockquote and the list inside it', () => {
+    const bare: string[] = [];
+    const quoted: string[] = [];
+    for (let i = 0; i < 2000; i += 1) {
+      bare.push(`${' '.repeat(i * 2)}- item${i}`);
+      quoted.push(`> ${' '.repeat(i * 2)}- item${i}`);
+    }
+    const bareOut = renderMarkdown(bare.join('\n'));
+    const quotedOut = renderMarkdown(quoted.join('\n'));
+
+    // Nothing throws, and no item is dropped for being over-indented.
+    expect((quotedOut.match(/<li>/g) ?? []).length).toBe(2000);
+    expect(quotedOut).toContain('item0');
+    expect(quotedOut).toContain('item1999');
+
+    // The quote SPENDS a level the list then does not get: 16 list levels bare,
+    // 15 wrapped in one blockquote. A per-construct budget would hand out 16
+    // either way, and the whole chain would be 17 deep.
+    expect((bareOut.match(/<ul>/g) ?? []).length).toBe(16);
+    expect((quotedOut.match(/<blockquote>/g) ?? []).length).toBe(1);
+    expect((quotedOut.match(/<ul>/g) ?? []).length).toBe(15);
+    expect(maxBlockNesting(quotedOut)).toBe(16);
+  });
+
+  it('caps alternating quote and list levels, keeping the text past the cap', () => {
+    // `> - a`, `> > - b`, `> > > - c`: every level opens a quote AND the list
+    // inside it, so the two constructs interleave all the way down.
+    const shallow: string[] = [];
+    const deep: string[] = [];
+    for (let k = 1; k <= 500; k += 1) shallow.push(`${'> '.repeat(k)}- item${k}`);
+    for (let k = 1; k <= 2000; k += 1) deep.push(`${'> '.repeat(k)}- item${k}`);
+
+    const shallowOut = renderMarkdown(shallow.join('\n'));
+    const deepOut = renderMarkdown(deep.join('\n'));
+
+    // The container chain stops in the same place whether the author wrote 500
+    // levels or 2000: bounded by the cap, not by the document. One over the cap
+    // is the innermost list itself — a list emits its own `<ul>` at whatever
+    // depth it is entered, and only its NESTED levels consult the budget.
+    expect((shallowOut.match(/<blockquote>/g) ?? []).length).toBe(16);
+    expect((deepOut.match(/<blockquote>/g) ?? []).length).toBe(16);
+    expect(maxBlockNesting(deepOut)).toBe(maxBlockNesting(shallowOut));
+    expect(maxBlockNesting(deepOut)).toBeLessThanOrEqual(17);
+
+    // Content past the cap is kept, as the visible text it already was.
+    expect(deepOut).toContain('item1');
+    expect(deepOut).toContain('item2000');
+    expect(deepOut).toContain('&gt;');
+  });
+});
+
+// The depth cap covers author-driven RECURSION. It does not cover author-driven
+// REPETITION, and `restoreSlots` used to be quadratic in exactly that: it walked
+// the slot table and split the WHOLE document once per slot, O(slots x
+// document). A flat body — no nesting anywhere — carrying a few thousand inline
+// constructs froze the proposal view just as the RangeError did, and anyone can
+// submit a governance action. Resolving each slot once, in ascending order,
+// makes the work follow total content instead of the product of the two.
+describe('renderMarkdown, slot restoration is linear in the document', () => {
+  const LINES = 8000;
+
+  it('renders a large flat body well inside a generous time bound', () => {
+    const lines: string[] = [];
+    for (let i = 0; i < LINES; i += 1) {
+      // Four lifted-or-marked constructs per line, and no blank lines: the
+      // whole document is ONE paragraph, so it is one `renderInline` call over
+      // one slot table — the shape the old cost model punished hardest.
+      lines.push(
+        `Item ${i} spends \`pool1abc${i}\` on [work ${i}](https://a.test/${i}), **${i}** ada. [1]`,
+      );
+    }
+    const body = lines.join('\n');
+
+    const started = performance.now();
+    const out = renderMarkdown(body, { hasReference: () => true });
+    const elapsed = performance.now() - started;
+
+    // Measured on this machine: ~2.9s for a QUARTER of this document under the
+    // quadratic restore, so roughly 11s at 8000 lines; ~12ms after. The bound
+    // sits two orders of magnitude above the linear cost, so a loaded CI box
+    // cannot flake it, and far below the quadratic one.
+    expect(elapsed).toBeLessThan(2000);
+
+    // And it did the work: a "fix" that got fast by rendering less must fail.
+    expect(out.match(/<code>/g)).toHaveLength(LINES);
+    expect(out.match(/<a /g)).toHaveLength(LINES);
+    expect(out.match(/<strong>/g)).toHaveLength(LINES);
+    expect(out.match(/<button/g)).toHaveLength(LINES);
+    expect(out).not.toMatch(/md-slot-/);
   });
 });
 
