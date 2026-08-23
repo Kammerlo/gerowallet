@@ -44,14 +44,19 @@ export const DIRECTORY_PAGE_SIZE = 500;
  * so a single page left most voters unresolved and the rows fell back to the
  * hex ids this index exists to replace.
  *
- * What the cap buys in DREPS is not something this file can state. Page size
- * is the server's decision — nothing here evidences that it honours
- * `per_page=500` rather than clamping to a maximum of its own — so the only
- * honest unit is the request budget: at most eight directory calls per session
- * per chain/network, whatever a page turns out to hold. The walk follows
- * `meta.total_pages` and stops at the cap either way, so a register that
- * outgrows the budget costs the same bounded number of requests and simply
- * resolves fewer names. Every unresolved row still renders its id.
+ * What the cap buys in DREPS is not something this file can state. Page size is
+ * the server's decision — nothing here evidences that it honours `per_page=500`
+ * rather than clamping to a maximum of its own — so the only honest unit is the
+ * request budget: at most eight directory calls per session per chain/network,
+ * whatever a page turns out to hold.
+ *
+ * The walk does not assume the ask was honoured either. It prefers the server's
+ * own `meta.total_pages`, and where only `total_items` comes back it divides by
+ * the rows page 1 ACTUALLY RETURNED, not by what was requested — see
+ * `pageCount`. A server that clamps to 100 rows is then walked as 17 pages and
+ * stopped by the cap, instead of being read as 4 pages and abandoned early with
+ * most names unresolved. Either way the cost is the same bounded number of
+ * requests, and every unresolved row still renders its id.
  */
 export const MAX_DIRECTORY_PAGES = 8;
 
@@ -71,14 +76,25 @@ export function indexDRepRecords(records: unknown[]): Map<string, DRepName> {
   return index;
 }
 
-/** How many pages the register actually has, from whichever count the server sent. */
-function pageCount(meta: unknown): number {
+/**
+ * How many pages the register actually has, from whichever count the server sent.
+ *
+ * `stride` is the number of rows page 1 came back with, NOT `DIRECTORY_PAGE_SIZE`.
+ * Dividing `total_items` by what was asked for would re-import the assumption
+ * this file disclaims: a server that clamped a 1,682-row register to 100 rows a
+ * page would compute 4 pages, and the walk would stop with most names
+ * unresolved and nothing to say it had. The rows in hand are evidence; the
+ * request parameter is not.
+ */
+function pageCount(meta: unknown, stride: number): number {
   const counts = meta as { total_pages?: unknown; total_items?: unknown } | null | undefined;
   if (typeof counts?.total_pages === 'number' && Number.isFinite(counts.total_pages)) {
     return Math.max(1, Math.floor(counts.total_pages));
   }
   if (typeof counts?.total_items === 'number' && Number.isFinite(counts.total_items)) {
-    return Math.max(1, Math.ceil(counts.total_items / DIRECTORY_PAGE_SIZE));
+    // `stride` is floored at 1: page 1 returned rows or the walk already ended,
+    // and a zero would make this Infinity. The cap bounds the result regardless.
+    return Math.max(1, Math.ceil(counts.total_items / Math.max(1, stride)));
   }
   // No count at all: one page is all that can be walked towards.
   return 1;
@@ -107,7 +123,8 @@ async function walkDirectory(chain: string, network: string): Promise<DRepNameIn
     const items = response?.items ?? [];
     if (!items.length) break;
     for (const [credentialHex, name] of indexDRepRecords(items)) index.set(credentialHex, name);
-    if (page === 1) pages = pageCount(response?.meta);
+    // Page 1 is where the server tells us, by what it sent, how wide a page is.
+    if (page === 1) pages = pageCount(response?.meta, items.length);
   }
 
   return index;

@@ -307,6 +307,32 @@ describe('PositionsPanel rows', () => {
     expect(wrapper.findAll('.vote-row').at(0).text()).toContain('CryptoCrow');
   });
 
+  it('follows a server that clamps the page size instead of trusting what it asked for', async () => {
+    // `per_page=500` is a request, not a contract. Here the server echoes the
+    // ask, answers with two rows a page, and sends only `total_items` — so
+    // dividing the register by the size REQUESTED computes one page, and the
+    // walk stops before the row that needed naming. The stride comes from the
+    // rows page 1 actually returned instead.
+    const other = (hex: string) => ({ drep_id: toCip129(hex.repeat(28)), metadata: null });
+    const byPage: Record<number, unknown[]> = {
+      1: [other('cc'), other('dd')],
+      2: [other('ee'), other('11')],
+      3: [{ drep_id: DREP_A, metadata: { meta_json: { body: { givenName: 'CryptoCrow' } } } }, other('22')],
+    };
+    getDRepsPaginated.mockImplementation((params: { page?: number }) =>
+      Promise.resolve({
+        items: byPage[params?.page ?? 1] ?? [],
+        meta: { page: params?.page ?? 1, total_items: 6, per_page: 500 },
+      }),
+    );
+    wrapper = mountPanel({ votes: [vote({ drepId: DREP_A })], total: 1 });
+    await settle();
+    await settle();
+
+    expect(getDRepsPaginated).toHaveBeenCalledTimes(3);
+    expect(wrapper.findAll('.vote-row').at(0).text()).toContain('CryptoCrow');
+  });
+
   it('gives the vote date to assistive tech as text, not as a dead attribute', async () => {
     // `aria-label` on a plain <span> has no role to attach to and is dropped.
     wrapper = mountPanel({ votes: [vote({ votedAt: 1787463005 })], total: 1 });
