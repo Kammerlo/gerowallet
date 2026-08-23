@@ -1392,6 +1392,7 @@ export default {
   'governance.alerts.allHealthy': 'Nichts zu melden. Ihr DRep ist registriert, aktiv und stimmt ab.',
   'governance.alerts.alwaysOn': 'Immer an',
   'governance.alerts.atEpoch': 'Epoche {epoch}',
+  'governance.alerts.checkFailed': 'Ihr DRep konnte gerade nicht geprüft werden. Die Angaben unten sind möglicherweise nicht aktuell.',
   'governance.alerts.chooseNewDRep': 'Neuen DRep wählen',
   'governance.alerts.dismiss': 'Ausblenden',
   'governance.alerts.findReplacement': 'Ersatz finden',

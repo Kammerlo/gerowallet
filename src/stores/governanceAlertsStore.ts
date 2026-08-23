@@ -94,12 +94,20 @@ export interface GovernanceAlertsState {
   settings: GovernanceAlertSettings;
   /** Alert id to the chain epoch it reappears at. Persisted, so a snooze survives a reload. */
   snoozes: Record<string, number>;
-  /** The DRep currently being watched, or null when there is nothing to watch. */
+  /**
+   * The DRep currently being watched, or null when there is nothing to watch.
+   * Null is the signal a host surface reads to render no alerts UI at all: a
+   * wallet with no delegation must not be told its DRep is healthy.
+   */
   drepId: string | null;
   /** When the alerts were last computed — every cached number is stamped. */
   evaluatedAt: number | null;
   loading: boolean;
-  error: string | null;
+  /**
+   * i18n KEY for a failed check, not a message. The store has no `$t`, and a
+   * raw upstream error would reach a German user in English.
+   */
+  errorKey: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +171,27 @@ function isKeywordDRep(drepId: string): boolean {
   return (KEYWORD_DREPS as readonly string[]).includes(drepId);
 }
 
+/** i18n key shown when the DRep lookup itself failed. */
+export const ALERT_CHECK_FAILED_KEY = 'governance.alerts.checkFailed';
+
+/**
+ * The DRep this wallet is actually watching, or null when there is nothing to
+ * watch: no delegation at all, a predefined choice (neither expires nor
+ * retires), or a stake key that is not registered.
+ *
+ * One predicate, three callers — `evaluateAlerts`, `evaluate` and `refresh` —
+ * so `state.drepId` cannot disagree with whether any alert could fire. That
+ * matters beyond tidiness: a host surface gates its whole alerts UI on
+ * `state.drepId`, and a stale non-null there would tell a wallet with no
+ * delegation that its DRep is healthy.
+ */
+export function watchedDRepId(account: Account | null | undefined): string | null {
+  const drepId = String(account?.drep_id ?? '').trim();
+  if (!drepId || isKeywordDRep(drepId)) return null;
+  if (account?.active === false) return null;
+  return drepId;
+}
+
 /**
  * Compute the alerts a wallet's delegation warrants. Pure over its arguments:
  * no fetching, no store reads, no clock.
@@ -177,11 +206,11 @@ export function evaluateAlerts(
   currentEpoch: number | null,
   options: EvaluateOptions = {},
 ): GovernanceAlert[] {
-  const drepId = String(account?.drep_id ?? '').trim();
-  if (!drepId || isKeywordDRep(drepId)) return [];
-  // An unregistered stake key has no voting power delegated to anyone, so a
-  // countdown against it would be warning about nothing.
-  if (account?.active === false) return [];
+  // No delegation, a predefined choice, or an unregistered stake key: nothing
+  // to watch, so nothing to say. An unregistered stake key in particular has no
+  // voting power delegated to anyone, so a countdown would warn about nothing.
+  const drepId = watchedDRepId(account);
+  if (!drepId) return [];
 
   const settings = { ...defaultSettings(), ...(options.settings ?? {}) };
   const activityWindow = options.activityWindow ?? DEFAULT_DREP_ACTIVITY_EPOCHS;
@@ -288,22 +317,32 @@ const state = Vue.observable<GovernanceAlertsState>({
   drepId: null,
   evaluatedAt: null,
   loading: false,
-  error: null,
+  errorKey: null,
 });
 
 /** Which wallet's preferences are loaded, so a switch re-reads and a re-render does not. */
 let hydratedWalletId: number | null = null;
+/**
+ * Whether that load actually saw the wallet's config, as opposed to the empty
+ * bag `walletStore.config` holds until the ConfigLoader liveQuery delivers.
+ */
+let hydratedFromConfig = false;
 
 function currentEpoch(): number | null {
   return NetworkStore.getCurrentEpoch();
 }
 
 /**
- * The protocol's `drep_activity`. The Cardano SDK params spell it
- * `dRepInactivityPeriod`; the raw gero-backend payload spells it
- * `drep_activity`. Read both, fall back to CIP-1694's default.
+ * The chain's `drep_activity`, or null when the epoch params have not landed.
+ * The Cardano SDK params spell it `dRepInactivityPeriod` (that is the field
+ * `db/loaders/network.ts` fills from the raw `epoch_params.drep_activity`);
+ * the raw gero-backend payload spells it `drep_activity`. Read both.
+ *
+ * Exported because the alerts SURFACE needs the same number to state the
+ * window in its settings card, and a second literal 20 there would quietly
+ * misreport any chain that ever moves the parameter.
  */
-function activityWindowFromParams(): number | null {
+export function drepActivityWindow(): number | null {
   const params = networkStore.epochParams as unknown as Record<string, unknown> | null;
   const raw = params?.['dRepInactivityPeriod'] ?? params?.['drep_activity'];
   return typeof raw === 'number' && raw > 0 ? raw : null;
@@ -358,7 +397,7 @@ function pruneSnoozes(alerts: GovernanceAlert[]): void {
 function clearAlerts(): void {
   state.alerts = [];
   state.drepId = null;
-  state.error = null;
+  state.errorKey = null;
   state.evaluatedAt = Date.now();
 }
 
@@ -368,14 +407,31 @@ const actions = {
   /**
    * Load this wallet's saved preferences out of `walletStore.config`, which the
    * ConfigLoader liveQuery keeps in step with the wallet DB `config` table.
-   * Idempotent, and a no-op once the wallet's values are in.
+   *
+   * That liveQuery fills the bag ASYNCHRONOUSLY, so the first read after a
+   * login or a reload lands on an empty `{}`. Latching on that read would
+   * replace the saved threshold and every stored snooze with defaults for the
+   * rest of the session and never look again — which is precisely how a
+   * "remind me at 18" comes back the moment the user reloads. So the wallet id
+   * alone does not count as hydrated: only a read that actually SAW the config
+   * closes the door, and `startAlertWatcher` calls back here when it arrives.
+   *
+   * Returns whether the effective values changed, so the caller can re-evaluate
+   * only when it would make a difference.
    */
-  hydrate(force = false): void {
+  hydrate(force = false): boolean {
     const walletId = walletStore.loggedWallet?.id ?? null;
-    if (!force && walletId === hydratedWalletId) return;
-    hydratedWalletId = walletId;
+    const config = walletStore.config;
+    const configArrived = !!config && Object.keys(config).length > 0;
 
-    const stored = walletStore.config?.[ALERT_SETTINGS_KEY];
+    if (!force && walletId === hydratedWalletId && hydratedFromConfig) return false;
+
+    hydratedWalletId = walletId;
+    hydratedFromConfig = configArrived;
+
+    const before = JSON.stringify([state.settings, state.snoozes]);
+
+    const stored = config?.[ALERT_SETTINGS_KEY];
     state.settings = {
       ...defaultSettings(),
       ...(stored && typeof stored === 'object' ? (stored as Partial<GovernanceAlertSettings>) : {}),
@@ -383,9 +439,11 @@ const actions = {
       pushEnabled: false,
     };
 
-    const snoozes = walletStore.config?.[ALERT_SNOOZES_KEY];
+    const snoozes = config?.[ALERT_SNOOZES_KEY];
     state.snoozes =
       snoozes && typeof snoozes === 'object' ? { ...(snoozes as Record<string, number>) } : {};
+
+    return JSON.stringify([state.settings, state.snoozes]) !== before;
   },
 
   /**
@@ -402,7 +460,7 @@ const actions = {
     const alerts = withSnoozes(
       evaluateAlerts(account, record, epoch, {
         matchCriteria: options.matchCriteria ?? savedMatchCriteria(),
-        activityWindow: options.activityWindow ?? activityWindowFromParams(),
+        activityWindow: options.activityWindow ?? drepActivityWindow(),
         rationaleDropPoints: options.rationaleDropPoints,
         recentWindow: options.recentWindow,
         settings: options.settings ?? state.settings,
@@ -411,7 +469,10 @@ const actions = {
 
     pruneSnoozes(alerts);
     state.alerts = alerts;
-    state.drepId = alerts[0]?.drepId ?? (String(account?.drep_id ?? '').trim() || null);
+    // Null whenever there is nothing to watch, even though alerts is ALSO empty
+    // then: a host surface tells the two apart to decide between "all healthy"
+    // and no alerts UI at all.
+    state.drepId = watchedDRepId(account);
     state.evaluatedAt = Date.now();
     return alerts;
   },
@@ -484,23 +545,27 @@ const actions = {
     }
     this.hydrate();
 
-    const drepId = String(account?.drep_id ?? '').trim();
-    if (!drepId || isKeywordDRep(drepId) || account?.active === false) {
+    const drepId = watchedDRepId(account);
+    if (!drepId) {
+      // Note the ordering: `loading` is never raised on this path, so a host
+      // surface gating on `drepId || loading` shows nothing at all rather than
+      // flashing a skeleton for a DRep that does not exist.
       clearAlerts();
       return;
     }
 
     state.loading = true;
-    state.error = null;
+    state.errorKey = null;
     try {
       const { default: blockchainApi } = await import('@/api/blockchain-api');
       const record = await blockchainApi.getDRepById(drepId, wallet.chain, wallet.network);
       this.evaluate(account, record as DelegatedDRepRecord | null, currentEpoch());
     } catch (error) {
       // A lookup failure is NOT a clean bill of health. The last known alerts
-      // stay up and the error is surfaced, rather than the badge quietly going
-      // dark on an outage.
-      state.error = (error as { message?: string })?.message || 'Failed to check your DRep';
+      // stay up and the failure is surfaced, rather than the badge quietly
+      // going dark on an outage. The upstream text goes to the log, not the
+      // user: it is English, and often an axios string rather than a sentence.
+      state.errorKey = ALERT_CHECK_FAILED_KEY;
       debugLog('governanceAlertsStore: DRep lookup failed', error);
     } finally {
       state.loading = false;
@@ -509,13 +574,14 @@ const actions = {
 
   reset(): void {
     hydratedWalletId = null;
+    hydratedFromConfig = false;
     state.alerts = [];
     state.settings = defaultSettings();
     state.snoozes = {};
     state.drepId = null;
     state.evaluatedAt = null;
     state.loading = false;
-    state.error = null;
+    state.errorKey = null;
   },
 };
 
@@ -537,7 +603,7 @@ const actions = {
  * because the panel's parent view belongs to another surface.
  */
 export function startAlertWatcher(): () => void {
-  return watch(
+  const stopEvaluation = watch(
     () =>
       [
         walletStore.loggedWallet?.id ?? null,
@@ -550,6 +616,24 @@ export function startAlertWatcher(): () => void {
     },
     { immediate: true },
   );
+
+  // `walletStore.config` is filled by a liveQuery AFTER login, so the hydrate
+  // above necessarily read an empty bag. Re-read when it lands. `hydrate`
+  // reports whether anything actually changed, so ordinary config churn from
+  // elsewhere in the app (a currency change, a toggled balance) costs a compare
+  // and not a DRep lookup — and a saved threshold that DOES arrive re-evaluates,
+  // because it decides which alerts fire.
+  const stopHydration = watch(
+    () => walletStore.config,
+    () => {
+      if (actions.hydrate()) void actions.refresh();
+    },
+  );
+
+  return () => {
+    stopEvaluation();
+    stopHydration();
+  };
 }
 
 // Extension UI only. The background service worker has no badge to light, and
