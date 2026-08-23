@@ -1506,7 +1506,6 @@ export default {
   'governance.emergencyFund': 'Notfallfonds',
   'governance.emergencyFundDesc': '20% des Kassenbestands für Notfälle reserviert',
   'governance.ended': 'Beendet',
-  'governance.epochParametersNotAvailable': 'Epoch-Parameter nicht verfügbar',
   'governance.epochsRemaining': '{n} Epochen verbleibend',
   'governance.epochs': 'Epochen',
   'governance.epochsAgo': 'vor {n} Epochen',

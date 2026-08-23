@@ -1305,7 +1305,6 @@ export default {
   'governance.duration': 'Duration',
   'governance.emergencyFund': 'Emergency Fund',
   'governance.emergencyFundDesc': '20% of treasury reserved for emergencies',
-  'governance.epochParametersNotAvailable': 'Epoch parameters not available',
   'governance.epochsAgo': '{n} epochs ago',
   'governance.epochsRemaining': '{n} epochs left',
   'governance.errorBuildingTransaction': 'Error building transaction',

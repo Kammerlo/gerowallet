@@ -27,7 +27,7 @@
       <span v-if="result.thresholdPct !== null" class="g-num">
         {{ $t('governance.thresholdPctLabel', { pct: fmt(result.thresholdPct) }) }}
       </span>
-      <span v-else>{{ thresholdNote || $t('governance.epochParametersNotAvailable') }}</span>
+      <span v-else>{{ thresholdNote || $t('common.epochParametersNotAvailable') }}</span>
     </div>
 
     <div v-if="counts" class="body-card__counts t-caption g-num">
