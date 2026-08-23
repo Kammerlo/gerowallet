@@ -26,19 +26,25 @@
  */
 
 import type { VoteChoice } from '@/api/governance.types';
+import type {
+  DelegatedDRepRecord,
+  DRepVoteRecord as DelegationVoteRecord,
+} from '@/shared/composables/useDelegationHealth';
 import { parseDRepId } from '@/shared/utils/drepId';
 import { pctOf, toLovelace, type LovelaceLike } from '@/shared/utils/lovelace';
 
-export interface DRepVoteRecord {
-  proposal_id?: string | null;
+/**
+ * The vote row as `/api/dreps` returns it.
+ *
+ * `useDelegationHealth` owns the canonical shape — the subset a health check
+ * needs. This EXTENDS it rather than redeclaring it, so the repo keeps exactly
+ * one definition of a DRep vote while the directory and profile still get the
+ * transaction-identity fields they need for explorer links.
+ */
+export interface DRepVoteRecord extends DelegationVoteRecord {
   proposal_tx_hash?: string | null;
   proposal_index?: number | null;
   vote_tx_hash?: string | null;
-  block_time?: number | null;
-  vote?: VoteChoice | string | null;
-  /** The CIP-136 rationale anchor. Presence is the rationale signal; the wallet never fetches it client-side. */
-  meta_url?: string | null;
-  meta_hash?: string | null;
 }
 
 export interface DRepDelegatorRecord {
@@ -58,16 +64,18 @@ export interface DRepMetadata {
   is_valid?: boolean | null;
 }
 
-/** The `/api/dreps` row. Every field is optional because the endpoint nulls most of them. */
-export interface DRepRecord {
-  drep_id?: string | null;
+/**
+ * A full `/api/dreps` row, extending the delegation-health record with the
+ * fields the directory needs (identity, power, deposit, anchor). Every field is
+ * optional because the endpoint nulls most of them — `deposit`,
+ * `expires_epoch_no`, `url`, `hash` and `metadata.meta_json` are all null on a
+ * majority of live rows.
+ */
+export interface DRepRecord extends DelegatedDRepRecord {
   hex?: string | null;
   has_script?: boolean | null;
-  registered?: boolean | null;
   /** Lovelace as a decimal string. */
   deposit?: string | null;
-  active?: boolean | null;
-  expires_epoch_no?: number | null;
   /** Voting power in lovelace, as a decimal string. */
   amount?: string | null;
   url?: string | null;
