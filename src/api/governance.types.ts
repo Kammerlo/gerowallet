@@ -82,13 +82,37 @@ export interface GovProposalDetail extends GovProposal {
   hashValid: boolean | null;
 }
 
-/** One cast vote. */
+/**
+ * One cast vote: a voter's STANDING position on an action.
+ *
+ * The upstream feed collapses re-votes, so there is exactly one row per voter
+ * (verified against mainnet: 52 rows / 52 distinct voter ids on
+ * `gov_action105mjyzm…`). There is no vote history to order.
+ *
+ * Everything below `txHash` is OPTIONAL on purpose. Koios carries all of it,
+ * and the dev shim now projects it, but gero-backend's production projection is
+ * not confirmed to. Absent must mean "the affordance is not rendered" — never a
+ * blank cell, a dash, or an epoch-0 date.
+ */
 export interface GovVote {
   voterRole: VoterRole | string;
   voterHash: string | null;
   drepId: string | null;
   vote: VoteChoice | string;
   txHash: string | null;
+  /** Block time of the standing vote, unix SECONDS. */
+  votedAt?: number | null;
+  /** Anchor URL of the voter's published rationale, if they published one. */
+  rationaleUrl?: string | null;
+  rationaleHash?: string | null;
+  /** True when the voter is a script rather than a key. Null means unknown. */
+  hasScript?: boolean | null;
+  /**
+   * The voter's bech32 id whatever their role — `drepId` is DRep-only, so
+   * without this an SPO or committee row falls back to raw hex while a DRep row
+   * shows bech32, on the same list.
+   */
+  voterId?: string | null;
 }
 
 /**

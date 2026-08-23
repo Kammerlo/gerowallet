@@ -68,8 +68,53 @@ export const MAX_VOTE_SCAN = 10;
 /** Requests in flight at once while scanning. */
 const VOTE_SCAN_CONCURRENCY = 4;
 
-/** Vote rows fetched per action. Well past any real action's voter count. */
-const VOTE_SCAN_PAGE_SIZE = 200;
+/**
+ * Vote rows per request. 100 is the upstream maximum: larger values are clamped
+ * server-side, which is why this is not simply set "well past any real action's
+ * voter count" — real mainnet actions carry 238, 211, 191 votes, so ONE page is
+ * never enough and the scan has to follow pages.
+ */
+export const VOTES_PAGE_SIZE = 100;
+
+/**
+ * Pages any one action's votes may cost. 500 rows covers every action observed
+ * on mainnet with room to spare; past it the list is TRUNCATED and says so,
+ * because silently showing a prefix of the voters is a claim about who voted.
+ */
+export const MAX_VOTE_PAGES = 5;
+
+/**
+ * Fetch a whole action's votes, following pages until `total` is covered or the
+ * cap is hit.
+ *
+ * This exists because a single page is a WRONG ANSWER, not just a short one: a
+ * DRep who voted early on a 238-vote action falls off page 1, and the board
+ * would then tell the user "awaiting your vote" about a vote they already cast.
+ */
+async function fetchVotePages(
+  govActionId: string,
+  network: string,
+  maxPages: number,
+): Promise<{ items: GovVote[]; total: number | null; truncated: boolean }> {
+  const first = await governanceApi.getProposalVotes(govActionId, network, 1, VOTES_PAGE_SIZE);
+  const items = [...(first.items ?? [])];
+  const total = first.total ?? null;
+
+  // A null total means the server does not count this list mode, so there is no
+  // page count to walk towards. One page is all that can honestly be claimed.
+  if (total === null) return { items, total, truncated: items.length >= VOTES_PAGE_SIZE };
+
+  let page = 1;
+  while (items.length < total && page < maxPages) {
+    page += 1;
+    const next = await governanceApi.getProposalVotes(govActionId, network, page, VOTES_PAGE_SIZE);
+    const rows = next.items ?? [];
+    if (!rows.length) break;
+    items.push(...rows);
+  }
+
+  return { items, total, truncated: items.length < total };
+}
 
 export interface GovernanceActionsState {
   actions: GovProposal[];
@@ -84,6 +129,23 @@ export interface GovernanceActionsState {
   currentVotes: GovVote[];
   actionLoading: boolean;
   actionError: string | null;
+
+  /** How many votes the action has in total, or null when upstream does not count. */
+  votesTotal: number | null;
+  votesLoading: boolean;
+  /**
+   * Whether a votes fetch has been ATTEMPTED for the current action. Distinct
+   * from `currentVotes.length`: an action nobody voted on would otherwise
+   * re-fetch on every visit to the tab.
+   */
+  votesLoaded: boolean;
+  /**
+   * A votes failure is its own state. The old code caught and set `[]`, which
+   * made an outage indistinguishable from an action nobody voted on.
+   */
+  votesError: string | null;
+  /** True when the page cap stopped the fetch short of `votesTotal`. */
+  votesTruncated: boolean;
 
   filters: { type: string | null; status: string | null };
 
@@ -121,6 +183,11 @@ const state = Vue.observable<GovernanceActionsState>({
   currentVotes: [],
   actionLoading: false,
   actionError: null,
+  votesTotal: null,
+  votesLoading: false,
+  votesLoaded: false,
+  votesError: null,
+  votesTruncated: false,
   filters: { type: null, status: null },
   yourVotes: emptyYourVotes(),
   fetchedAt: null,
@@ -171,6 +238,10 @@ const actions = {
     state.currentAction = null;
     state.currentSummary = null;
     state.currentVotes = [];
+    state.votesTotal = null;
+    state.votesLoaded = false;
+    state.votesError = null;
+    state.votesTruncated = false;
 
     const [detail, summary] = await Promise.allSettled([
       governanceApi.getProposal(govActionId, network),
@@ -233,17 +304,18 @@ const actions = {
     for (let i = 0; i < open.length; i += concurrency) {
       const batch = open.slice(i, i + concurrency);
       const results = await Promise.allSettled(
-        batch.map(action =>
-          governanceApi.getProposalVotes(action.govActionId, network, 1, VOTE_SCAN_PAGE_SIZE),
-        ),
+        batch.map(action => fetchVotePages(action.govActionId, network, MAX_VOTE_PAGES)),
       );
       results.forEach((result, j) => {
         if (result.status !== 'fulfilled') return;
         const govActionId = batch[j].govActionId;
+        // A truncated scan cannot prove a vote is ABSENT, so the action is left
+        // unresolved — unknown, rather than a false "awaiting your vote".
+        const match = result.value.items.find(vote => sameDRep(vote.drepId, identity.drepId));
+        if (!match && result.value.truncated) return;
         resolved.push(govActionId);
         // Match on the credential, never on the display string: the wallet holds
         // one id form and the vote row may carry another.
-        const match = (result.value?.items ?? []).find(vote => sameDRep(vote.drepId, identity.drepId));
         if (match) byAction[govActionId] = String(match.vote);
       });
     }
@@ -258,14 +330,30 @@ const actions = {
     };
   },
 
-  async loadActionVotes(govActionId: string, network: string, page = 1): Promise<void> {
+  /**
+   * Every vote on one action, up to the page cap.
+   *
+   * A failure sets `votesError` rather than an empty list: votes are
+   * supplementary to the tally, so this must not blank the page, but "the
+   * lookup failed" and "nobody voted" are different facts and the UI has to be
+   * able to tell them apart.
+   */
+  async loadActionVotes(govActionId: string, network: string): Promise<void> {
+    state.votesLoading = true;
+    state.votesError = null;
     try {
-      const result = await governanceApi.getProposalVotes(govActionId, network, page, 100);
-      state.currentVotes = result.items ?? [];
-    } catch {
-      // Votes are supplementary to the tally — a failure here must not surface
-      // as a page-level error.
+      const result = await fetchVotePages(govActionId, network, MAX_VOTE_PAGES);
+      state.currentVotes = result.items;
+      state.votesTotal = result.total;
+      state.votesTruncated = result.truncated;
+    } catch (error) {
       state.currentVotes = [];
+      state.votesTotal = null;
+      state.votesTruncated = false;
+      state.votesError = message(error, 'Failed to load the positions for this action');
+    } finally {
+      state.votesLoading = false;
+      state.votesLoaded = true;
     }
   },
 
@@ -280,6 +368,11 @@ const actions = {
     state.currentVotes = [];
     state.actionLoading = false;
     state.actionError = null;
+    state.votesTotal = null;
+    state.votesLoading = false;
+    state.votesLoaded = false;
+    state.votesError = null;
+    state.votesTruncated = false;
     state.filters.type = null;
     state.filters.status = null;
     state.yourVotes = emptyYourVotes();

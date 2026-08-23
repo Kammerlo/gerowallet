@@ -132,6 +132,12 @@ function toVotingSummary(row) {
   };
 }
 
+// Koios /proposal_votes row keys, verified live 2026-08-23:
+//   block_time, voter_role, voter_id, voter_hex, voter_has_script, vote,
+//   meta_url, meta_hash
+// Note there is NO vote_tx_hash key, so `txHash` is null on every row here. Do
+// not build a "view the vote transaction" affordance on it without confirming
+// production carries one.
 function toVote(row) {
   return {
     voterRole: row.voter_role ?? null,
@@ -139,6 +145,13 @@ function toVote(row) {
     drepId: row.voter_role === 'DRep' ? (row.voter_id ?? null) : null,
     vote: row.vote ?? null,
     txHash: row.vote_tx_hash ?? null,
+    votedAt: row.block_time ?? null,
+    rationaleUrl: row.meta_url ?? null,
+    rationaleHash: row.meta_hash ?? null,
+    hasScript: typeof row.voter_has_script === 'boolean' ? row.voter_has_script : null,
+    // Role-agnostic: an SPO row carries a bech32 pool id here, which the DRep
+    // -only `drepId` above throws away.
+    voterId: row.voter_id ?? null,
   };
 }
 
