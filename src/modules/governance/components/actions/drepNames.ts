@@ -34,17 +34,24 @@ export interface DRepName {
 
 export type DRepNameIndex = ReadonlyMap<string, DRepName>;
 
-/** Rows per directory request. */
+/** Rows ASKED FOR per directory request. What the server actually returns is its call. */
 export const DIRECTORY_PAGE_SIZE = 500;
 
 /**
- * Pages the index may cost, i.e. 4,000 DReps.
+ * Pages the index may cost.
  *
  * One page is NOT the whole register: mainnet passed 1,682 registered DReps,
  * so a single page left most voters unresolved and the rows fell back to the
- * hex ids this index exists to replace. The walk follows `meta.total_pages`
- * and stops here, so a register that grows past the cap costs a bounded number
- * of requests and simply resolves fewer names.
+ * hex ids this index exists to replace.
+ *
+ * What the cap buys in DREPS is not something this file can state. Page size
+ * is the server's decision — nothing here evidences that it honours
+ * `per_page=500` rather than clamping to a maximum of its own — so the only
+ * honest unit is the request budget: at most eight directory calls per session
+ * per chain/network, whatever a page turns out to hold. The walk follows
+ * `meta.total_pages` and stops at the cap either way, so a register that
+ * outgrows the budget costs the same bounded number of requests and simply
+ * resolves fewer names. Every unresolved row still renders its id.
  */
 export const MAX_DIRECTORY_PAGES = 8;
 

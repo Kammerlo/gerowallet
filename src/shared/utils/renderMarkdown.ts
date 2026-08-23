@@ -4,7 +4,10 @@
  * SAFETY MODEL (do not change the order): ALL input is HTML-escaped FIRST, then
  * a small markdown subset is rendered on the escaped text. Nothing an author
  * wrote can ever reach the DOM as markup — the only tags in the output are the
- * ones this file constructs itself.
+ * ones this file constructs itself. Exactly one attribute VALUE in the output
+ * comes from the author, a link's `href`, and what makes it safe is stated
+ * where it is built: the regex admits nothing but an `http(s)://` URL, and
+ * escaping has already turned every `"` into `&quot;`.
  *
  * Both callers hand this function text they do not control:
  *  - agent chat replies (a token name inside an LLM answer), and
@@ -25,7 +28,10 @@
  *    link rule runs so it cannot fall through into an anchor: silently turning
  *    an embed into an outbound link would manufacture a destination the author
  *    never wrote as one, and would leave a stray "!" in front of it. Literal
- *    text shows the reader exactly what the proposal actually says.
+ *    text shows the reader exactly what the proposal actually says. A linked
+ *    banner, `[![alt](img)](href)`, follows from the same two rules rather
+ *    than being a case of its own: the anchor the author DID write survives,
+ *    and its visible text is that literal image markdown.
  *  - raw HTML passthrough: that is the whole point of escaping first.
  */
 
@@ -36,8 +42,17 @@
  * a same-document jump in this app: the extension runs a HASH-MODE router, so
  * clicking one REPLACES the route and reloading that address lands on the
  * wallet home instead of the proposal. The value is written from the digits the
- * regex matched, so it is always a plain number and never author text —
- * renderer output still carries zero author-controlled attributes.
+ * regex matched (`\d{1,3}`), so it is always a plain number and never author
+ * text.
+ *
+ * That is this attribute's guarantee, not a blanket one, and the difference
+ * matters to whoever edits next. The renderer DOES emit one attribute whose
+ * value came from the author: a link's `href`. It is safe for two specific
+ * reasons, and only while both hold — the link regex admits nothing but an
+ * `http(s)://` URL, so no `javascript:` or `data:` value can reach it, and
+ * escaping ran first, so every `"` inside it is already `&quot;` and the value
+ * cannot close its own quote. Every other attribute in the output is a
+ * constant this file writes.
  */
 export const REFERENCE_MARKER_ATTR = 'data-md-ref';
 
@@ -45,9 +60,9 @@ export const REFERENCE_MARKER_ATTR = 'data-md-ref';
  * The 1-based reference index behind a click inside rendered prose, or null.
  *
  * Pair this with ONE delegated listener on the container that holds the
- * `v-html`. The renderer must never emit an inline `onclick`: v-html may only
- * ever receive output with no author-controlled attributes, and an inline
- * handler would be an attribute the escape-first model does not cover.
+ * `v-html`. The renderer must never emit an inline `onclick`: an inline handler
+ * is an execution sink sitting in output whose only defence is that escaping
+ * ran first, and the marker needs no such attribute to work.
  */
 export function referenceMarkerIndex(target: EventTarget | null): number | null {
   const el = target as Element | null;
@@ -78,13 +93,66 @@ function escapeHtml(s: string): string {
 }
 
 /**
+ * Bracket-tolerant inline text: anything but a bracket, or one whole `[...]`
+ * group. Link text and image alt both use it, and they must keep using the
+ * SAME one.
+ *
+ * Real proposals write `[see note [2] here](https://…)`, and a text pattern
+ * that cannot cross the inner `]` matches nothing at all — the anchor is lost
+ * and, worse, the `[2]` left behind in the wreckage becomes a marker button
+ * embedded in literal text. One level of nesting is enough for every shape
+ * seen in the wild and keeps the pattern unambiguous (the two branches differ
+ * on their first character, so there is nothing to backtrack over).
+ *
+ * The alt shares it so that the image rule stays a SUPERSET of the link rule:
+ * whatever `[…](…)` shape the link rule could match, the image rule matches
+ * the `![…](…)` spelling of it first and lifts it out. That is what keeps
+ * `![a[1]b](url)` literal instead of an anchor with a stray "!" in front.
+ */
+const INLINE_TEXT = /(?:[^[\]]|\[[^[\]]*\])/.source;
+const IMAGE = new RegExp(`!\\[${INLINE_TEXT}*\\]\\([^\\s)]*\\)`, 'g');
+const LINK = new RegExp(`\\[(${INLINE_TEXT}+)\\]\\((https?:\\/\\/[^\\s)]+)\\)`, 'g');
+
+/** Placeholder shape. Angle-bracketed on purpose — see `renderInline`. */
+const SLOT = 'md-slot-';
+
+/** Park finished HTML in `slots` and hand back the token that stands for it. */
+function lift(slots: string[], html: string): string {
+  slots.push(html);
+  return `<${SLOT}${slots.length - 1}>`;
+}
+
+/**
+ * Put every lifted fragment back, leaving no token behind for ANY nesting.
+ *
+ * Highest slot first. A slot's contents were built from the string as it stood
+ * when that slot was created, so it can only ever mention slots that already
+ * existed — strictly lower-numbered ones. Walking down therefore reveals only
+ * tokens the loop has not reached yet, and the result is placeholder-free by
+ * construction rather than by the caller having guessed the nesting right.
+ *
+ * `split`/`join` rather than `String.replace`: a stored fragment is part
+ * author text, and `$&` or `$'` inside a replacement STRING would be expanded
+ * as a substitution pattern.
+ */
+function restoreSlots(s: string, slots: string[]): string {
+  let out = s;
+  for (let i = slots.length - 1; i >= 0; i -= 1) {
+    const token = `<${SLOT}${i}>`;
+    if (out.includes(token)) out = out.split(token).join(slots[i]);
+  }
+  return out;
+}
+
+/**
  * Inline formatting on already-escaped text.
  *
- * Everything that has finished rendering is LIFTED OUT into a placeholder
+ * Everything that has finished rendering is LIFTED OUT into a numbered slot
  * before the next rule runs, so no later rule can reach inside it. The
  * placeholder is spelled with angle brackets on purpose: escaping has already
- * turned every `<` in the author's text into `&lt;`, so author text cannot
- * forge one.
+ * turned every `<` in the author's text into `&lt;`, so a proposal that types
+ * `<md-slot-0>` arrives here as `&lt;md-slot-0&gt;` and stays visible text —
+ * it cannot forge a token and collect somebody else's rendered fragment.
  *
  * The order matters and is load-bearing:
  *  1. code spans — nothing formats inside `like this`.
@@ -95,34 +163,36 @@ function escapeHtml(s: string): string {
  *     exists for: a URL may legitimately contain `[12]`, and running the
  *     marker rule over a finished `<a href="…[12]…">` splices a control into
  *     the middle of its own href, breaking the link AND leaking raw markup.
+ *     It is also why a `[2]` inside LINK TEXT stays plain text: the anchor is
+ *     already in a slot by then, so a marker button is never nested inside an
+ *     anchor, which would be a control inside a control.
  *  5. `[n]` markers, over what is left: plain text only.
- * Restores run inner-last (images, then links, then code) because an earlier
- * placeholder can be nested inside a later one, never the other way round.
+ *
+ * Restore is `restoreSlots`, outermost-first. The old inner-last order assumed
+ * a slot could never contain another slot, which `[![alt](img)](href)` — a
+ * linked banner, ordinary in CIP-108 bodies — disproves: the image slot ends
+ * up INSIDE the link slot, so restoring images first found nothing to do and
+ * the raw token reached the DOM.
  */
 function renderInline(escaped: string, options: RenderMarkdownOptions): string {
-  const codes: string[] = [];
-  let s = escaped.replace(/`([^`]+)`/g, (_m, code) => {
-    codes.push(`<code>${code}</code>`);
-    return `<md-code-${codes.length - 1}>`;
-  });
+  const slots: string[] = [];
+
+  let s = escaped.replace(/`([^`]+)`/g, (_m, code) => lift(slots, `<code>${code}</code>`));
 
   // bold **text**
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
 
   // images stay literal — see the module header for why. Held verbatim so the
   // link rule below never sees them.
-  const images: string[] = [];
-  s = s.replace(/!\[[^\]]*\]\([^\s)]*\)/g, match => {
-    images.push(match);
-    return `<md-img-${images.length - 1}>`;
-  });
+  s = s.replace(IMAGE, match => lift(slots, match));
 
-  // links [text](http(s)://url) only - any other scheme is left as literal text
-  const links: string[] = [];
-  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_m, text, url) => {
-    links.push(`<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`);
-    return `<md-link-${links.length - 1}>`;
-  });
+  // links [text](http(s)://url) only - any other scheme is left as literal text.
+  // `url` is the one author-derived attribute value this renderer emits: the
+  // pattern restricts the scheme, and escaping already turned every `"` in it
+  // into `&quot;`, so it cannot close the quote it sits in.
+  s = s.replace(LINK, (_m, text, url) =>
+    lift(slots, `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`),
+  );
 
   // [n] reference markers, only where the caller says a reference exists.
   const has = options.hasReference;
@@ -136,9 +206,7 @@ function renderInline(escaped: string, options: RenderMarkdownOptions): string {
     });
   }
 
-  s = s.replace(/<md-img-(\d+)>/g, (_m, i) => images[Number(i)] ?? '');
-  s = s.replace(/<md-link-(\d+)>/g, (_m, i) => links[Number(i)] ?? '');
-  return s.replace(/<md-code-(\d+)>/g, (_m, i) => codes[Number(i)] ?? '');
+  return restoreSlots(s, slots);
 }
 
 interface ListItemLine {

@@ -189,6 +189,122 @@ describe('renderMarkdown, inline pass ordering', () => {
   });
 });
 
+// The inline pass parks each finished fragment in a numbered slot so no later
+// rule can reach inside it, and puts them all back at the end. A slot that is
+// still parked when the string leaves is a raw token in the DOM, which is both
+// a visible defect (the fragment it stood for is simply gone) and a claim the
+// renderer's own contract makes: the only tags in the output are its own.
+describe('renderMarkdown, no internal placeholder survives to the output', () => {
+  it('renders a linked image as an anchor whose text is the literal image markdown', () => {
+    // `[![alt](img)](href)` — a linked banner or logo, ordinary in CIP-108
+    // bodies. Both rules apply as written: the image degrades to literal text,
+    // and the anchor the author DID write survives with that text inside it.
+    // No destination is invented, and no <img> is fetched.
+    const out = renderMarkdown('[![Gero logo](https://img.test/logo.png)](https://gerowallet.io/)');
+    expect(out).toBe(
+      '<p><a href="https://gerowallet.io/" target="_blank" rel="noopener noreferrer">' +
+        '![Gero logo](https://img.test/logo.png)</a></p>',
+    );
+    expect(out).not.toContain('<img');
+    expect(out).not.toMatch(/md-slot-/);
+  });
+
+  it('restores every slot when they nest several deep', () => {
+    // code inside bold inside link text, with an image beside it: the image
+    // slot ends up INSIDE the link slot, which is the nesting the old
+    // inner-last restore order assumed could not happen.
+    const out = renderMarkdown('[**bold `code`** and ![img](https://i.test/x.png)](https://h.test/)');
+    expect(out).toBe(
+      '<p><a href="https://h.test/" target="_blank" rel="noopener noreferrer">' +
+        '<strong>bold <code>code</code></strong> and ![img](https://i.test/x.png)</a></p>',
+    );
+  });
+
+  it('leaves no token behind for any nesting of code, bold, image, link and [n]', () => {
+    const shapes = [
+      '[![alt](https://i.test/a.png)](https://h.test/)',
+      '[read `pool1abc`](https://a.test/)',
+      '**[bolded link](https://a.test/)**',
+      '[**bold text**](https://a.test/)',
+      '`[1] inside code`',
+      '![alt with [2] inside](https://i.test/a.png)',
+      '[link text with [2]](https://a.test/) and [2] outside',
+      '| [![a](https://i.test/a.png)](https://h.test/) | `x` |\n| --- | --- |\n| [2] | ok |',
+      '> [![a](https://i.test/a.png)](https://h.test/)',
+      '#### [![a](https://i.test/a.png)](https://h.test/)',
+      '- [![a](https://i.test/a.png)](https://h.test/)',
+    ];
+    for (const shape of shapes) {
+      const out = renderMarkdown(shape, { hasReference: () => true });
+      expect(out, shape).not.toMatch(/md-slot-/);
+      // Nothing in the output may look like a token of any generation.
+      expect(out, shape).not.toMatch(/<md-[a-z]+-\d+>/);
+    }
+  });
+
+  it('cannot be handed a forged token by the author, whatever it is spelled like', () => {
+    // The token is angle-bracketed precisely because escaping has already
+    // removed every `<` the author wrote, so a proposal that types one gets it
+    // back as visible text — it can neither collect a real fragment nor
+    // disappear.
+    const out = renderMarkdown('`real` then <md-slot-0> and <md-code-0>');
+    expect(out).toBe('<p><code>real</code> then &lt;md-slot-0&gt; and &lt;md-code-0&gt;</p>');
+  });
+
+  it('keeps a forged token literal even as the text of a real link', () => {
+    const out = renderMarkdown('[<md-slot-0>](https://a.test/) and `code`');
+    expect(out).toBe(
+      '<p><a href="https://a.test/" target="_blank" rel="noopener noreferrer">&lt;md-slot-0&gt;</a>' +
+        ' and <code>code</code></p>',
+    );
+  });
+});
+
+// A reference marker inside LINK TEXT used to cost the anchor outright: the
+// link pattern could not cross the inner `]`, so the line stayed literal text
+// with a pressable button sitting in the middle of it.
+describe('renderMarkdown, a [n] marker inside link text', () => {
+  const options = { hasReference: () => true };
+
+  it('keeps the anchor and leaves the marker as text inside it', () => {
+    const out = renderMarkdown('See [see note [2] here](https://example.test) please.', options);
+    expect(out).toBe(
+      '<p>See <a href="https://example.test" target="_blank" rel="noopener noreferrer">' +
+        'see note [2] here</a> please.</p>',
+    );
+  });
+
+  it('never nests a control inside the anchor', () => {
+    // Two interactive controls, one inside the other, is an accessibility
+    // defect however the click handling is wired.
+    const el = document.createElement('div');
+    el.innerHTML = renderMarkdown('[see note [2] here](https://example.test)', options);
+    const anchor = el.querySelector('a') as HTMLAnchorElement;
+    expect(anchor).toBeTruthy();
+    expect(anchor.textContent).toBe('see note [2] here');
+    expect(el.querySelectorAll('a button, a a')).toHaveLength(0);
+    expect(el.querySelectorAll('button')).toHaveLength(0);
+  });
+
+  it('still marks up the same marker where it stands outside a link', () => {
+    const el = document.createElement('div');
+    el.innerHTML = renderMarkdown('[see note [2] here](https://example.test) and [2].', options);
+    expect(el.querySelectorAll('a')).toHaveLength(1);
+    // Exactly one control, and it is not inside the anchor.
+    expect(el.querySelectorAll('button.md-ref')).toHaveLength(1);
+    expect(el.querySelectorAll('a button')).toHaveLength(0);
+  });
+
+  it('does not let a bracketed alt turn an image into an anchor with a stray "!"', () => {
+    // The alt tolerates the same one level of brackets the link text does, so
+    // the image rule still matches first and the whole thing stays literal.
+    const out = renderMarkdown('![a[1]b](https://x.test/i.png)', options);
+    expect(out).toBe('<p>![a[1]b](https://x.test/i.png)</p>');
+    expect(out).not.toContain('<a ');
+    expect(out).not.toContain('<button');
+  });
+});
+
 // Governance metadata is authored by whoever submitted the action — anyone can
 // submit one. These cases pin the escape-first contract for every construct the
 // governance surface added, because a table cell or a quote must not become an
