@@ -499,6 +499,7 @@
   </v-card>
 </template>
 <script setup lang="ts">
+import '@/shared/styles/compact-pagination.css';
 import { computed, getCurrentInstance, nextTick, onMounted, onUnmounted, ref, toRefs, watch } from 'vue';
 import { useTranslation } from '@/shared/composables/useTranslation';
 import StackedTokens from '@/modules/dashboard/components/StackedTokens.vue';
@@ -2151,92 +2152,8 @@ onUnmounted(() => {
   width: 100%;
 }
 
-/* Compact pagination styling */
-.transactions-table .compact-pagination .v-pagination__item {
-  width: auto !important;
-  height: 24px !important;
-  min-width: 24px !important;
-  max-height: 24px !important;
-  font-size: 12px !important;
-  margin: 0 4px !important;
-}
-
-.transactions-table .compact-pagination .v-pagination__item .v-btn {
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  min-height: 24px !important;
-  height: 24px !important;
-  width: auto !important;
-  min-width: 24px !important;
-  max-height: 24px !important;
-  padding: 0 4px !important;
-  font-size: 12px !important;
-  white-space: nowrap !important;
-}
-
-.transactions-table .compact-pagination .v-pagination__navigation {
-  width: 24px !important;
-  height: 24px !important;
-  min-width: 24px !important;
-  max-width: 24px !important;
-  max-height: 24px !important;
-  margin: 0 8px !important;
-}
-
-.transactions-table .compact-pagination .v-pagination__navigation .v-btn {
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  min-height: 24px !important;
-  height: 24px !important;
-  width: 24px !important;
-  min-width: 24px !important;
-  max-width: 24px !important;
-  max-height: 24px !important;
-  padding: 0 !important;
-}
-
-.transactions-table .compact-pagination .v-pagination__navigation .v-icon {
-  font-size: 16px !important;
-}
-
-/* Additional fallback with deep selectors */
-.compact-pagination >>> .v-pagination__item {
-  width: auto !important;
-  height: 24px !important;
-  min-width: 24px !important;
-  font-size: 12px !important;
-  margin: 0 4px !important;
-}
-
-.compact-pagination >>> .v-pagination__item .v-btn {
-  width: auto !important;
-  height: 24px !important;
-  min-width: 24px !important;
-  min-height: 24px !important;
-  padding: 0 4px !important;
-  font-size: 12px !important;
-  white-space: nowrap !important;
-}
-
-.compact-pagination >>> .v-pagination__navigation {
-  width: 24px !important;
-  height: 24px !important;
-  margin: 0 8px !important;
-}
-
-.compact-pagination >>> .v-pagination__navigation .v-btn {
-  width: 24px !important;
-  height: 24px !important;
-  min-width: 24px !important;
-  min-height: 24px !important;
-  padding: 0 !important;
-}
-
-.compact-pagination.ma-0 {
-  margin: 0 !important;
-}
+/* .compact-pagination is the shared recipe in
+   src/shared/styles/compact-pagination.css (imported in the script block). */
 
 .top-level-search.v-text-field {
   background: transparent !important;

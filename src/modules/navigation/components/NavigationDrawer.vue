@@ -364,7 +364,10 @@ const items = computed((): NavigationItemUnion[] => {
     { title: t('navigation.transactions'), icon: 'mdi-swap-horizontal', link: '/transactions', enabled: networks.resolveTransactionsSupport(loggedWallet.value?.chain, loggedWallet.value?.network) && (loggedWallet.value?.chain === Blockchain.MIDNIGHT ? midnightTransactions.value.length > 0 : transactions.value.length > 0), notificationDot: hasNewFeaturesInPath(['transactions']) },
     { title: t('navigation.midnightProofServer'), icon: 'mdi-server-security', link: '/proof-server', enabled: isMidnight.value },
     { title: t('navigation.staking'), icon: assts.coinsStacked, link: '/staking', enabled: isStakingEnabled },
-    { title: t('navigation.governance'), icon: assts.governance, link: '/governance', enabled: networks.resolveGovernanceSupport(loggedWallet.value?.chain, loggedWallet.value?.network) },
+    // Governance — mirrors the router's `governance` guard exactly (network
+    // support AND the master feature flag). Keep the two textually identical.
+    { title: t('navigation.governance'), icon: assts.governance, link: '/governance', enabled: networks.resolveGovernanceSupport(loggedWallet.value?.chain, loggedWallet.value?.network) && featureFlagsStore.isGovernanceEnabled() },
+    { title: t('navigation.dao'), icon: assts.dao, link: '/dao', enabled: networks.resolveDaoSupport(loggedWallet.value?.chain, loggedWallet.value?.network) },
     {
       title: t('navigation.geroCard'),
       icon: assts.cardIcon,
