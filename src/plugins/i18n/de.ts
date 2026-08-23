@@ -1620,7 +1620,6 @@ export default {
   'governance.rationale': 'Begründung',
   'governance.proposalName': 'Vorschlagsname',
   'governance.publicProfileSigned': 'Öffentliches Profil, signiert mit Ihrem DRep-Schlüssel',
-  'governance.rationaleAttached': 'Begründung angehängt',
   'governance.rationaleLongRun': 'Langfristig {pct}%',
   'governance.rationaleRecent': 'Begründungen, letzte {n} Abstimmungen',
   'governance.readWhy': 'Gründe nachlesen',

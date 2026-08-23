@@ -1395,7 +1395,6 @@ export default {
   'governance.publicProfileSigned': 'Public profile signed by your DRep key',
   'governance.quorumUnavailable': 'Committee quorum not available',
   'governance.rationale': 'Rationale',
-  'governance.rationaleAttached': 'Rationale attached',
   'governance.rationaleLongRun': 'Long run {pct}%',
   'governance.rationaleRecent': 'Rationales, last {n} votes',
   'governance.readWhy': 'Read why',
