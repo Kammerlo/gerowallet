@@ -35,10 +35,14 @@
       {{ voteLabel }}
     </span>
 
-    <!-- Absent block time renders nothing at all: no dash, no epoch-0 date. -->
-    <span v-if="votedOn" class="t-caption g-num vote-row__when" :aria-label="votedOnLabel">
-      {{ votedOn }}
-    </span>
+    <!-- Absent block time renders nothing at all: no dash, no epoch-0 date.
+         The date is bare on screen but reads as "Voted <date>" to a screen
+         reader, through real text rather than an `aria-label` on a plain span,
+         which has no role to carry one and is simply dropped. -->
+    <time v-if="votedOn" class="t-caption g-num vote-row__when" :datetime="votedOnIso">
+      <span aria-hidden="true">{{ votedOn }}</span>
+      <span class="vote-row__sr-only">{{ votedOnLabel }}</span>
+    </time>
 
     <a
       v-if="row.rationaleHref"
@@ -108,6 +112,12 @@ const votedOn = computed(() => {
   return new Date(props.row.votedAt * 1000).toLocaleDateString();
 });
 
+/** Machine-readable date for `<time datetime>`; empty when there is no block time. */
+const votedOnIso = computed(() => {
+  if (props.row.votedAt === null) return '';
+  return new Date(props.row.votedAt * 1000).toISOString().slice(0, 10);
+});
+
 const votedOnLabel = computed(() =>
   votedOn.value ? String(t('governance.votedOn', { date: votedOn.value })) : '',
 );
@@ -157,7 +167,12 @@ function openVoter(): void {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 24px floor on both row controls (WCAG 2.2 target size, minimum). The label is
+   wider than that on its own; the height is what a text link lacks. */
 .vote-row__name--link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
   background: none;
   border: none;
   padding: 0;
@@ -215,12 +230,27 @@ function openVoter(): void {
 .vote-row__rationale {
   display: inline-flex;
   align-items: center;
+  min-height: 24px;
+  min-width: 24px;
   color: var(--g-accent);
   text-decoration: none;
   white-space: nowrap;
 }
 .vote-row__rationale:hover {
   text-decoration: underline;
+}
+/* Text for assistive tech only. The visible date is short by design; the full
+   sentence lives here rather than in an attribute nothing reads. */
+.vote-row__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 @media (max-width: 720px) {
   .vote-row {

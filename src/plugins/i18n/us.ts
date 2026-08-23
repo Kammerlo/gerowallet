@@ -4851,8 +4851,17 @@ export default {
   'common.clearFilters': 'Clear filters',
   'governance.positionsTitle': 'Recorded positions',
   'governance.positionsCountsNote': 'Counts of votes cast, one per voter. Stake weight decides the outcome and is shown on the Overview tab.',
-  'governance.positionsNeutrality': 'Positions are listed newest first. Gero does not rank voters or weight this list by voting power.',
+  'governance.positionsNeutrality': 'Gero does not rank voters or weight this list by voting power.',
+  // The ordering sentence is separate from the neutrality promise because it is
+  // only true of one ordering at a time.
+  'governance.positionsOrderNewest': 'Positions are listed newest first.',
+  'governance.positionsOrderOldest': 'Positions are listed oldest first.',
+  'governance.positionsOrderUntimed': 'No vote times were recorded, so positions are listed by body and voter ID.',
+  'governance.positionsUndatedLast': 'Positions with no recorded time are listed last.',
   'governance.positionsCapped': 'Showing the first {n} positions of {total}. Counts and filters cover only those.',
+  'governance.positionsCappedUnknownTotal': 'Showing the first {n} positions. There may be more, and counts and filters cover only these.',
+  'governance.positionsNotLoaded': 'Positions for this action have not been loaded yet.',
+  'governance.loadPositions': 'Load positions',
   'governance.positionsLoadFailed': 'Could not load the positions for this action.',
   'governance.rationaleCoverage': '{n} of {total} positions carry a rationale',
   'governance.noVotesYetOpen': 'This action is still open. Positions appear as they are cast.',
@@ -4876,6 +4885,7 @@ export default {
   'governance.uncastCountsAgainst': 'Stake that does not vote stays in the total, so it works against the yes share.',
   'governance.keywordNoPosition': 'Your delegation is a standing position, so there is no vote to show here.',
   'governance.noDelegationNoPosition': 'You have not delegated, so no position here is yours.',
+  'governance.delegationNotLoaded': 'Your delegation has not loaded yet, so we cannot tell whether a position here is yours.',
   'governance.positionUnknown': 'Not every position is loaded, so we cannot tell whether this vote was cast.',
 
 }

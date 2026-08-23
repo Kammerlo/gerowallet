@@ -83,6 +83,73 @@ describe('loadActionVotes', () => {
     expect(state.votesTruncated).toBe(false);
   });
 
+  it('drops the previous action\'s positions the moment the displayed action changes', async () => {
+    getProposalVotes.mockImplementation(servePages(3));
+    await governanceActionsStore.loadActionVotes('a#0', 'Mainnet');
+    expect(state.currentVotes).toHaveLength(3);
+
+    await governanceActionsStore.loadAction('b#0', 'Mainnet');
+
+    // Leaving A's voters under B's heading would attribute them to B.
+    expect(state.currentVotes).toEqual([]);
+    expect(state.votesTotal).toBeNull();
+    expect(state.votesTruncated).toBe(false);
+    expect(state.votesLoaded).toBe(false);
+  });
+
+  it('refuses a late write from the action the reader navigated away from', async () => {
+    // A follows up to five pages, so it is in flight for five round trips. If it
+    // lands after the reader opens B, its voters must not appear under B.
+    let releaseA: (() => void) | null = null;
+    getProposalVotes.mockImplementation((id: string, _network: string, page: number) => {
+      if (id === 'a#0') {
+        return new Promise(resolve => {
+          releaseA = () => resolve(pageOf([row(DREP), row(DREP)], page, 2));
+        });
+      }
+      return Promise.resolve(pageOf([row(null)], page, 1));
+    });
+
+    const late = governanceActionsStore.loadActionVotes('a#0', 'Mainnet');
+    await governanceActionsStore.loadAction('b#0', 'Mainnet');
+    await governanceActionsStore.loadActionVotes('b#0', 'Mainnet');
+
+    expect(state.currentVotes).toHaveLength(1);
+    expect(state.votesTotal).toBe(1);
+
+    releaseA?.();
+    await late;
+
+    // B's list, B's count, B's flags — untouched by A's late arrival.
+    expect(state.currentVotes).toHaveLength(1);
+    expect(state.currentVotes[0].drepId).toBeNull();
+    expect(state.votesTotal).toBe(1);
+    expect(state.votesLoading).toBe(false);
+    expect(state.votesLoaded).toBe(true);
+  });
+
+  it('keeps a late FAILURE from erasing the action now on screen', async () => {
+    let rejectA: (() => void) | null = null;
+    getProposalVotes.mockImplementation((id: string, _network: string, page: number) => {
+      if (id === 'a#0') {
+        return new Promise((_resolve, reject) => {
+          rejectA = () => reject(new Error('upstream down'));
+        });
+      }
+      return Promise.resolve(pageOf([row(null)], page, 1));
+    });
+
+    const late = governanceActionsStore.loadActionVotes('a#0', 'Mainnet');
+    await governanceActionsStore.loadAction('b#0', 'Mainnet');
+    await governanceActionsStore.loadActionVotes('b#0', 'Mainnet');
+
+    rejectA?.();
+    await late;
+
+    expect(state.votesError).toBeNull();
+    expect(state.currentVotes).toHaveLength(1);
+  });
+
   it('keeps a failure distinguishable from an action nobody voted on', async () => {
     getProposalVotes.mockRejectedValue(new Error('upstream down'));
 

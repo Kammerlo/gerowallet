@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import {
   filterPositions,
   isYourRow,
+  orderNoteKey,
   resolveYourPosition,
   sortPositions,
   summarizePositions,
@@ -68,6 +69,24 @@ describe('toPositionRows', () => {
     expect(rows[1].rationaleHref).toBeUndefined();
   });
 
+  it('still records that an unlinkable rationale EXISTS', () => {
+    // About a quarter of published rationales are ipfs://. Withholding the link
+    // is right; reporting the voter as having published nothing is not.
+    const rows = toPositionRows([
+      vote({ rationaleUrl: 'ipfs://QmSomething' }),
+      vote({ rationaleUrl: 'https://a.test/why.json' }),
+      vote({ rationaleUrl: '   ' }),
+      vote(),
+    ]);
+    expect(rows.map(row => row.hasRationale)).toEqual([true, true, false, false]);
+    expect(rows.map(row => row.rationaleHref)).toEqual([
+      undefined,
+      'https://a.test/why.json',
+      undefined,
+      undefined,
+    ]);
+  });
+
   it('only claims a script voter on an explicit true', () => {
     // Unknown is not "not a script": the marker renders in the positive only.
     expect(toPositionRows([vote({ hasScript: null })])[0].hasScript).toBe(false);
@@ -127,6 +146,31 @@ describe('summarizePositions', () => {
     expect(some.withRationale).toBe(1);
     expect(some.anyVotedAt).toBe(true);
   });
+
+  it('counts rationales that exist apart from rationales that can be opened', () => {
+    // The head count is about the voters; the link count is about this wallet.
+    const summary = summarizePositions(
+      toPositionRows([
+        vote({ rationaleUrl: 'ipfs://QmSomething' }),
+        vote({ drepId: DREP_B, rationaleUrl: 'https://a.test/why.json' }),
+        vote({ voterRole: 'SPO', drepId: null, voterHash: 'cc'.repeat(28) }),
+      ]),
+    );
+    expect(summary.withRationale).toBe(2);
+    expect(summary.withRationaleLink).toBe(1);
+  });
+
+  it('reports a list that mixes dated and undated rows', () => {
+    // "Newest first" needs a caveat exactly here, and nowhere else.
+    const mixed = summarizePositions(toPositionRows([vote({ votedAt: 100 }), vote({ drepId: DREP_B })]));
+    expect(mixed).toMatchObject({ anyVotedAt: true, anyMissingVotedAt: true });
+
+    const dated = summarizePositions(toPositionRows([vote({ votedAt: 100 })]));
+    expect(dated).toMatchObject({ anyVotedAt: true, anyMissingVotedAt: false });
+
+    const undated = summarizePositions(toPositionRows([vote()]));
+    expect(undated).toMatchObject({ anyVotedAt: false, anyMissingVotedAt: true });
+  });
 });
 
 describe('sortPositions', () => {
@@ -158,6 +202,24 @@ describe('sortPositions', () => {
   });
 });
 
+describe('orderNoteKey', () => {
+  it('describes the ordering in force, not the default one', () => {
+    // The footnote asserted "newest first" while the reader had chosen oldest
+    // first — a statement about the list that the list contradicted on screen.
+    const dated = { anyVotedAt: true };
+    expect(orderNoteKey('newest', dated)).toBe('governance.positionsOrderNewest');
+    expect(orderNoteKey('oldest', dated)).toBe('governance.positionsOrderOldest');
+  });
+
+  it('claims no time ordering when nothing carries a time', () => {
+    // With no block times the sort falls back to body and id, so neither
+    // direction is a true description of the list.
+    const undated = { anyVotedAt: false };
+    expect(orderNoteKey('newest', undated)).toBe('governance.positionsOrderUntimed');
+    expect(orderNoteKey('oldest', undated)).toBe('governance.positionsOrderUntimed');
+  });
+});
+
 describe('filterPositions', () => {
   const rows = toPositionRows([
     vote({ voterRole: 'DRep', drepId: DREP_A, vote: 'Yes', rationaleUrl: 'https://a.test/x' }),
@@ -173,6 +235,17 @@ describe('filterPositions', () => {
 
   it('filters to rows that published a rationale', () => {
     expect(filterPositions(rows, { ...NO_FILTERS, rationaleOnly: true })).toHaveLength(1);
+  });
+
+  it('keeps an ipfs:// rationale in the filter it belongs to', () => {
+    // The filter asks "who explained their vote", not "whose explanation opens
+    // in this browser". Filtering on the href hid every IPFS-hosted rationale.
+    const withIpfs = toPositionRows([
+      vote({ drepId: DREP_A, rationaleUrl: 'https://a.test/x' }),
+      vote({ drepId: DREP_B, rationaleUrl: 'ipfs://QmSomething' }),
+      vote({ voterRole: 'SPO', drepId: null, voterHash: 'cc'.repeat(28) }),
+    ]);
+    expect(filterPositions(withIpfs, { ...NO_FILTERS, rationaleOnly: true })).toHaveLength(2);
   });
 
   it('searches the resolved name as well as every id form', () => {
@@ -204,6 +277,20 @@ describe('isYourRow / resolveYourPosition', () => {
     expect(resolveYourPosition(toPositionRows([vote()]), null, true)).toEqual({ kind: 'none' });
   });
 
+  it('does not call an unread delegation "you have not delegated"', () => {
+    // Both states arrive as a null identity, and only one of them is a fact
+    // about the user. Collapsing them puts a false statement on screen for as
+    // long as the account takes to load.
+    const rows = toPositionRows([vote()]);
+    expect(resolveYourPosition(rows, null, true, true)).toEqual({ kind: 'identityUnknown' });
+    expect(resolveYourPosition(rows, null, true, false)).toEqual({ kind: 'none' });
+  });
+
+  it('ignores the unknown flag once an identity is actually in hand', () => {
+    const rows = toPositionRows([vote({ drepId: DREP_A })]);
+    expect(resolveYourPosition(rows, { drepId: CRED_A, kind: 'delegated' }, true, true).kind).toBe('voted');
+  });
+
   it('reports the vote when the delegated DRep is on the list', () => {
     const rows = toPositionRows([vote({ drepId: DREP_B, vote: 'No' }), vote({ drepId: DREP_A, vote: 'Yes' })]);
     const result = resolveYourPosition(rows, { drepId: CRED_A, kind: 'delegated' }, true);
@@ -216,7 +303,12 @@ describe('isYourRow / resolveYourPosition', () => {
 
   it('distinguishes voting as yourself from voting through a DRep', () => {
     const rows = toPositionRows([vote({ drepId: DREP_A })]);
-    expect(resolveYourPosition(rows, { drepId: DREP_A, kind: 'self' }, true).who).toBe('self');
+    // Matched on the whole result: `.who` does not exist on every branch of the
+    // union, and reading it off the union is a type error.
+    expect(resolveYourPosition(rows, { drepId: DREP_A, kind: 'self' }, true)).toMatchObject({
+      kind: 'voted',
+      who: 'self',
+    });
   });
 
   it('claims "has not voted" only from a COMPLETE list', () => {

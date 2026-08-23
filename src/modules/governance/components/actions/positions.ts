@@ -12,6 +12,12 @@
  *     The wallet holds one id form and a vote row may carry another.
  *  3. A truncated list cannot prove a vote is absent. "Your DRep has not voted"
  *     is a claim about the user, and it is only made from a complete list.
+ *
+ * EXISTENCE and RENDERABILITY are also kept apart, because conflating them
+ * publishes a false number: roughly a quarter of published rationales are
+ * `ipfs://`, which is a real rationale that this wallet cannot turn into a safe
+ * href. Counting only the linkable ones reported those voters as having
+ * published nothing.
  */
 
 import type { GovVote } from '@/api/governance.types';
@@ -40,7 +46,13 @@ export interface PositionRow {
   vote: string;
   /** Unix seconds, or null when the projection does not carry a block time. */
   votedAt: number | null;
-  /** Safe http(s) href of the voter's published rationale, or undefined. */
+  /**
+   * Did this voter publish a rationale at all? True for `ipfs://` and every
+   * other scheme this wallet will not link to — the anchor is on chain either
+   * way, and only the LINK is withheld.
+   */
+  hasRationale: boolean;
+  /** Safe http(s) href of that rationale, or undefined when it is not linkable. */
   rationaleHref: string | undefined;
   /** Only ever true from an explicit `true`. Unknown is not "not a script". */
   hasScript: boolean;
@@ -54,9 +66,14 @@ export interface PositionSummary {
   abstain: number;
   /** Counts per role, in a fixed order, omitting roles with no rows. */
   byRole: Array<{ role: string; count: number }>;
+  /** Voters who published a rationale, linkable or not. This is the head count. */
   withRationale: number;
+  /** Of those, the ones this wallet can open. Drives the affordance, never the count. */
+  withRationaleLink: number;
   /** True when at least one row carries a block time, so ordering by date means something. */
   anyVotedAt: boolean;
+  /** True when at least one row does NOT, so "newest first" needs a caveat. */
+  anyMissingVotedAt: boolean;
 }
 
 export interface PositionFilters {
@@ -71,6 +88,11 @@ export type PositionSort = 'newest' | 'oldest';
 export type YourPosition =
   /** No delegation and no DRep of our own: nothing on this list is the user's. */
   | { kind: 'none' }
+  /**
+   * The wallet's own delegation has not been read yet. NOT the same as `none`:
+   * one is a fact about the user, the other is a gap in what we loaded.
+   */
+  | { kind: 'identityUnknown' }
   /** Delegated to always-abstain / always-no-confidence: a standing position, never a row. */
   | { kind: 'keyword'; who: PositionOwner }
   | { kind: 'voted'; who: PositionOwner; row: PositionRow }
@@ -93,6 +115,11 @@ function toVotedAt(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 }
 
+/** Did the voter publish a rationale anchor? Any non-empty string counts. */
+function toHasRationale(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 export function toPositionRows(votes: GovVote[]): PositionRow[] {
   return (votes ?? []).map((vote, i) => {
     const role = String(vote.voterRole ?? '');
@@ -109,6 +136,7 @@ export function toPositionRows(votes: GovVote[]): PositionRow[] {
       drepId: vote.drepId ?? null,
       vote: String(vote.vote ?? ''),
       votedAt: toVotedAt(vote.votedAt),
+      hasRationale: toHasRationale(vote.rationaleUrl),
       rationaleHref: safeExternalHref(vote.rationaleUrl),
       hasScript: vote.hasScript === true,
       isDRep,
@@ -129,14 +157,19 @@ export function summarizePositions(rows: PositionRow[]): PositionSummary {
   let no = 0;
   let abstain = 0;
   let withRationale = 0;
+  let withRationaleLink = 0;
   let anyVotedAt = false;
+  let anyMissingVotedAt = false;
 
   for (const row of rows) {
     if (row.vote === 'Yes') yes += 1;
     else if (row.vote === 'No') no += 1;
     else if (row.vote === 'Abstain') abstain += 1;
-    if (row.rationaleHref) withRationale += 1;
+    // Published, not linkable: an `ipfs://` anchor is a rationale that exists.
+    if (row.hasRationale) withRationale += 1;
+    if (row.rationaleHref) withRationaleLink += 1;
     if (row.votedAt !== null) anyVotedAt = true;
+    else anyMissingVotedAt = true;
     if (row.role) byRole.set(row.role, (byRole.get(row.role) ?? 0) + 1);
   }
 
@@ -149,7 +182,9 @@ export function summarizePositions(rows: PositionRow[]): PositionSummary {
       .map(([role, count]) => ({ role, count }))
       .sort((a, b) => roleRank(a.role) - roleRank(b.role)),
     withRationale,
+    withRationaleLink,
     anyVotedAt,
+    anyMissingVotedAt,
   };
 }
 
@@ -171,7 +206,9 @@ export function filterPositions(
   return rows.filter(row => {
     if (filters.role !== 'all' && row.role !== filters.role) return false;
     if (filters.choice !== 'all' && row.vote !== filters.choice) return false;
-    if (filters.rationaleOnly && !row.rationaleHref) return false;
+    // Existence, not linkability: filtering on the href would hide every voter
+    // whose rationale lives on IPFS.
+    if (filters.rationaleOnly && !row.hasRationale) return false;
     if (needle && !matchesSearch(row, needle, nameOf(row))) return false;
     return true;
   });
@@ -196,6 +233,22 @@ export function sortPositions(rows: PositionRow[], order: PositionSort): Positio
   });
 }
 
+/**
+ * The i18n key that describes how `sortPositions` ACTUALLY ordered the list.
+ *
+ * The footnote used to assert "newest first" unconditionally, which was false
+ * as soon as the reader picked oldest first and meaningless on a list where no
+ * row carries a block time. Same pattern as `useGovernanceStatus.copyKey`: the
+ * claim is chosen where the ordering is known, not at render time.
+ */
+export function orderNoteKey(
+  order: PositionSort,
+  summary: Pick<PositionSummary, 'anyVotedAt'>,
+): string {
+  if (!summary.anyVotedAt) return 'governance.positionsOrderUntimed';
+  return order === 'oldest' ? 'governance.positionsOrderOldest' : 'governance.positionsOrderNewest';
+}
+
 /** True when this row is the DRep the wallet votes through. */
 export function isYourRow(row: PositionRow, identity: PositionIdentity | null): boolean {
   if (!identity || !row.isDRep) return false;
@@ -206,15 +259,23 @@ export function isYourRow(row: PositionRow, identity: PositionIdentity | null): 
 /**
  * What can honestly be said about the user's own position on this action.
  *
- * `complete` is the guard that keeps this from lying: with a truncated list, a
- * missing row means "not found in the part we loaded", not "did not vote".
+ * Two guards keep this from lying, and they are separate facts:
+ *
+ *  - `complete` — with a truncated list, a missing row means "not found in the
+ *    part we loaded", not "did not vote".
+ *  - `identityUnknown` — a null identity while the wallet's delegation is still
+ *    being read is NOT "you have not delegated". Rendering that as a statement
+ *    about the user is the same conflation the other branches exist to avoid.
  */
 export function resolveYourPosition(
   rows: PositionRow[],
   identity: PositionIdentity | null,
   complete: boolean,
+  identityUnknown = false,
 ): YourPosition {
-  if (!identity?.drepId) return { kind: 'none' };
+  // An identity in hand settles the question whatever the caller says, so the
+  // flag is only consulted when there is none.
+  if (!identity?.drepId) return identityUnknown ? { kind: 'identityUnknown' } : { kind: 'none' };
   if ((KEYWORD_DREPS as readonly string[]).includes(identity.drepId)) {
     return { kind: 'keyword', who: identity.kind };
   }

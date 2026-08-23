@@ -197,6 +197,30 @@ function message(error: unknown, fallback: string): string {
   return (error as { message?: string })?.message || fallback;
 }
 
+/**
+ * Generation counter for the votes slice.
+ *
+ * `loadActionVotes` follows up to `MAX_VOTE_PAGES` pages, so it is in flight for
+ * five sequential round trips. Without a token, a scroll back to action A that
+ * resolves after the user has opened action B writes A's voters, A's total and
+ * A's truncation flag under B's heading — a list of voters attributed to the
+ * wrong action, which is exactly the claim this tab must never make. Only the
+ * newest request may write, and switching the displayed action invalidates
+ * whatever is still running.
+ */
+let votesRequest = 0;
+
+/** Invalidate any votes fetch in flight and blank the slice it would have written. */
+function resetVotes(): void {
+  votesRequest += 1;
+  state.currentVotes = [];
+  state.votesTotal = null;
+  state.votesLoading = false;
+  state.votesLoaded = false;
+  state.votesError = null;
+  state.votesTruncated = false;
+}
+
 const actions = {
   state,
 
@@ -237,11 +261,9 @@ const actions = {
     state.actionError = null;
     state.currentAction = null;
     state.currentSummary = null;
-    state.currentVotes = [];
-    state.votesTotal = null;
-    state.votesLoaded = false;
-    state.votesError = null;
-    state.votesTruncated = false;
+    // The displayed action is changing, so the previous action's votes — loaded
+    // or still arriving — stop being about anything on screen.
+    resetVotes();
 
     const [detail, summary] = await Promise.allSettled([
       governanceApi.getProposal(govActionId, network),
@@ -339,21 +361,28 @@ const actions = {
    * able to tell them apart.
    */
   async loadActionVotes(govActionId: string, network: string): Promise<void> {
+    const token = ++votesRequest;
     state.votesLoading = true;
     state.votesError = null;
     try {
       const result = await fetchVotePages(govActionId, network, MAX_VOTE_PAGES);
+      // Superseded: another action is on screen now, so not even `votesLoading`
+      // may be touched — that flag belongs to the newer request.
+      if (token !== votesRequest) return;
       state.currentVotes = result.items;
       state.votesTotal = result.total;
       state.votesTruncated = result.truncated;
     } catch (error) {
+      if (token !== votesRequest) return;
       state.currentVotes = [];
       state.votesTotal = null;
       state.votesTruncated = false;
       state.votesError = message(error, 'Failed to load the positions for this action');
     } finally {
-      state.votesLoading = false;
-      state.votesLoaded = true;
+      if (token === votesRequest) {
+        state.votesLoading = false;
+        state.votesLoaded = true;
+      }
     }
   },
 
@@ -365,14 +394,9 @@ const actions = {
     state.error = null;
     state.currentAction = null;
     state.currentSummary = null;
-    state.currentVotes = [];
     state.actionLoading = false;
     state.actionError = null;
-    state.votesTotal = null;
-    state.votesLoading = false;
-    state.votesLoaded = false;
-    state.votesError = null;
-    state.votesTruncated = false;
+    resetVotes();
     state.filters.type = null;
     state.filters.status = null;
     state.yourVotes = emptyYourVotes();

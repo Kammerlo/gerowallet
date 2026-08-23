@@ -37,7 +37,10 @@ function vote(over: Partial<GovVote> = {}): GovVote {
 function mountPanel(props: Record<string, unknown> = {}): Wrapper<Vue> {
   return mount(PositionsPanel, {
     mocks: { $t },
-    propsData: { votes: [vote()], total: 1, chain: 'Cardano', network: 'Mainnet', ...props },
+    // `loaded` defaults to false on the component, because an unfetched list
+    // must not read as "nobody voted". Every case below that is ABOUT the
+    // fetched list therefore says so; the not-yet-loaded case passes false.
+    propsData: { votes: [vote()], total: 1, loaded: true, chain: 'Cardano', network: 'Mainnet', ...props },
     stubs: {
       'v-icon': true,
       'v-chip': true,
@@ -117,6 +120,32 @@ describe('PositionsPanel summary', () => {
     await settle();
 
     expect(wrapper.html()).toContain('governance.positionsCapped:{"n":1,"total":238}');
+  });
+
+  it('finishes the sentence when upstream reports no total', async () => {
+    // The store produces this state deliberately (a null total is "the server
+    // does not count this list"), and "of ." is not something to render.
+    wrapper = mountPanel({ votes: [vote()], total: null, truncated: true });
+    await settle();
+
+    const html = wrapper.html();
+    expect(html).toContain('governance.positionsCappedUnknownTotal:{"n":1}');
+    expect(html).not.toContain('governance.positionsCapped:{');
+  });
+
+  it('counts an ipfs:// rationale as published while offering no link', async () => {
+    // The count is about the voters. The link is about what this wallet can
+    // safely open, and the external-fetch note only applies where one exists.
+    wrapper = mountPanel({
+      votes: [vote({ rationaleUrl: 'ipfs://QmSomething' }), vote({ drepId: DREP_B })],
+      total: 2,
+    });
+    await settle();
+
+    const html = wrapper.html();
+    expect(html).toContain('governance.rationaleCoverage:{"n":1,"total":2}');
+    expect(html).not.toContain('governance.readWhy');
+    expect(html).not.toContain('governance.rationaleExternalNote');
   });
 });
 
@@ -198,6 +227,18 @@ describe('PositionsPanel your-DRep callout', () => {
     expect(wrapper.html()).toContain('governance.noDelegationNoPosition');
     expect(wrapper.find('.your-position').exists()).toBe(false);
   });
+
+  it('does not state a delegation it has not read yet', async () => {
+    // Same null identity, different fact: the account has not arrived. Saying
+    // "you have not delegated" here is a claim about the user, made blind.
+    wrapper = mountPanel({ votes: [vote()], total: 1, identity: null, identityUnknown: true });
+    await settle();
+
+    const html = wrapper.html();
+    expect(html).toContain('governance.delegationNotLoaded');
+    expect(html).not.toContain('governance.noDelegationNoPosition');
+    expect(wrapper.find('.your-position').exists()).toBe(false);
+  });
 });
 
 describe('PositionsPanel rows', () => {
@@ -245,6 +286,39 @@ describe('PositionsPanel rows', () => {
     expect(getDRepsPaginated).toHaveBeenCalledTimes(1);
   });
 
+  it('walks the whole directory so a name past page 1 still resolves', async () => {
+    // Mainnet passed 1,682 registered DReps against a 500-row page, so one page
+    // left most voters unnamed and the rows fell back to the hex ids this index
+    // exists to remove. The walk is per PAGE, never per row.
+    getDRepsPaginated.mockImplementation((params: { page?: number }) =>
+      Promise.resolve({
+        items:
+          (params?.page ?? 1) === 1
+            ? [{ drep_id: DREP_B, metadata: { meta_json: { body: { givenName: 'FirstPage' } } } }]
+            : [{ drep_id: DREP_A, metadata: { meta_json: { body: { givenName: 'CryptoCrow' } } } }],
+        meta: { page: params?.page ?? 1, total_items: 600, per_page: 500, total_pages: 2 },
+      }),
+    );
+    wrapper = mountPanel({ votes: [vote({ drepId: DREP_A })], total: 1 });
+    await settle();
+    await settle();
+
+    expect(getDRepsPaginated).toHaveBeenCalledTimes(2);
+    expect(wrapper.findAll('.vote-row').at(0).text()).toContain('CryptoCrow');
+  });
+
+  it('gives the vote date to assistive tech as text, not as a dead attribute', async () => {
+    // `aria-label` on a plain <span> has no role to attach to and is dropped.
+    wrapper = mountPanel({ votes: [vote({ votedAt: 1787463005 })], total: 1 });
+    await settle();
+
+    const when = wrapper.find('.vote-row__when');
+    expect(when.element.tagName).toBe('TIME');
+    expect(when.attributes('aria-label')).toBeUndefined();
+    expect(when.attributes('datetime')).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(when.text()).toContain('governance.votedOn');
+  });
+
   it('still renders every row when the name lookup fails outright', async () => {
     getDRepsPaginated.mockRejectedValue(new Error('directory down'));
     wrapper = mountPanel({ votes: [vote(), vote({ drepId: DREP_B })], total: 2 });
@@ -262,6 +336,27 @@ describe('PositionsPanel states', () => {
     const html = wrapper.html();
     expect(html).toContain('governance.positionsLoadFailed');
     expect(html).not.toContain('governance.noVotesYet');
+  });
+
+  it('does not report an empty list it never fetched as "nobody voted"', async () => {
+    // Not-yet-loaded, loaded-and-empty and failed are three different facts.
+    // The store carries `votesLoaded` for exactly this, and the panel now reads
+    // it instead of treating any empty array as an answer.
+    wrapper = mountPanel({ votes: [], total: null, loaded: false, actionOpen: true });
+    await settle();
+
+    const html = wrapper.html();
+    expect(html).toContain('governance.positionsNotLoaded');
+    expect(html).toContain('governance.loadPositions');
+    expect(html).not.toContain('governance.noVotesYet');
+  });
+
+  it('offers a way out of the not-loaded state rather than a dead end', async () => {
+    wrapper = mountPanel({ votes: [], total: null, loaded: false });
+    await settle();
+
+    await wrapper.find('.positions__more button').trigger('click');
+    expect(wrapper.emitted('retry')).toBeTruthy();
   });
 
   it('invites the reader back when an open action has no positions yet', async () => {
@@ -311,5 +406,67 @@ describe('PositionsPanel states', () => {
 
     expect(wrapper.html()).toContain('governance.positionsNeutrality');
     expect(wrapper.html()).toContain('governance.positionsLatestOnly');
+  });
+
+  it('claims a newest-first ordering only where that is the ordering', async () => {
+    wrapper = mountPanel({
+      votes: [vote({ votedAt: 200 }), vote({ drepId: DREP_B, votedAt: 100 })],
+      total: 2,
+    });
+    await settle();
+
+    const html = wrapper.html();
+    expect(html).toContain('governance.positionsOrderNewest');
+    expect(html).not.toContain('governance.positionsOrderUntimed');
+    // Every row is dated, so there is nothing parked at the end to disclose.
+    expect(html).not.toContain('governance.positionsUndatedLast');
+  });
+
+  // The oldest-first wording is pinned in positions.spec.ts: `<script setup>`
+  // state is not reachable from the wrapper, and the sort control is a stubbed
+  // v-chip-group here, so the claim is tested where it is decided.
+
+  it('claims no time ordering at all for a list that carries no times', async () => {
+    // Nothing here can be ordered by date, so the list falls back to body and
+    // id and says so.
+    wrapper = mountPanel({ votes: [vote(), vote({ drepId: DREP_B })], total: 2 });
+    await settle();
+
+    const html = wrapper.html();
+    expect(html).toContain('governance.positionsOrderUntimed');
+    expect(html).not.toContain('governance.positionsOrderNewest');
+  });
+
+  it('discloses where the undated rows went on a mixed list', async () => {
+    wrapper = mountPanel({ votes: [vote({ votedAt: 200 }), vote({ drepId: DREP_B })], total: 2 });
+    await settle();
+
+    const html = wrapper.html();
+    expect(html).toContain('governance.positionsOrderNewest');
+    expect(html).toContain('governance.positionsUndatedLast');
+  });
+
+  it('makes the rationale filter a real toggle a keyboard can reach', async () => {
+    // Outside a v-chip-group a bare chip renders a <span> with a click handler:
+    // no tab stop, no role, no pressed state.
+    const votes = Array.from({ length: 14 }, (_, i) =>
+      vote({
+        drepId: toCip129(String(i).padStart(2, '0').repeat(28)),
+        rationaleUrl: i < 3 ? 'https://a.test/why.json' : null,
+      }),
+    );
+    wrapper = mountPanel({ votes, total: 14 });
+    await settle();
+
+    const toggle = wrapper.find('.positions__toggle');
+    expect(toggle.exists()).toBe(true);
+    expect(toggle.element.tagName).toBe('BUTTON');
+    expect(toggle.attributes('aria-pressed')).toBe('false');
+
+    await toggle.trigger('click');
+    await settle();
+
+    expect(wrapper.find('.positions__toggle').attributes('aria-pressed')).toBe('true');
+    expect(wrapper.findAll('.vote-row')).toHaveLength(3);
   });
 });

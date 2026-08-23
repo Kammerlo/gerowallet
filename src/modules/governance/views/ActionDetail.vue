@@ -155,9 +155,11 @@
           :votes="state.currentVotes"
           :total="state.votesTotal"
           :loading="state.votesLoading"
+          :loaded="state.votesLoaded"
           :error="state.votesError"
           :truncated="state.votesTruncated"
           :identity="voterIdentity"
+          :identity-unknown="identityUnknown"
           :action-open="actionIsOpen"
           :chain="chain"
           :network="network"
@@ -468,6 +470,13 @@ const voterIdentity = computed<PositionIdentity | null>(() => {
   if (!status.drepId) return null;
   return { drepId: status.drepId, kind: status.isSelf ? 'self' : 'delegated' };
 });
+
+/**
+ * Whether that null is a fact or a gap. Without the account there is no
+ * `drep_id` to read, so "no delegation" and "not fetched yet" are the same
+ * null — and only one of them may be stated to the user.
+ */
+const identityUnknown = computed(() => !walletStore.account);
 
 const formattedGovAction = computed(() => {
   try {

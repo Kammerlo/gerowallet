@@ -11,6 +11,19 @@
       <v-skeleton-loader v-for="n in 6" :key="n" type="list-item-two-line" />
     </template>
 
+    <!-- Three different facts, three different reads. "No votes recorded yet" is
+         a claim about the ACTION, so it may only be made once a fetch has
+         actually come back: an empty list that was never fetched says nothing
+         about who voted. -->
+    <template v-else-if="!rows.length && !loaded">
+      <EmptyState icon="mdi-cloud-download-outline" :message="$t('governance.positionsNotLoaded')" />
+      <div class="positions__more">
+        <GButton tier="tertiary" compact @click="$emit('retry')">
+          {{ $t('governance.loadPositions') }}
+        </GButton>
+      </div>
+    </template>
+
     <template v-else-if="!rows.length">
       <EmptyState icon="mdi-vote-outline" :message="$t('governance.noVotesYet')" />
       <p v-if="actionOpen" class="t-caption positions__note">{{ $t('governance.noVotesYetOpen') }}</p>
@@ -34,17 +47,18 @@
         <p v-if="summary.withRationale" class="t-caption positions__note">
           {{ $t('governance.rationaleCoverage', { n: summary.withRationale, total: summary.total }) }}
         </p>
+        <!-- Upstream does not always count, and "of ." is not a sentence. -->
         <p v-if="truncated" class="t-caption positions__note positions__note--warn">
-          {{ $t('governance.positionsCapped', { n: summary.total, total: total }) }}
+          {{
+            total === null
+              ? $t('governance.positionsCappedUnknownTotal', { n: summary.total })
+              : $t('governance.positionsCapped', { n: summary.total, total: total })
+          }}
         </p>
       </section>
 
-      <YourPositionCard
-        v-if="yourPosition.kind !== 'none'"
-        :position="yourPosition"
-        :name="yourName"
-      />
-      <p v-else class="t-caption positions__note">{{ $t('governance.noDelegationNoPosition') }}</p>
+      <YourPositionCard v-if="yourCard" :position="yourCard" :name="yourName" />
+      <p v-else class="t-caption positions__note">{{ noPositionNote }}</p>
 
       <!-- Nothing to filter under a dozen rows, so no chrome for it. -->
       <div v-if="rows.length >= CONTROLS_MIN_ROWS" class="positions__controls">
@@ -93,17 +107,20 @@
           </v-chip-group>
         </div>
 
-        <!-- Hidden entirely when the projection carries no rationale anchors. -->
-        <v-chip
+        <!-- Hidden entirely when the projection carries no rationale anchors.
+             A real <button> with aria-pressed, not a lone chip: outside a
+             v-chip-group a chip renders a <span> with a click handler, which no
+             keyboard and no screen reader can operate. -->
+        <button
           v-if="summary.withRationale"
-          small
-          outlined
-          filter
-          :input-value="rationaleOnly"
+          type="button"
+          class="t-label positions__toggle"
+          :class="{ 'positions__toggle--on': rationaleOnly }"
+          :aria-pressed="rationaleOnly ? 'true' : 'false'"
           @click="rationaleOnly = !rationaleOnly"
         >
           {{ $t('governance.filterWithRationale') }}
-        </v-chip>
+        </button>
 
         <!-- Hidden when no row carries a block time: nothing to reorder by. -->
         <div v-if="summary.anyVotedAt" class="positions__filter">
@@ -158,8 +175,17 @@
 
       <div class="positions__footnotes">
         <p class="t-caption positions__note">{{ $t('governance.positionsLatestOnly') }}</p>
-        <p v-if="summary.withRationale" class="t-caption positions__note">
+        <!-- Only where a rationale can actually be OPENED: with every anchor on
+             ipfs://, nothing on this tab opens anywhere. -->
+        <p v-if="summary.withRationaleLink" class="t-caption positions__note">
           {{ $t('governance.rationaleExternalNote') }}
+        </p>
+        <!-- The ordering sentence follows the ordering. It used to assert
+             "newest first" while the reader had chosen oldest first, and while
+             a list with no block times at all cannot be ordered by time. -->
+        <p class="t-caption positions__note">{{ orderNote }}</p>
+        <p v-if="summary.anyVotedAt && summary.anyMissingVotedAt" class="t-caption positions__note">
+          {{ $t('governance.positionsUndatedLast') }}
         </p>
         <p class="t-caption positions__note">{{ $t('governance.positionsNeutrality') }}</p>
       </div>
@@ -183,6 +209,7 @@ import {
   VOTE_CHOICES,
   filterPositions,
   isYourRow,
+  orderNoteKey,
   resolveYourPosition,
   sortPositions,
   summarizePositions,
@@ -196,10 +223,21 @@ const props = defineProps({
   /** Upstream's count of ALL positions, or null when it does not count. */
   total: { type: Number as PropType<number | null>, default: null },
   loading: { type: Boolean, default: false },
+  /**
+   * Has a votes fetch actually come back for this action? Defaults to FALSE
+   * on purpose: a caller that cannot answer must not have the panel state that
+   * nobody voted.
+   */
+  loaded: { type: Boolean, default: false },
   error: { type: String as PropType<string | null>, default: null },
   /** True when the page cap stopped the fetch short of `total`. */
   truncated: { type: Boolean, default: false },
   identity: { type: Object as PropType<PositionIdentity | null>, default: null },
+  /**
+   * True while the wallet's own delegation is still unread. A null `identity`
+   * then means "we do not know yet", never "you have not delegated".
+   */
+  identityUnknown: { type: Boolean, default: false },
   actionOpen: { type: Boolean, default: false },
   chain: { type: String, default: '' },
   network: { type: String, default: '' },
@@ -317,11 +355,38 @@ const choiceOptions = computed(() => [
  * `complete` is false when the page cap truncated the fetch, and then absence
  * proves nothing.
  */
-const yourPosition = computed(() => resolveYourPosition(rows.value, props.identity, !props.truncated));
+const yourPosition = computed(() =>
+  resolveYourPosition(rows.value, props.identity, !props.truncated, props.identityUnknown),
+);
+
+/** The card renders a POSITION. The two "there is no position" kinds get a line instead. */
+const yourCard = computed(() => {
+  const position = yourPosition.value;
+  return position.kind === 'none' || position.kind === 'identityUnknown' ? null : position;
+});
+
+/**
+ * "You have not delegated" is a statement about the user, and it is only made
+ * once the delegation has been read.
+ */
+const noPositionNote = computed(() =>
+  String(
+    yourPosition.value.kind === 'identityUnknown'
+      ? t('governance.delegationNotLoaded')
+      : t('governance.noDelegationNoPosition'),
+  ),
+);
 
 const yourName = computed(() =>
   yourPosition.value.kind === 'voted' ? nameOf(yourPosition.value.row) : null,
 );
+
+/**
+ * How the list is ACTUALLY ordered right now. Undated rows are parked at the
+ * end in either direction, so a mixed list discloses that separately rather
+ * than letting "newest first" cover rows that carry no time at all.
+ */
+const orderNote = computed(() => String(t(orderNoteKey(sort.value, summary.value))));
 
 /** Only DReps have a profile route; SPO and committee voters have none here. */
 function routeFor(row: PositionRow): Record<string, unknown> | null {
@@ -418,6 +483,27 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: var(--g-s-2);
+}
+/* Chip-shaped, but a real button: focusable, Enter/Space operable, and its
+   pressed state announced. No outline reset — the baseline focus ring stands. */
+.positions__toggle {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 var(--g-s-3);
+  background: transparent;
+  border: 1px solid var(--g-hairline-2);
+  border-radius: var(--g-r-chip);
+  color: var(--g-text-2);
+  cursor: pointer;
+  transition: color var(--g-dur-fast) var(--g-ease), border-color var(--g-dur-fast) var(--g-ease);
+}
+.positions__toggle:hover {
+  color: var(--g-text-1);
+}
+.positions__toggle--on {
+  color: var(--g-accent);
+  border-color: var(--g-accent);
 }
 .positions__list {
   display: flex;

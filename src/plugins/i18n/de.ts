@@ -4749,8 +4749,17 @@ export default {
   'common.clearFilters': 'Filter zurücksetzen',
   'governance.positionsTitle': 'Erfasste Positionen',
   'governance.positionsCountsNote': 'Anzahl der abgegebenen Stimmen, eine je Abstimmendem. Über das Ergebnis entscheidet das Stimmgewicht, das im Überblick steht.',
-  'governance.positionsNeutrality': 'Positionen stehen neueste zuerst. Gero bewertet keine Abstimmenden und gewichtet diese Liste nicht nach Stimmkraft.',
+  'governance.positionsNeutrality': 'Gero bewertet keine Abstimmenden und gewichtet diese Liste nicht nach Stimmkraft.',
+  // Der Satz zur Sortierung steht getrennt von der Neutralitätszusage, weil er
+  // immer nur für eine Sortierung gilt.
+  'governance.positionsOrderNewest': 'Positionen stehen neueste zuerst.',
+  'governance.positionsOrderOldest': 'Positionen stehen älteste zuerst.',
+  'governance.positionsOrderUntimed': 'Es wurden keine Abstimmungszeiten erfasst, daher stehen die Positionen nach Gremium und Abstimmenden-ID.',
+  'governance.positionsUndatedLast': 'Positionen ohne erfasste Zeit stehen am Ende.',
   'governance.positionsCapped': 'Es werden die ersten {n} von {total} Positionen gezeigt. Zahlen und Filter gelten nur für diese.',
+  'governance.positionsCappedUnknownTotal': 'Es werden die ersten {n} Positionen gezeigt. Es kann weitere geben, und Zahlen und Filter gelten nur für diese.',
+  'governance.positionsNotLoaded': 'Die Positionen zu dieser Aktion wurden noch nicht geladen.',
+  'governance.loadPositions': 'Positionen laden',
   'governance.positionsLoadFailed': 'Die Positionen zu dieser Aktion konnten nicht geladen werden.',
   'governance.rationaleCoverage': '{n} von {total} Positionen haben eine Begründung',
   'governance.noVotesYetOpen': 'Diese Aktion ist noch offen. Positionen erscheinen, sobald sie abgegeben werden.',
@@ -4774,6 +4783,7 @@ export default {
   'governance.uncastCountsAgainst': 'Stimmgewicht, das nicht abstimmt, bleibt in der Gesamtsumme und wirkt damit gegen den Ja-Anteil.',
   'governance.keywordNoPosition': 'Ihre Delegation ist eine dauerhafte Haltung, daher gibt es hier keine Stimme zu zeigen.',
   'governance.noDelegationNoPosition': 'Sie haben nicht delegiert, daher gehört Ihnen keine der hier gezeigten Positionen.',
+  'governance.delegationNotLoaded': 'Ihre Delegation ist noch nicht geladen, daher lässt sich nicht sagen, ob Ihnen eine der Positionen gehört.',
   'governance.positionUnknown': 'Es sind nicht alle Positionen geladen, daher lässt sich nicht sagen, ob diese Stimme abgegeben wurde.',
 
 }
