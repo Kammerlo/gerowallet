@@ -14,7 +14,6 @@ export default {
   'assets.assetsFilters': 'Filter für Vermögenswerte',
   'assets.cardano': 'Cardano',
   'assets.chooseCollectibles': 'Sammlerstücke auswählen',
-  'assets.clearFilters': 'Filter zurücksetzen',
   'assets.collectibles': 'Sammlerstücke',
   'assets.collectiblesChartLabel': 'Sammlerstücke',
   'assets.collectiblesFilters': 'Filter für Sammlerstücke',
@@ -3212,7 +3211,6 @@ export default {
   'transactions.to': 'Bis',
   'transactions.type': 'Typ',
   'transactions.exportCsv': 'Als CSV exportieren',
-  'transactions.clearFilters': 'Alle Filter löschen',
   'transactions.history': 'Verlauf',
   'transactions.utxos': 'UTxOs',
   'transactions.utxoRef': 'UTxO',
@@ -4746,6 +4744,8 @@ export default {
   'midnight.proofServerPage.faq5Q': 'Was ist Arkhia zkPaaS?',
   'midnight.proofServerPage.faq5A': 'Ein gehosteter Beweis-Dienst für das Midnight-Ökosystem, betrieben hinter dem Arkhia-API-Gateway auf Google Cloud Confidential Computing (einer Trusted Execution Environment, sodass Proof-Daten selbst während der Verarbeitung verschlüsselt bleiben). Er benötigt einen API-Key aus dem Arkhia-Dashboard. Wie jeder entfernte Prover erhält er deine privaten Transaktionsdaten für den Beweis-Schritt; anders als bei Gero Cloud gehen diese Daten an Arkhia statt an Gero.',
   // ---- Positions explorer (action detail) ----
+  // One key for one concept: this replaced 'assets.clearFilters' and
+  // 'transactions.clearFilters', which said the same thing in three spellings.
   'common.clearFilters': 'Filter zurücksetzen',
   'governance.positionsTitle': 'Erfasste Positionen',
   'governance.positionsCountsNote': 'Anzahl der abgegebenen Stimmen, eine je Abstimmendem. Über das Ergebnis entscheidet das Stimmgewicht, das im Überblick steht.',

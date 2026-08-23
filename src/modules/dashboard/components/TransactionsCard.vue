@@ -208,7 +208,7 @@
               @click="clearAllFilters()"
             >
               <v-icon small class="mr-2">mdi-close-circle-outline</v-icon>
-              {{ $t('transactions.clearFilters') }}
+              {{ $t('common.clearFilters') }}
             </v-btn>
           </v-card-text>
         </v-card>

@@ -12,7 +12,6 @@ export default {
   'assets.assetsChartLabel': 'Assets',
   'assets.assetsFilters': 'ASSETS FILTERS',
   'assets.cardano': 'Cardano',
-  'assets.clearFilters': 'Clear Filters',
   'assets.collectibles': 'Collectibles',
   'assets.collectiblesChartLabel': 'Collectibles',
   'assets.collectiblesFilters': 'COLLECTIBLES FILTERS',
@@ -2733,7 +2732,6 @@ export default {
   'transactions.to': 'To',
   'transactions.type': 'Type',
   'transactions.exportCsv': 'Export to CSV',
-  'transactions.clearFilters': 'Clear All Filters',
   'transactions.history': 'History',
   'transactions.utxos': 'UTxOs',
   'transactions.utxoRef': 'UTxO',
@@ -4848,6 +4846,8 @@ export default {
   'midnight.proofServerPage.faq5Q': 'What is Arkhia zkPaaS?',
   'midnight.proofServerPage.faq5A': 'A hosted proving service for the Midnight ecosystem, run behind the Arkhia API gateway on Google Cloud confidential computing (a trusted execution environment, so proof data stays encrypted even while in use). It needs an API key from the Arkhia dashboard. Like any remote prover it receives your private transaction data for the proving step; unlike Gero Cloud, that data goes to Arkhia rather than Gero.',
   // ---- Positions explorer (action detail) ----
+  // One key for one concept: this replaced 'assets.clearFilters' and
+  // 'transactions.clearFilters', which said the same thing in three spellings.
   'common.clearFilters': 'Clear filters',
   'governance.positionsTitle': 'Recorded positions',
   'governance.positionsCountsNote': 'Counts of votes cast, one per voter. Stake weight decides the outcome and is shown on the Overview tab.',
