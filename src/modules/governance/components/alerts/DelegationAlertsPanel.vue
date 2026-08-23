@@ -149,7 +149,7 @@ import NetworkStore from '@/stores/networkStore';
  * and holds no state of its own. Its sources are `governanceAlertsStore` (which
  * owns evaluation, the settings and the snoozes) and the router. Everything it
  * renders is a public on-chain fact the store already asserted, which is what
- * the footer line promises the user.
+ * the neutrality footnote inside the settings disclosure promises the user.
  *
  * The replacement CTAs route to the DRep DIRECTORY, never to a named DRep — the
  * wallet does not put candidates forward.
@@ -183,10 +183,10 @@ const healthy = computed(() => !state.errorKey && !state.loading && alerts.value
  * Whether there is a DRep to say anything about at all.
  *
  * Without this the panel renders its "nothing to flag, your DRep is registered
- * and active" empty state on the very screens that exist BECAUSE the
- * wallet has no DRep — flatly contradicting the hero above it on
- * registeredNoDRep and notInGovernance, and misdescribing an always-abstain
- * delegation as a healthy representative. The gate lives here rather than in
+ * and active" strip on the very screens that exist BECAUSE the wallet has no
+ * DRep — flatly contradicting the hero above it on registeredNoDRep and
+ * notInGovernance, and misdescribing an always-abstain delegation as a healthy
+ * representative. The gate lives here rather than in
  * the host so that mounting this component unconditionally is always safe.
  *
  * `loading` keeps the skeleton reachable: the store only raises it once it has
