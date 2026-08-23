@@ -328,7 +328,10 @@
                   <v-skeleton-loader type="list-item-three-line" />
                 </div>
 
-                <template v-else-if="txData">
+                <!-- `buildIsStale` covers "nothing built" as well as "built for
+                     a different anchor", so a superseded transaction can never
+                     render under the verified badge. -->
+                <template v-else-if="!buildIsStale">
                   <dl class="become-drep__summary">
                     <div class="become-drep__summary-row">
                       <dt class="t-body-sm">{{ $t('governance.registrationCertificate') }}</dt>
@@ -341,6 +344,12 @@
                     <div class="become-drep__summary-row">
                       <dt class="t-body-sm">{{ $t('governance.txFee') }}</dt>
                       <dd class="t-body-sm g-num">{{ feeDisplay }}</dd>
+                    </div>
+                    <!-- Both halves of the anchor are shown, because both are
+                         what the signature commits to permanently. -->
+                    <div class="become-drep__summary-row">
+                      <dt class="t-body-sm">{{ $t('governance.drepAnchorUrl') }}</dt>
+                      <dd class="t-caption g-mono become-drep__summary-url">{{ anchorUrl }}</dd>
                     </div>
                     <div class="become-drep__summary-row become-drep__summary-row--last">
                       <dt class="t-body-sm">{{ $t('governance.metadataAnchor') }}</dt>
@@ -479,6 +488,7 @@ import {
   type Cip119Profile,
   type Cip119Verification,
 } from '@/shared/utils/cip119';
+import { anchorIdentity, isRegisteredDRep } from '@/modules/governance/views/becomeDRep.state';
 
 import CustomStepper from '@/shared/components/CustomStepper.vue';
 import GButton from '@/shared/components/GButton/GButton.vue';
@@ -652,9 +662,12 @@ const continueLabel = computed(() =>
   currentStep.value === 1 ? t('governance.continueToDeposit') : t('governance.continueToReview')
 );
 
-function goToStep(step: number): void {
+async function goToStep(step: number): Promise<void> {
   if (step > furthestStep.value) return;
   currentStep.value = step;
+  // Jumping straight back to review must rebuild whatever the form now says.
+  // Without this, the pill is a way around goNext's rebuild.
+  if (step === 3 && buildIsStale.value) await buildRegistration();
 }
 
 function goBack(): void {
@@ -670,7 +683,7 @@ async function goNext(): Promise<void> {
   showErrors.value = false;
   currentStep.value += 1;
   furthestStep.value = Math.max(furthestStep.value, currentStep.value);
-  if (currentStep.value === 3) await buildRegistration();
+  if (currentStep.value === 3 && buildIsStale.value) await buildRegistration();
 }
 
 // ---------------------------------------------------------------------------
@@ -684,6 +697,19 @@ const estimatedFee = ref('');
 /** Set once a retirement has been built, so the panel swaps to the auth section. */
 const retireTx = ref(false);
 const submitted = ref(false);
+
+/**
+ * The anchor the built registration was built FOR. Empty when nothing is built.
+ *
+ * The transaction commits to a specific (url, hash) pair, so it stays valid only
+ * while both still match the form. Comparing against this is what stops an
+ * edited URL from being signed under a transaction anchored at the old one: the
+ * watcher below clears eagerly, and this guard means no navigation path can
+ * render or sign a stale build even if the clearing is bypassed.
+ */
+const builtFor = ref('');
+const currentAnchor = computed(() => anchorIdentity(anchorUrl.value, anchor.value.hash));
+const buildIsStale = computed(() => !txData.value || builtFor.value !== currentAnchor.value);
 
 // Four decimals, not the formatter's default two: a network fee is fractional
 // ADA and rounding it to cents hides most of it.
@@ -728,11 +754,16 @@ async function buildTx(overrides: Partial<BuildDRepRegistrationTxRequest>): Prom
 }
 
 async function buildRegistration(): Promise<void> {
+  // Snapshot the anchor being built BEFORE the await, and record it only on
+  // success, so a failed or superseded build never marks itself current.
+  const target = currentAnchor.value;
+  builtFor.value = '';
   await buildTx({
     anchorUrl: anchorUrl.value.trim(),
     anchorDataHash: anchor.value.hash,
     deregister: false,
   });
+  if (txData.value && !buildError.value) builtFor.value = target;
 }
 
 async function startRetire(): Promise<void> {
@@ -783,16 +814,16 @@ async function sign(): Promise<void> {
   await handleSign();
 }
 
-// Editing the profile after verifying invalidates both the verification and the
-// review step: the bytes on the host no longer match what would go on-chain, so
-// the built transaction is dropped and step 3 has to be re-entered.
-watch(
-  () => anchor.value.hash,
-  () => {
-    if (furthestStep.value > 2 && currentStep.value < 3) furthestStep.value = 2;
-    txData.value = undefined;
-  }
-);
+// Changing EITHER half of the anchor invalidates the review step. Editing the
+// profile changes the hash and also breaks the hosted-file verification; editing
+// the URL alone leaves the document untouched but still points the certificate
+// somewhere else, and that is just as permanent. Both drop the built
+// transaction and pull the flow back to step 2.
+watch(currentAnchor, () => {
+  if (furthestStep.value > 2 && currentStep.value < 3) furthestStep.value = 2;
+  txData.value = undefined;
+  builtFor.value = '';
+});
 
 // ---------------------------------------------------------------------------
 // Registration state: on-chain lookup plus the pending-tx scan
@@ -837,7 +868,10 @@ async function loadRegistration(): Promise<void> {
   }
   try {
     const record = await blockchainApi.getDRepById(drepIdDisplay.value, wallet.chain, wallet.network);
-    alreadyRegistered.value = !!record;
+    // Not `!!record`: a RETIRED DRep still has a row, carrying registered:false.
+    // Keying off the row's existence alone stranded a retired user on the retire
+    // panel with no way to register again. See isRegisteredDRep for the polarity.
+    alreadyRegistered.value = isRegisteredDRep(record);
   } catch (error) {
     // A lookup failure is not proof of anything, so stay on the registration
     // flow rather than claiming the user is or is not registered.
@@ -1102,6 +1136,12 @@ onMounted(loadRegistration);
 .become-drep__summary-row--last {
   border-top: 1px solid var(--g-hairline-1);
   padding-top: var(--g-s-2);
+}
+
+.become-drep__summary-url {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 
 /* Footer ------------------------------------------------------------------ */
