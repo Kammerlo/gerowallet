@@ -3,7 +3,7 @@
 // label onto the wrong link. Nothing in the sampled mainnet data triggered it,
 // which is exactly why it needed pinning rather than eyeballing.
 import { describe, it, expect } from 'vitest';
-import { referenceHrefResolver, toReferenceLinks } from './references';
+import { hasReferenceIndex, referenceElementId, toReferenceLinks } from './references';
 
 describe('toReferenceLinks', () => {
   it('keeps each label with its own href', () => {
@@ -65,18 +65,31 @@ describe('toReferenceLinks', () => {
   });
 });
 
-describe('referenceHrefResolver', () => {
-  it('resolves only the markers that have a surviving reference', () => {
-    const resolve = referenceHrefResolver(
+describe('hasReferenceIndex', () => {
+  it('accepts only the markers that have a surviving reference', () => {
+    const has = hasReferenceIndex(
       toReferenceLinks([
         { uri: 'ipfs://dropped', label: 'one' },
         { uri: 'https://b.test/', label: 'two' },
       ]),
     );
     // [1] was dropped as unsafe, so its marker stays literal rather than being
-    // repointed at some other author's document.
-    expect(resolve(1)).toBeUndefined();
-    expect(resolve(2)).toBe('#gov-ref-2');
-    expect(resolve(9)).toBeUndefined();
+    // repointed at some other author's document — or rendered as a control that
+    // would do nothing when pressed.
+    expect(has(1)).toBe(false);
+    expect(has(2)).toBe(true);
+    expect(has(9)).toBe(false);
+  });
+});
+
+describe('referenceElementId', () => {
+  // Deliberately never used as an href: the extension's router is hash-mode, so
+  // `#gov-ref-2` is read as a ROUTE, not as a same-document fragment.
+  it('is the original index, so a gap left by a dropped entry is preserved', () => {
+    const links = toReferenceLinks([
+      { uri: 'ipfs://dropped', label: 'one' },
+      { uri: 'https://b.test/', label: 'two' },
+    ]);
+    expect(links.map(link => referenceElementId(link.number))).toEqual(['gov-ref-2']);
   });
 });

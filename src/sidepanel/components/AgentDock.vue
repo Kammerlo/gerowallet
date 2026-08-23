@@ -112,10 +112,14 @@
               >
                 <div v-if="m.role === 'assistant'" class="agent-dock__avatar">G</div>
                 <div class="agent-dock__bubble">
-                  <!-- assistant replies are markdown (escaped-first, then rendered); user text stays plain -->
+                  <!-- assistant replies are markdown (escaped-first, then rendered); user text stays plain.
+                       `g-prose` is the shared recipe for that renderer's output (baseline.css) — the dock
+                       needs it because the renderer emits tables, blockquotes and rules too, and those had
+                       no styles here at all. `g-prose--compact` is what keeps the document type ramp and
+                       the 72ch measure out of a 320px column. -->
                   <div
                     v-if="m.role === 'assistant'"
-                    class="agent-dock__md"
+                    class="agent-dock__md g-prose g-prose--compact"
                     v-html="renderMarkdown(m.text)"
                   ></div>
                   <p v-else class="agent-dock__text">{{ m.text }}</p>
@@ -1062,38 +1066,20 @@ export default defineComponent({
   white-space: pre-wrap;
 }
 
-/* ── Rendered markdown (assistant replies; v-html, so children need :deep) ─ */
+/* ── Rendered markdown (assistant replies; v-html, so children need :deep) ──
+   Structure, spacing and the type ramp all come from `.g-prose.g-prose--compact`
+   in baseline.css, which is the ONLY copy of those rules — a scoped block here
+   could not style v-html children anyway (Vue 2 never stamps [data-v] on them,
+   so `.agent-dock__md p` compiles to a selector that cannot match; `:deep()` is
+   the workaround, and a second copy of the recipe behind it is exactly what
+   drifted). What is left below is only what the DOCK renders differently from a
+   document: accent-tinted code and list markers. */
 .agent-dock__md {
   margin: 0;
   word-break: break-word;
-}
-
-.agent-dock__md :deep(p) {
-  margin: 0 0 8px;
-}
-
-.agent-dock__md :deep(p:last-child) {
-  margin-bottom: 0;
-}
-
-.agent-dock__md :deep(strong) {
-  font-weight: 700;
-  color: var(--g-text-1);
-}
-
-.agent-dock__md :deep(ul),
-.agent-dock__md :deep(ol) {
-  margin: 4px 0 8px;
-  padding-left: 18px;
-}
-
-.agent-dock__md :deep(ul:last-child),
-.agent-dock__md :deep(ol:last-child) {
-  margin-bottom: 0;
-}
-
-.agent-dock__md :deep(li) {
-  margin: 3px 0;
+  /* `.g-prose` sets body prose to --g-text-2; a chat reply is the bubble's
+     primary content, so the dock keeps its own tone. */
+  color: var(--text-primary);
 }
 
 .agent-dock__md :deep(li::marker) {
@@ -1108,34 +1094,6 @@ export default defineComponent({
   padding: 1px 5px;
   border-radius: var(--g-r-chip);
   word-break: break-all;
-}
-
-.agent-dock__md :deep(a) {
-  color: var(--accent);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.agent-dock__md :deep(.md-h) {
-  font-weight: 700;
-  color: var(--g-text-1);
-  margin: 8px 0 4px;
-}
-
-.agent-dock__md :deep(.md-h:first-child) {
-  margin-top: 0;
-}
-
-.agent-dock__md :deep(.md-h1) {
-  font-size: 16px;
-}
-
-.agent-dock__md :deep(.md-h2) {
-  font-size: 14px;
-}
-
-.agent-dock__md :deep(.md-h3) {
-  font-size: 13px;
 }
 
 .agent-dock__card {

@@ -14,24 +14,59 @@
  * Supported: headings (# .. ######), bold (**), inline code (`), bullet and
  * numbered lists including nesting, blockquotes (>), horizontal rules, pipe
  * tables, links ([text](http(s)://...)), paragraphs with line breaks, and
- * optional `[n]` reference markers resolved by the caller.
+ * optional `[n]` reference markers the caller opts into.
  *
  * Deliberately NOT supported:
  *  - italics: single-underscore/asterisk false-positives on token names and
  *    pool ids.
  *  - images: a remote `<img>` in wallet chrome is a tracking pixel and a CSP
- *    question. `![alt](url)` degrades to its literal text.
+ *    question, so `![alt](url)` degrades to its literal text — the whole
+ *    `![alt](url)` string, visible and escaped. It is lifted out BEFORE the
+ *    link rule runs so it cannot fall through into an anchor: silently turning
+ *    an embed into an outbound link would manufacture a destination the author
+ *    never wrote as one, and would leave a stray "!" in front of it. Literal
+ *    text shows the reader exactly what the proposal actually says.
  *  - raw HTML passthrough: that is the whole point of escaping first.
  */
+
+/**
+ * Attribute an inline `[n]` marker carries its 1-based index in.
+ *
+ * The marker is a real `<button>`, not a link. A bare `#fragment` href is not
+ * a same-document jump in this app: the extension runs a HASH-MODE router, so
+ * clicking one REPLACES the route and reloading that address lands on the
+ * wallet home instead of the proposal. The value is written from the digits the
+ * regex matched, so it is always a plain number and never author text —
+ * renderer output still carries zero author-controlled attributes.
+ */
+export const REFERENCE_MARKER_ATTR = 'data-md-ref';
+
+/**
+ * The 1-based reference index behind a click inside rendered prose, or null.
+ *
+ * Pair this with ONE delegated listener on the container that holds the
+ * `v-html`. The renderer must never emit an inline `onclick`: v-html may only
+ * ever receive output with no author-controlled attributes, and an inline
+ * handler would be an attribute the escape-first model does not cover.
+ */
+export function referenceMarkerIndex(target: EventTarget | null): number | null {
+  const el = target as Element | null;
+  if (!el || typeof el.closest !== 'function') return null;
+  const marker = el.closest(`[${REFERENCE_MARKER_ATTR}]`);
+  if (!marker) return null;
+  const index = Number(marker.getAttribute(REFERENCE_MARKER_ATTR));
+  return Number.isInteger(index) && index > 0 ? index : null;
+}
 
 /** Caller-supplied hooks. Everything here is optional; absent means "render literally". */
 export interface RenderMarkdownOptions {
   /**
-   * Resolve an inline `[n]` marker (1-based) to a destination. Return undefined
-   * to leave the marker as plain text — a marker with no matching reference
-   * must never be given an invented target.
+   * Whether an inline `[n]` marker (1-based) has a reference to jump to.
+   * Return false to leave the marker as plain text — a marker with no matching
+   * reference must never be given an invented target, and must not look
+   * clickable either.
    */
-  referenceHref?: (index: number) => string | undefined;
+  hasReference?: (index: number) => boolean;
 }
 
 function escapeHtml(s: string): string {
@@ -45,11 +80,24 @@ function escapeHtml(s: string): string {
 /**
  * Inline formatting on already-escaped text.
  *
- * Code spans are lifted out into placeholders before anything else runs, so no
- * later rule (bold, links, reference markers) can reach inside them. The
+ * Everything that has finished rendering is LIFTED OUT into a placeholder
+ * before the next rule runs, so no later rule can reach inside it. The
  * placeholder is spelled with angle brackets on purpose: escaping has already
  * turned every `<` in the author's text into `&lt;`, so author text cannot
  * forge one.
+ *
+ * The order matters and is load-bearing:
+ *  1. code spans — nothing formats inside `like this`.
+ *  2. bold.
+ *  3. images — lifted BEFORE links so `![alt](url)` cannot fall through into
+ *     the link rule and come out as an anchor with a stray "!" in front.
+ *  4. links — lifted BEFORE the `[n]` pass, which is the bug this ordering
+ *     exists for: a URL may legitimately contain `[12]`, and running the
+ *     marker rule over a finished `<a href="…[12]…">` splices a control into
+ *     the middle of its own href, breaking the link AND leaking raw markup.
+ *  5. `[n]` markers, over what is left: plain text only.
+ * Restores run inner-last (images, then links, then code) because an earlier
+ * placeholder can be nested inside a later one, never the other way round.
  */
 function renderInline(escaped: string, options: RenderMarkdownOptions): string {
   const codes: string[] = [];
@@ -61,22 +109,35 @@ function renderInline(escaped: string, options: RenderMarkdownOptions): string {
   // bold **text**
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
 
+  // images stay literal — see the module header for why. Held verbatim so the
+  // link rule below never sees them.
+  const images: string[] = [];
+  s = s.replace(/!\[[^\]]*\]\([^\s)]*\)/g, match => {
+    images.push(match);
+    return `<md-img-${images.length - 1}>`;
+  });
+
   // links [text](http(s)://url) only - any other scheme is left as literal text
-  s = s.replace(
-    /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-    (_m, text, url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`,
-  );
+  const links: string[] = [];
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_m, text, url) => {
+    links.push(`<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`);
+    return `<md-link-${links.length - 1}>`;
+  });
 
   // [n] reference markers, only where the caller says a reference exists.
-  const resolve = options.referenceHref;
-  if (resolve) {
+  const has = options.hasReference;
+  if (has) {
     s = s.replace(/\[(\d{1,3})\]/g, (marker, digits) => {
-      const href = resolve(Number(digits));
-      if (!href) return marker;
-      return `<a class="md-ref" href="${escapeHtml(href)}">${marker}</a>`;
+      const index = Number(digits);
+      if (!has(index)) return marker;
+      // A button, not an anchor: see REFERENCE_MARKER_ATTR. The only attribute
+      // value that varies is `index`, which came from `\d{1,3}`.
+      return `<button type="button" class="md-ref" ${REFERENCE_MARKER_ATTR}="${index}">${marker}</button>`;
     });
   }
 
+  s = s.replace(/<md-img-(\d+)>/g, (_m, i) => images[Number(i)] ?? '');
+  s = s.replace(/<md-link-(\d+)>/g, (_m, i) => links[Number(i)] ?? '');
   return s.replace(/<md-code-(\d+)>/g, (_m, i) => codes[Number(i)] ?? '');
 }
 

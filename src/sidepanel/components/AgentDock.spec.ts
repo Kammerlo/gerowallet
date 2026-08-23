@@ -1254,3 +1254,57 @@ describe('AgentDock — FAB icon (Gero Companion mark)', () => {
     expect(wrapper.find('.agent-dock__fab-icon').attributes('src')).toBe(assets.geroNoText);
   });
 });
+
+// `renderMarkdown` was promoted to a shared util and grew to document scale —
+// tables, blockquotes, horizontal rules and h4-h6. The dock is a PRE-EXISTING
+// caller, so it started emitting constructs its own scoped CSS had never heard
+// of. The fix is to adopt the shared `.g-prose` recipe (one copy of those
+// rules, in baseline.css) with the `--compact` modifier that keeps the document
+// type ramp and the 72ch measure out of a 320px column.
+describe('AgentDock — assistant markdown adopts the shared prose recipe', () => {
+  beforeEach(() => {
+    setLiveChatEnabled(false); // copilot-only: the mode the markdown bubble renders in
+  });
+
+  it('carries both the prose class and the compact modifier', () => {
+    mockDock.messages.value = [{ id: 1, role: 'assistant', text: 'plain reply' }];
+    const wrapper = mountDock();
+
+    const md = wrapper.find('.agent-dock__md');
+    expect(md.exists()).toBe(true);
+    const classes = md.classes();
+    expect(classes).toContain('g-prose');
+    // Without this the dock would inherit 20px headings and a 72ch measure.
+    expect(classes).toContain('g-prose--compact');
+  });
+
+  it('renders the document-scale constructs the shared renderer now emits', () => {
+    mockDock.messages.value = [
+      {
+        id: 1,
+        role: 'assistant',
+        text: '###### deep\n\n> quoted\n\n---\n\n| a | b |\n| --- | --- |\n| 1 | 2 |',
+      },
+    ];
+    const wrapper = mountDock();
+    const html = wrapper.find('.agent-dock__md').html();
+
+    // Each of these was unstyled, unconstrained markup before the prose class.
+    expect(html).toContain('md-h6');
+    expect(html).toContain('<blockquote>');
+    expect(html).toContain('<hr>');
+    // The table ships inside its own scroll box, so a wide reply cannot make
+    // the dock scroll sideways.
+    expect(html).toContain('class="md-table"');
+  });
+
+  it('leaves a [n] marker in a chat reply as plain text, with no control', () => {
+    // The dock passes no `hasReference`, so nothing in a chat reply may render
+    // as a footnote button that would have nowhere to jump.
+    mockDock.messages.value = [{ id: 1, role: 'assistant', text: 'as noted [2]' }];
+    const wrapper = mountDock();
+
+    expect(wrapper.find('.agent-dock__md').html()).not.toContain('md-ref');
+    expect(wrapper.find('.agent-dock__md').text()).toContain('[2]');
+  });
+});

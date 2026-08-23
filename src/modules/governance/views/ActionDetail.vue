@@ -1,5 +1,10 @@
 <template>
-  <div class="action-detail">
+  <!-- One delegated click listener for every `[n]` marker in the prose below is
+       wired to this element in `onMounted` (NOT with `@click`, which would make
+       a plain div a control the ratchet counts). The markers are real buttons
+       the renderer emits, so Enter/Space reach this handler natively and the
+       address bar is never touched. -->
+  <div ref="proseRoot" class="action-detail">
     <div class="action-detail__nav">
       <GButton tier="tertiary" compact @click="goBack()">
         <v-icon small class="mr-1">mdi-arrow-left</v-icon>
@@ -108,12 +113,21 @@
             <v-icon x-small class="mr-1">mdi-file-document-outline</v-icon>
             {{ $t('governance.metadataDocument') }}
           </a>
+          <!-- `value` on each item, not the browser's own 1..n counting: an
+               entry dropped as unsafe leaves a GAP, and the labels have to keep
+               agreeing with the [n] markers in the prose. Renumbering the
+               survivors would point a [2] marker at an entry labelled "1.".
+               `tabindex=-1` makes each entry a focus target, so activating a
+               marker from the keyboard actually moves the caret here. -->
           <ol v-if="referenceLinks.length" class="action-detail__references">
             <li
               v-for="link in referenceLinks"
-              :id="`gov-ref-${link.number}`"
+              :id="referenceElementId(link.number)"
               :key="`${link.href}-${link.number}`"
+              :value="link.number"
+              tabindex="-1"
               class="action-detail__reference"
+              :class="{ 'action-detail__reference--jumped': jumpedReference === link.number }"
             >
               <a
                 :href="link.href"
@@ -168,7 +182,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router/composables';
 import { walletStore } from '@/stores/walletStore';
 import NetworkStore, { networkStore } from '@/stores/networkStore';
@@ -181,7 +195,7 @@ import { evaluateThresholds } from '@/shared/utils/govThresholds';
 import type { BodyResult, GovThresholdParams } from '@/shared/utils/govThresholds';
 import { epochsRemaining, daysRemaining, isOpen } from '@/shared/utils/govLifecycle';
 import { safeExternalHref } from '@/shared/utils/externalLink';
-import { renderMarkdown } from '@/shared/utils/renderMarkdown';
+import { renderMarkdown, referenceMarkerIndex } from '@/shared/utils/renderMarkdown';
 import { governanceStatus } from '@/shared/composables/useGovernanceStatus';
 import { useTranslation } from '@/shared/composables/useTranslation';
 import StatusPill from '@/modules/governance/components/actions/StatusPill.vue';
@@ -191,7 +205,11 @@ import BodyTallyCard from '@/modules/governance/components/actions/BodyTallyCard
 import VoteCta from '@/modules/governance/components/actions/VoteCta.vue';
 import PositionsPanel from '@/modules/governance/components/actions/PositionsPanel.vue';
 import type { PositionIdentity } from '@/modules/governance/components/actions/positions';
-import { referenceHrefResolver, toReferenceLinks } from '@/modules/governance/components/actions/references';
+import {
+  hasReferenceIndex,
+  referenceElementId,
+  toReferenceLinks,
+} from '@/modules/governance/components/actions/references';
 import CastVoteDialog from '@/modules/governance/dialogs/CastVoteDialog.vue';
 import EmptyState from '@/shared/components/feedback/EmptyState.vue';
 import ErrorState from '@/shared/components/feedback/ErrorState.vue';
@@ -385,7 +403,34 @@ const anchorHref = computed(() => safeExternalHref(action.value?.anchorUrl));
 
 const referenceLinks = computed(() => toReferenceLinks(action.value?.references));
 
-const referenceHref = computed(() => referenceHrefResolver(referenceLinks.value));
+const hasReference = computed(() => hasReferenceIndex(referenceLinks.value));
+
+/** The reference a marker last jumped to, so the entry can be called out without a fragment. */
+const jumpedReference = ref<number | null>(null);
+const proseRoot = ref<HTMLElement | null>(null);
+
+/**
+ * Jump from a `[n]` marker in the prose to its entry in the reference list.
+ *
+ * Delegated rather than per-marker, because the markers live inside `v-html`
+ * and the renderer is forbidden from emitting inline handlers. The markers are
+ * `<button>`s, so this fires for a mouse click and for Enter/Space alike, and
+ * nothing here touches `location.hash` — a fragment would be read as a route by
+ * the hash-mode router and would strand a reloaded tab on the wallet home.
+ */
+function onProseClick(event: Event): void {
+  const index = referenceMarkerIndex(event.target);
+  if (index === null) return;
+  const target = document.getElementById(referenceElementId(index));
+  if (!target) return;
+  jumpedReference.value = index;
+  // `scrollIntoView` is absent in some test DOMs; the focus move below is the
+  // part that actually matters for a keyboard user, so it must not be skipped.
+  if (typeof target.scrollIntoView === 'function') {
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  target.focus({ preventScroll: true });
+}
 
 /**
  * Proposal prose, rendered through the shared escape-first markdown renderer.
@@ -396,7 +441,7 @@ const referenceHref = computed(() => referenceHrefResolver(referenceLinks.value)
  * here — it must never receive anything but this function's output.
  */
 function renderProse(source: string | null | undefined): string {
-  return source ? renderMarkdown(source, { referenceHref: referenceHref.value }) : '';
+  return source ? renderMarkdown(source, { hasReference: hasReference.value }) : '';
 }
 
 const renderedAbstract = computed(() => renderProse(action.value?.abstractText));
@@ -472,7 +517,12 @@ watch(
   () => reload(),
 );
 
-onMounted(() => reload());
+onMounted(() => {
+  reload();
+  proseRoot.value?.addEventListener('click', onProseClick);
+});
+
+onBeforeUnmount(() => proseRoot.value?.removeEventListener('click', onProseClick));
 </script>
 
 <style scoped>
@@ -566,9 +616,9 @@ onMounted(() => reload());
 .action-detail__reference::marker {
   color: var(--g-text-3);
 }
-/* Jumping from a [n] marker in the prose highlights its entry — no JS, no
-   animation, just the fragment the marker points at. */
-.action-detail__reference:target {
+/* Jumping from a [n] marker in the prose calls out its entry. Class-driven, not
+   `:target`: nothing here writes a fragment into the address bar. */
+.action-detail__reference--jumped {
   background: var(--g-raised);
   border-radius: var(--g-r-control);
 }

@@ -46,11 +46,24 @@ export function toReferenceLinks(references: GovReference[] | null | undefined):
 }
 
 /**
- * Resolve an inline `[n]` marker to its entry, or undefined to leave it literal.
- * A marker whose reference was dropped as unsafe, or which has no entry at all,
- * never gets an invented destination.
+ * DOM id of the rendered list entry for reference `index`.
+ *
+ * Deliberately NOT used as an `href="#…"`. The extension runs a hash-mode
+ * router, so a bare fragment link does not scroll anywhere — it rewrites the
+ * route in the address bar, and reloading that address hits the catch-all and
+ * redirects to the wallet home, losing the proposal. The prose marker is a
+ * button and the view scrolls this element into view itself.
  */
-export function referenceHrefResolver(links: ReferenceLink[]): (index: number) => string | undefined {
+export function referenceElementId(index: number): string {
+  return `gov-ref-${index}`;
+}
+
+/**
+ * Whether an inline `[n]` marker has an entry to jump to.
+ * A marker whose reference was dropped as unsafe, or which has no entry at all,
+ * never gets an invented destination — and never renders as a control either.
+ */
+export function hasReferenceIndex(links: ReferenceLink[]): (index: number) => boolean {
   const available = new Set(links.map(link => link.number));
-  return index => (available.has(index) ? `#gov-ref-${index}` : undefined);
+  return index => available.has(index);
 }
