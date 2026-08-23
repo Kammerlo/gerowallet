@@ -188,6 +188,41 @@ describe('MyGovernance', () => {
     expect(html).not.toContain('0%');
   });
 
+  // The delegation-alerts panel drops into the slot under the hero and raises
+  // its own gradient CTA when an alert is live. Any gradient this page renders
+  // in a delegated state would be the second one on screen.
+  it('claims no gradient CTA in a delegated state, alerts panel or not', async () => {
+    represented();
+    getDRepById.mockResolvedValue({ registered: true, votes: [] });
+    wrapper = mountPage();
+    await settle();
+
+    expect(wrapper.findAll('.g-btn--primary')).toHaveLength(0);
+  });
+
+  it('still yields the gradient when the DRep has retired, since the alert owns it', async () => {
+    represented();
+    getDRepById.mockResolvedValue({ registered: false, votes: [] });
+    wrapper = mountPage();
+    await settle();
+
+    const html = wrapper.html();
+    expect(html).toContain('governance.status.drepRetired.title');
+    expect(html).toContain('governance.findAReplacement');
+    expect(wrapper.findAll('.g-btn--primary')).toHaveLength(0);
+  });
+
+  it('keeps exactly one gradient where no alert can exist', async () => {
+    registeredNoDRep();
+    wrapper = mountPage();
+    await settle();
+
+    // The delegate choice card, and nothing else.
+    const primaries = wrapper.findAll('.g-btn--primary');
+    expect(primaries).toHaveLength(1);
+    expect(primaries.at(0).text()).toContain('governance.browseDReps');
+  });
+
   it('surfaces a retryable error instead of an empty page when the lookup fails', async () => {
     represented();
     getDRepById.mockRejectedValue(new Error('boom'));

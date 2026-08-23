@@ -4,6 +4,7 @@ import {
   buildAbstainWithdrawalBundle,
   buildAbstainWithdrawalTx,
   isAlwaysAbstainDelegation,
+  type BuildTxFn,
 } from './withdrawGateBundle';
 
 const STAKE_KEY_HASH = '00'.repeat(28);
@@ -93,10 +94,10 @@ describe('buildAbstainWithdrawalTx', () => {
   it('hands the builder ONE body carrying both the certificate and the withdrawal', async () => {
     // Stands in for buildCardanoTransaction, which copies `certificates` and
     // `withdrawals` straight onto the body (src/shared/utils/builder.ts).
-    const buildTx = vi.fn(async (params: Record<string, unknown>) => ({
+    const buildTx: BuildTxFn = vi.fn(async params => ({
       body: {
-        certificates: params.certificates,
-        withdrawals: params.withdrawals,
+        certificates: params['certificates'],
+        withdrawals: params['withdrawals'],
         fee: 179000n,
       },
     }) as unknown as Cardano.Tx);
@@ -123,7 +124,11 @@ describe('buildAbstainWithdrawalTx', () => {
   });
 
   it('passes the registration deposit through as implicitCoin', async () => {
-    const buildTx = vi.fn(async () => ({ body: { fee: 0n } }) as unknown as Cardano.Tx);
+    const seen: Parameters<BuildTxFn>[0][] = [];
+    const buildTx: BuildTxFn = async params => {
+      seen.push(params);
+      return { body: { fee: 0n } } as unknown as Cardano.Tx;
+    };
 
     await buildAbstainWithdrawalTx(
       bundleInput({ registered: false, stakeKeyDeposit: '2000000' }),
@@ -131,7 +136,7 @@ describe('buildAbstainWithdrawalTx', () => {
       buildTx,
     );
 
-    expect(buildTx.mock.calls[0][0]).toMatchObject({ implicitCoin: 2000000n });
+    expect(seen[0]).toMatchObject({ implicitCoin: 2000000n });
   });
 });
 

@@ -83,12 +83,8 @@
           </div>
         </div>
 
-        <!-- The screen's one gradient CTA whenever the state has an urgent
-             remedy. The promo card downstream steps down to secondary in that
-             case, and the whole `registeredNoDRep` branch below is mutually
-             exclusive with this one, so exactly one primary ever renders. -->
         <div v-if="heroCta" class="my-governance__hero-actions">
-          <GButton tier="primary" @click="heroCta.run()">{{ $t(heroCta.labelKey) }}</GButton>
+          <GButton :tier="heroCtaTier" @click="heroCta.run()">{{ $t(heroCta.labelKey) }}</GButton>
         </div>
       </div>
 
@@ -212,7 +208,9 @@
               <li class="t-caption">{{ $t('governance.publicProfileSigned') }}</li>
               <li class="t-caption">{{ $t('governance.retireAnyTime') }}</li>
             </ul>
-            <GButton :tier="promoTier" block class="my-governance__choice-cta" @click="goToRegister()">
+            <!-- Always secondary: this card renders in the delegated states,
+                 where the alerts panel above owns the screen's one gradient. -->
+            <GButton tier="secondary" block class="my-governance__choice-cta" @click="goToRegister()">
               {{ $t('navigation.becomeDRep') }}
             </GButton>
           </div>
@@ -419,9 +417,19 @@ const heroCta = computed<{ labelKey: string; run: () => void } | null>(() => {
 
 // A retired or expiring DRep is urgent enough to own the gradient; otherwise
 // the promo card downstream keeps it, and there is never more than one.
-// One gradient per screen: the promo card yields it to the hero whenever the
-// state has an urgent remedy of its own.
-const promoTier = computed<'primary' | 'secondary'>(() => (heroCta.value ? 'secondary' : 'primary'));
+/**
+ * One gradient per screen, and in a delegated state this page is not the one
+ * that gets it: the delegation-alerts panel drops into the slot above and
+ * raises its own primary ("find a replacement", "review the record") whenever
+ * an alert is live. So the page only claims the gradient where no alert can
+ * exist, which is exactly where there is no DRep to alert about.
+ *
+ * That leaves `notInGovernance` (the hero CTA below) and `registeredNoDRep`
+ * (the delegate choice card, a branch this hero never renders beside).
+ */
+const heroCtaTier = computed<'primary' | 'secondary'>(() =>
+  status.value.drepId ? 'secondary' : 'primary',
+);
 
 function goToDReps(choice?: string): void {
   router.push({ name: 'governanceDReps', query: choice ? { choice } : undefined });
