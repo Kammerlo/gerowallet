@@ -58,9 +58,24 @@ function represented(): void {
 function mountPage(): Wrapper<Vue> {
   return mount(MyGovernance, {
     mocks: { $t },
-    // Vuetify is not installed on this Vue instance, so `v-btn` inside GButton
-    // renders as an unknown element carrying the `.g-btn` class and the label.
-    stubs: { 'v-icon': true, 'v-skeleton-loader': true, AsOf: true },
+    stubs: {
+      'v-icon': true,
+      'v-skeleton-loader': true,
+      AsOf: true,
+      // Only the Vuetify layer is stubbed. GButton, EmptyState and ErrorState
+      // are `<script setup>` imports, which Vue 2.7 resolves lexically — a
+      // `stubs` entry keyed by their name is silently ignored, so they render
+      // for real and their classes/props are what the assertions below match.
+      //
+      // This stub must forward BOTH attrs and listeners onto a real <button>:
+      // GButton reaches v-btn through `v-on="$listeners"`, so a stub that
+      // swallowed them would leave every click assertion passing vacuously
+      // against a button that does nothing.
+      'v-btn': {
+        inheritAttrs: false,
+        template: '<button v-bind="$attrs" v-on="$listeners"><slot /></button>',
+      },
+    },
   });
 }
 
@@ -184,8 +199,14 @@ describe('MyGovernance', () => {
     await settle();
 
     const html = wrapper.html();
+    // The recent tile formats its own string, so a wrong 0 would read "0%"...
     expect(html).toContain('common.notAvailable');
     expect(html).not.toContain('0%');
+    // ...but the long-run line goes through $t, where a wrong 0 would hide
+    // inside the interpolation params rather than the rendered text. The mock
+    // echoes them precisely so this stays a real assertion.
+    expect(html).not.toContain('"pct":0');
+    expect(html).toContain('governance.noVotesYet');
   });
 
   // The delegation-alerts panel drops into the slot under the hero and raises
