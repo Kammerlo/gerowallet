@@ -171,8 +171,14 @@
 
       <!-- The two predefined options. Not DReps, so they never enter the list or
            the match pool — they are a separate, explicitly labelled choice. -->
-      <div class="drep-directory__predefined">
-        <div v-for="option in PREDEFINED" :key="option.kind" class="drep-directory__predefined-card">
+      <div ref="predefinedEl" class="drep-directory__predefined">
+        <div
+          v-for="option in PREDEFINED"
+          :key="option.kind"
+          :data-choice="option.kind"
+          class="drep-directory__predefined-card"
+          :class="{ 'drep-directory__predefined-card--highlight': highlightedChoice === option.kind }"
+        >
           <v-icon size="18" color="var(--g-text-3)">{{ option.icon }}</v-icon>
           <span class="drep-directory__predefined-text">
             <span class="t-body-lg">{{ $t(option.title) }}</span>
@@ -235,7 +241,7 @@
 
 <script setup lang="ts">
 import '@/shared/styles/compact-pagination.css';
-import { computed, onMounted, onUnmounted, ref, watch, getCurrentInstance } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, getCurrentInstance } from 'vue';
 import { useRouter } from 'vue-router/composables';
 import blockchainApi from '@/api/blockchain-api';
 import { walletStore } from '@/stores/walletStore';
@@ -263,7 +269,7 @@ import ErrorState from '@/shared/components/feedback/ErrorState.vue';
 import AsOf from '@/modules/governance/components/actions/AsOf.vue';
 import MatchPanel from '@/modules/governance/components/dreps/MatchPanel.vue';
 import DRepDelegateDialog from '@/modules/governance/dialogs/DRepDelegateDialog.vue';
-import { useDRepDelegation } from '@/modules/governance/composables/useDRepDelegation';
+import { useDRepDelegation, type PredefinedDRep } from '@/modules/governance/composables/useDRepDelegation';
 
 /**
  * The DRep directory.
@@ -577,15 +583,87 @@ async function onDelegate(record: DRepRecord): Promise<void> {
   });
 }
 
-async function onDelegatePredefined(kind: 'abstain' | 'noConfidence'): Promise<void> {
+async function onDelegatePredefined(kind: PredefinedDRep): Promise<void> {
   await delegateToPredefined(kind);
 }
+
+// ---------------------------------------------------------------------------
+// `?choice=` handoff from MyGovernance
+// ---------------------------------------------------------------------------
+
+/**
+ * MyGovernance's locked-rewards hero routes its abstain / no-confidence cards
+ * here as `?choice=`, rather than building the certificate inline. This picks
+ * that up, points at the matching card and opens the SAME predefined delegate
+ * flow the cards themselves use.
+ *
+ * It deliberately does not fire on mount. A tab opened straight from that hero
+ * mounts well before its wallet data lands, and building then would hit a null
+ * `epochParams` or, worse, mistake a not-yet-loaded account for an unregistered
+ * stake key and attach a registration certificate the chain would reject. So it
+ * waits for the same readiness signal the side-panel handoff waits for.
+ */
+const pendingChoice = ref<PredefinedDRep | null>(null);
+const highlightedChoice = ref<PredefinedDRep | null>(null);
+const predefinedEl = ref<HTMLElement | null>(null);
+
+function asChoice(value: unknown): PredefinedDRep | null {
+  return value === 'abstain' || value === 'noConfidence' ? value : null;
+}
+
+const delegationInputsReady = computed(
+  () =>
+    !!walletStore.loggedWallet &&
+    !walletStore.isSyncing &&
+    !!networkStore.epochParams &&
+    !!walletStore.keys?.stake?.[0]?.cred &&
+    !!walletStore.keys?.payment?.[0]?.address &&
+    !!walletStore.utxos,
+);
+
+async function runPendingChoice(): Promise<void> {
+  const choice = pendingChoice.value;
+  if (!choice || !delegationInputsReady.value) return;
+  pendingChoice.value = null; // claim it before any await — the watcher can re-fire
+  await delegateToPredefined(choice);
+}
+
+watch(delegationInputsReady, () => {
+  void runPendingChoice();
+});
+
+/** Bring the named card into view once the list it sits under has rendered. */
+function revealChoice(): void {
+  const choice = highlightedChoice.value;
+  if (!choice) return;
+  void nextTick(() => {
+    const card = predefinedEl.value?.querySelector(`[data-choice="${choice}"]`);
+    if (!(card instanceof HTMLElement)) return;
+    const reducedMotion =
+      typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    card.scrollIntoView({ block: 'nearest', behavior: reducedMotion ? 'auto' : 'smooth' });
+  });
+}
+
+// The cards only exist once rows have rendered, so the scroll waits for data.
+watch(rows, () => revealChoice());
 
 onMounted(() => {
   // A `?drep=` deep link from global search pre-fills the search box, exactly
   // as the pre-split surface did.
   const query = instance?.proxy?.$route?.query?.['drep'];
   if (typeof query === 'string' && query) search.value = query;
+
+  const choice = asChoice(instance?.proxy?.$route?.query?.['choice']);
+  if (choice) {
+    pendingChoice.value = choice;
+    highlightedChoice.value = choice;
+    // Strip the query once claimed. Leaving it would re-open a signing dialog
+    // on every refresh or back-navigation to this URL, which the user never
+    // asked for a second time.
+    router.replace({ name: 'governanceDReps' }).catch(() => undefined);
+    void runPendingChoice();
+  }
 
   void load(1);
 
@@ -822,6 +900,10 @@ onUnmounted(() => {
   padding: var(--g-s-3) var(--g-s-4);
   border: 1px dashed var(--g-hairline-3);
   border-radius: var(--g-r-card);
+}
+.drep-directory__predefined-card--highlight {
+  border-style: solid;
+  border-color: var(--g-accent);
 }
 .drep-directory__predefined-text {
   display: flex;

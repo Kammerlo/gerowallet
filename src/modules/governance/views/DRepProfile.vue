@@ -129,7 +129,18 @@
                 <span class="t-caption drep-profile__vote-pill" :class="`drep-profile__vote-pill--${vote.tone}`">
                   {{ vote.choiceLabel }}
                 </span>
-                <span class="t-body-sm drep-profile__vote-title">{{ vote.title }}</span>
+                <!-- The proposal id resolves to a real route only when it parses
+                     as a governance action id; otherwise the title stays inert
+                     rather than offering a link that would 404. -->
+                <button
+                  v-if="vote.actionRoute"
+                  type="button"
+                  class="t-body-sm drep-profile__vote-title drep-profile__vote-link"
+                  @click="openAction(vote.actionRoute)"
+                >
+                  {{ vote.title }}
+                </button>
+                <span v-else class="t-body-sm drep-profile__vote-title">{{ vote.title }}</span>
                 <span class="t-caption drep-profile__vote-meta">{{ vote.meta }}</span>
               </div>
               <!-- Rationale documents are author hosted. We state that one exists
@@ -229,6 +240,7 @@ import {
   epochInflow,
 } from '@/shared/utils/drepView';
 import { parseDRepId, sameDRep, toCip129 } from '@/shared/utils/drepId';
+import { parseGovActionId, type GovActionId } from '@/shared/utils/govActionId';
 import { safeExternalHref, toSafeLinks } from '@/shared/utils/externalLink';
 import { formatInt } from '@/shared/utils/format';
 import filters from '@/shared/utils/filters';
@@ -461,6 +473,8 @@ interface VoteRow {
   title: string;
   meta: string;
   rationaleHref: string | undefined;
+  /** Set only when the proposal id parses as a governance action id. */
+  actionRoute: GovActionId | null;
 }
 
 /** Newest first, latest revision per proposal — the same de-duplication `drepStats` applies. */
@@ -490,6 +504,7 @@ const allVotes = computed<VoteRow[]>(() => {
         title: action?.title || truncate(id),
         meta: parts.join(' · '),
         rationaleHref: safeExternalHref(vote.meta_url),
+        actionRoute: parseGovActionId(id),
       };
     });
 });
@@ -529,6 +544,10 @@ const focusAreas = computed(() =>
 // ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
+
+function openAction(id: GovActionId): void {
+  router.push({ name: 'governanceAction', params: { txHash: id.txHash, index: String(id.index) } });
+}
 
 function goToDirectory(): void {
   router.push({ name: 'governanceDReps' });
@@ -713,6 +732,16 @@ async function onDelegate(): Promise<void> {
   flex: 1;
   min-width: 0;
   color: var(--g-text-1);
+}
+.drep-profile__vote-link {
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.drep-profile__vote-link:hover {
+  color: var(--g-accent);
 }
 .drep-profile__vote-meta {
   flex: none;
