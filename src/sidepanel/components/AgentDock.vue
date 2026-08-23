@@ -314,7 +314,7 @@
 <script lang="ts">
 import { computed, defineComponent, nextTick, ref, watch } from 'vue';
 import { agentDock } from '@/sidepanel/composables/useAgentDock';
-import { renderMarkdown } from '@/services/agent/renderMarkdown';
+import { renderMarkdown } from '@/shared/utils/renderMarkdown';
 import { useSheetVisibility } from '@/sidepanel/composables/useSheetVisibility';
 import {
   supportChat,

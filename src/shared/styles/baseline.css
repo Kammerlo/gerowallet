@@ -173,3 +173,84 @@ html .v-application .display-3, html .v-application .display-4 {
     scroll-behavior: auto !important;
   }
 }
+
+/* ---- Rendered markdown (`renderMarkdown` output, injected via v-html).
+   ONE global recipe rather than a scoped block: Vue 2 scoped styles attach the
+   [data-v] attribute to the last selector, and v-html children never receive
+   it, so `.prose h3` would compile to something that cannot match. Global also
+   means the agent dock and the changelog can adopt the same prose instead of a
+   second copy drifting away from this one.
+
+   Every font-size below is a declaration string already present elsewhere in
+   src/, so the ratchet's fontSizeDistinct metric does not move. ---- */
+.g-prose {
+  color: var(--g-text-2);
+  font-size: 14px;
+  line-height: 1.7;
+  max-width: 72ch;
+  overflow-wrap: anywhere;
+}
+.g-prose > :first-child { margin-top: 0; }
+.g-prose > :last-child { margin-bottom: 0; }
+
+/* Headings arrive as `.md-h.md-hN` divs, not <h*> tags: the renderer never
+   emits real heading elements, so a proposal cannot inject itself into the
+   page outline above the section heading that contains it. */
+.g-prose .md-h { color: var(--g-text-1); letter-spacing: -0.01em; }
+.g-prose .md-h1,
+.g-prose .md-h2 { font-size: 20px; font-weight: 600; margin: var(--g-s-5) 0 var(--g-s-3); }
+.g-prose .md-h3 { font-size: 16px; font-weight: 600; margin: var(--g-s-5) 0 var(--g-s-2); }
+.g-prose .md-h4 { font-size: 14px; font-weight: 600; margin: var(--g-s-4) 0 var(--g-s-2); }
+.g-prose .md-h5,
+.g-prose .md-h6 {
+  font-size: 13px; font-weight: 550; color: var(--g-text-2);
+  margin: var(--g-s-4) 0 var(--g-s-1);
+}
+
+.g-prose p { margin: 0 0 var(--g-s-3); }
+.g-prose ul, .g-prose ol { margin: 0 0 var(--g-s-3); padding-left: var(--g-s-5); }
+.g-prose li { margin-bottom: var(--g-s-1); }
+.g-prose li::marker { color: var(--g-text-3); }
+.g-prose li > ul, .g-prose li > ol { margin: var(--g-s-1) 0 0; }
+
+.g-prose blockquote {
+  margin: var(--g-s-3) 0;
+  padding: var(--g-s-2) var(--g-s-4);
+  border-left: 2px solid var(--g-hairline-3);
+  color: var(--g-text-3);
+}
+
+.g-prose code {
+  font-family: var(--g-font-mono);
+  font-size: 12.5px;
+  padding: 0 var(--g-s-1);
+  background: var(--g-raised);
+  border: 1px solid var(--g-hairline-1);
+  border-radius: var(--g-r-chip);
+}
+
+.g-prose a { color: var(--g-accent); text-decoration: none; }
+.g-prose a:hover { text-decoration: underline; }
+
+/* Inline reference markers, e.g. [1] */
+.g-prose .md-ref {
+  font-size: 12px;
+  vertical-align: super;
+  line-height: 1;
+  padding: 0 var(--g-s-1);
+}
+
+.g-prose hr { margin: var(--g-s-5) 0; border: 0; border-top: 1px solid var(--g-hairline-1); }
+.g-prose strong, .g-prose b { color: var(--g-text-1); font-weight: 600; }
+
+/* Wide content scrolls in its own box; the page body never scrolls sideways
+   because a treasury proposal shipped an eight-column budget table. */
+.g-prose .md-table { overflow-x: auto; margin: 0 0 var(--g-s-3); }
+.g-prose table { border-collapse: collapse; width: max-content; max-width: none; }
+.g-prose th, .g-prose td {
+  padding: var(--g-s-2) var(--g-s-3);
+  border-bottom: 1px solid var(--g-hairline-1);
+  text-align: left;
+  white-space: nowrap;
+}
+.g-prose th { color: var(--g-text-1); font-weight: 600; }
