@@ -17,7 +17,7 @@ const { push, state } = vi.hoisted(() => {
   // 15 of 20 epochs into the window, 5 left; recent rationale rate well below
   // the long-run one. The same numbers the store's spec asserts against.
   const facts = {
-    epochsSinceVote: 15,
+    windowUsed: 15,
     epochsLeft: 5,
     activityWindow: 20,
     rationaleRecent: 20,

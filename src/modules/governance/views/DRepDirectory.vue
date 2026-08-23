@@ -395,6 +395,8 @@ function statusFor(record: DRepRecord): StatusPill | null {
   const health = delegationHealth(record, {
     currentEpoch: currentEpoch.value,
     activityWindow: (networkStore.epochParams as { dRepInactivityPeriod?: number } | null)?.dRepInactivityPeriod ?? null,
+    // Enables the recent-vote veto against a stale indexed expiry.
+    nowSec: Math.floor(Date.now() / 1000),
   });
   if (health.retired) return { tone: 'neutral', label: String(t('governance.retired')) };
   if (health.expired) return { tone: 'warning', label: String(t('governance.noLongerCounting')) };

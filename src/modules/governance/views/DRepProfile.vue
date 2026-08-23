@@ -100,7 +100,9 @@
         </div>
         <div class="drep-profile__stat glass-panel">
           <span class="t-label">{{ $t('governance.status') }}</span>
-          <span v-if="record.expires_epoch_no" class="t-heading g-num">
+          <!-- A stale expiry (health.expiryStale) is withheld, not printed:
+               it is provably behind the chain and would misdate the DRep. -->
+          <span v-if="record.expires_epoch_no && !health.expiryStale" class="t-heading g-num">
             {{ $t('governance.expiresEpochLabel', { n: record.expires_epoch_no }) }}
           </span>
           <span v-else class="t-heading">{{ $t('governance.pendingStat') }}</span>
@@ -369,6 +371,8 @@ const health = computed(() =>
   delegationHealth(record.value, {
     currentEpoch: currentEpoch.value,
     activityWindow: (networkStore.epochParams as { dRepInactivityPeriod?: number } | null)?.dRepInactivityPeriod ?? null,
+    // Enables the recent-vote veto against a stale indexed expiry.
+    nowSec: Math.floor(Date.now() / 1000),
   }),
 );
 

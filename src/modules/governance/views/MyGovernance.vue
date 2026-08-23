@@ -282,6 +282,9 @@ const status = useGovernanceStatus(() => ({
   ownDRepIds: walletStore.keys?.drep129,
   currentEpoch: NetworkStore.getCurrentEpoch(),
   activityWindow: networkStore.epochParams?.dRepInactivityPeriod ?? null,
+  // Enables the recent-vote veto: a stale indexed expiry must not outvote a
+  // vote the same record shows within the activity window.
+  nowSec: Math.floor(Date.now() / 1000),
 }));
 
 const health = computed(() => status.value.health);
@@ -318,20 +321,30 @@ const rationaleLongRunDisplay = computed(() =>
     : String(t('governance.rationaleLongRun', { pct: health.value.rationaleLongRun })),
 );
 
+/**
+ * REAL vote recency: the newest vote's block_time, rendered as a date like the
+ * vote rows below. Never the window-derived `windowUsed` — that is expiry
+ * arithmetic, and labelling it "last vote" fabricates a claim about voting
+ * behaviour the record does not make. No vote time known means an honest n/a.
+ */
 const lastVoteDisplay = computed(() =>
-  health.value.epochsSinceVote === null
+  health.value.lastVoteAt === null
     ? notAvailable.value
-    : String(t('governance.epochsAgo', { n: health.value.epochsSinceVote })),
+    : new Date(health.value.lastVoteAt * 1000).toLocaleDateString(),
 );
 
+// A stale-nulled countdown reads n/a here: "stays active for 0 more epochs"
+// would be the exact false claim the trust hierarchy exists to prevent.
 const activityDisplay = computed(() =>
   health.value.epochsLeft === null
     ? notAvailable.value
     : String(t('governance.activeForEpochs', { n: health.value.epochsLeft })),
 );
 
+// A provably stale expiry (health.expiryStale) is not shown at all: printing
+// "Expires epoch 629" at epoch 651 beside an active DRep is misinformation.
 const expiresDisplay = computed(() =>
-  record.value?.expires_epoch_no
+  record.value?.expires_epoch_no && !health.value.expiryStale
     ? String(t('governance.expiresEpochLabel', { n: record.value.expires_epoch_no }))
     : String(t('governance.onchainData')),
 );

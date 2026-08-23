@@ -79,6 +79,11 @@ export interface GovernanceStatusInput {
   warnAt?: number;
   /** Vote window for the recent rationale rate. Defaults to 10. */
   recentWindow?: number;
+  /**
+   * Wall time in unix seconds (`Date.now() / 1000`), enabling the recent-vote
+   * veto in `delegationHealth`. Optional: without it the veto is skipped.
+   */
+  nowSec?: number | null;
 }
 
 export interface GovernanceStatusResult {
@@ -154,7 +159,7 @@ function matchesOwnKey(drepId: string, ownDRepIds: readonly OwnDRepKey[] | null 
 
 /** Derive the wallet's governance state. Pure — safe to call in a render. */
 export function governanceStatus(input: GovernanceStatusInput = {}): GovernanceStatusResult {
-  const { account, record, ownDRepIds, currentEpoch, activityWindow, warnAt, recentWindow } = input;
+  const { account, record, ownDRepIds, currentEpoch, activityWindow, warnAt, recentWindow, nowSec } = input;
 
   const registered = isStakeKeyRegistered(account);
   const drepId = registered ? trimmed(account?.drep_id) : null;
@@ -171,7 +176,7 @@ export function governanceStatus(input: GovernanceStatusInput = {}): GovernanceS
     (trimmed(record.drep_id) === null || sameDRep(record.drep_id, drepId));
   const applicable = applies ? record : null;
 
-  const health = delegationHealth(applicable, { currentEpoch, activityWindow, warnAt, recentWindow });
+  const health = delegationHealth(applicable, { currentEpoch, activityWindow, warnAt, recentWindow, nowSec });
 
   let delegation: DelegationKind = 'none';
   if (keyword) delegation = keyword;

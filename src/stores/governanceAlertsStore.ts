@@ -47,8 +47,12 @@ export type GovernanceAlertSeverity = 'critical' | 'warning' | 'info';
 
 /** The on-chain numbers an alert asserts. Everything the copy renders comes from here. */
 export interface GovernanceAlertFacts {
-  /** How far into the activity window the DRep is, or null before the tip lands. */
-  epochsSinceVote: number | null;
+  /**
+   * Epochs into the activity window, derived from the expiry countdown (see
+   * `DelegationHealth.windowUsed`) — never vote recency. Null before the tip
+   * lands or when the countdown was discarded as stale.
+   */
+  windowUsed: number | null;
   /** Whole epochs until they stop counting; 0 once passed, null if unknown. */
   epochsLeft: number | null;
   /** The `drep_activity` window actually used. */
@@ -162,6 +166,12 @@ export interface EvaluateOptions {
   rationaleDropPoints?: number;
   /** How many of the newest votes the "recent" rate covers. */
   recentWindow?: number;
+  /**
+   * Wall time in unix seconds, enabling `delegationHealth`'s recent-vote veto.
+   * The pure evaluator takes it as an argument (no clock in here); the store's
+   * `evaluate` supplies `Date.now() / 1000` when the caller does not.
+   */
+  nowSec?: number | null;
   /** Which alerts are switched on, and where the inactivity threshold sits. */
   settings?: Partial<GovernanceAlertSettings>;
 }
@@ -222,10 +232,11 @@ export function evaluateAlerts(
     activityWindow,
     warnAt,
     recentWindow: options.recentWindow,
+    nowSec: options.nowSec,
   });
 
   const facts: GovernanceAlertFacts = {
-    epochsSinceVote: health.epochsSinceVote,
+    windowUsed: health.windowUsed,
     epochsLeft: health.epochsLeft,
     activityWindow: health.activityWindow,
     rationaleRecent: health.rationaleRecent,
@@ -463,6 +474,10 @@ const actions = {
         activityWindow: options.activityWindow ?? drepActivityWindow(),
         rationaleDropPoints: options.rationaleDropPoints,
         recentWindow: options.recentWindow,
+        // The wall clock lives HERE, not in the pure evaluator: it feeds the
+        // recent-vote veto that stops a stale indexed expiry from claiming a
+        // freshly voting DRep is excluded from tallies.
+        nowSec: options.nowSec ?? Math.floor(Date.now() / 1000),
         settings: options.settings ?? state.settings,
       }),
     );
@@ -498,7 +513,7 @@ const actions = {
     if (!alert || alert.kind === 'retired') return;
 
     const epoch = currentEpoch();
-    const since = alert.facts.epochsSinceVote;
+    const since = alert.facts.windowUsed;
     if (epoch === null || since === null) return;
 
     // Always defer by at least one epoch: a target already reached would

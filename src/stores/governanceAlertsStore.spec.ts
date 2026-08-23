@@ -140,7 +140,7 @@ describe('evaluateAlerts: inactivity', () => {
     expect(alerts.map((a) => a.kind)).toEqual(['inactivity']);
     expect(alerts[0].severity).toBe('warning');
     expect(alerts[0].facts.epochsLeft).toBe(5);
-    expect(alerts[0].facts.epochsSinceVote).toBe(15);
+    expect(alerts[0].facts.windowUsed).toBe(15);
     expect(alerts[0].facts.activityWindow).toBe(20);
   });
 
@@ -149,11 +149,35 @@ describe('evaluateAlerts: inactivity', () => {
     expect(alerts.map((a) => a.kind)).toEqual([]);
   });
 
-  it('escalates to critical once the window has run out', () => {
-    const alerts = evaluateAlerts(account(), record({ expires_epoch_no: EPOCH }), EPOCH);
+  it('escalates to critical once the window has run out with no active flag to arbitrate', () => {
+    const alerts = evaluateAlerts(account(), record({ active: null, expires_epoch_no: EPOCH }), EPOCH);
     expect(alerts.map((a) => a.kind)).toEqual(['inactivity']);
     expect(alerts[0].severity).toBe('critical');
     expect(alerts[0].facts.epochsLeft).toBe(0);
+  });
+
+  it('escalates to critical on an explicit active: false, the indexer own verdict', () => {
+    const alerts = evaluateAlerts(account(), record({ active: false, expires_epoch_no: EPOCH }), EPOCH);
+    expect(alerts.map((a) => a.kind)).toEqual(['inactivity']);
+    expect(alerts[0].severity).toBe('critical');
+  });
+
+  // The Cardano Foundation false positive: active: true beside an expiry 22
+  // epochs in the past. The stale expiry must not raise any alert.
+  it('raises nothing for active: true beside a past expiry — the expiry is stale, not the DRep', () => {
+    const alerts = evaluateAlerts(account(), record({ active: true, expires_epoch_no: EPOCH - 22 }), EPOCH);
+    expect(alerts).toEqual([]);
+  });
+
+  it('with no active flag, a recent vote plus nowSec vetoes the elapsed-expiry verdict', () => {
+    const nowSec = 1_800_000_000;
+    const fresh = [{ proposal_id: 'a#0', vote: 'Yes', block_time: nowSec - 3 * 432_000, meta_url: null }];
+    const stale = record({ active: null, expires_epoch_no: EPOCH - 2, votes: fresh });
+    expect(evaluateAlerts(account(), stale, EPOCH, { nowSec })).toEqual([]);
+    // Without nowSec the pure evaluator has no clock, so the verdict stands.
+    const unvetoed = evaluateAlerts(account(), stale, EPOCH);
+    expect(unvetoed.map((a) => a.kind)).toEqual(['inactivity']);
+    expect(unvetoed[0].severity).toBe('critical');
   });
 
   it('honours a moved threshold: at 18 of 20 nothing fires with 5 left', () => {
@@ -177,7 +201,7 @@ describe('evaluateAlerts: inactivity', () => {
     });
     expect(alerts.map((a) => a.kind)).toEqual(['inactivity']);
     expect(alerts[0].facts.activityWindow).toBe(40);
-    expect(alerts[0].facts.epochsSinceVote).toBe(15);
+    expect(alerts[0].facts.windowUsed).toBe(15);
   });
 
   it('says nothing when the epoch is unknown, rather than guessing a countdown', () => {
@@ -319,7 +343,7 @@ describe('isAlertActive', () => {
       drepId: DREP,
       dismissedUntilEpoch: null,
       facts: {
-        epochsSinceVote: 15,
+        windowUsed: 15,
         epochsLeft: 5,
         activityWindow: 20,
         rationaleRecent: null,
@@ -383,6 +407,17 @@ describe('store.evaluate', () => {
     expect(store.state.alerts[0].facts.activityWindow).toBe(40);
   });
 
+  it('supplies the wall clock, so a freshly voting DRep with a stale expiry raises nothing', () => {
+    // active is absent and the indexed expiry has elapsed, but the record
+    // itself shows a vote from moments ago: store.evaluate passes Date.now()
+    // into the recent-vote veto, so no inactivity alert fires.
+    const fresh = [
+      { proposal_id: 'a#0', vote: 'Yes', block_time: Math.floor(Date.now() / 1000) - 3_600, meta_url: null },
+    ];
+    store.evaluate(account(), record({ active: null, expires_epoch_no: EPOCH - 2, votes: fresh }), EPOCH);
+    expect(store.state.alerts).toEqual([]);
+  });
+
   it('clears the alerts when the DRep delegation goes away', () => {
     store.evaluate(account(), record({ expires_epoch_no: EXPIRES_AT_WARN }), EPOCH);
     expect(store.state.alerts).toHaveLength(1);
@@ -399,8 +434,8 @@ describe('store.drepId: the "is there anything to watch" signal', () => {
 
   // A host surface gates its whole alerts UI on this. If it stayed non-null for
   // a wallet with no DRep, that surface would answer "nothing to flag, your
-  // DRep is registered, active and voting" on the very screens that exist
-  // BECAUSE the wallet has no DRep.
+  // DRep is registered and active" on the very screens that exist BECAUSE the
+  // wallet has no DRep.
   it.each([
     ['no delegation at all', withAccount({ drep_id: '' })],
     ['an always-abstain delegation', withAccount({ drep_id: 'drep_always_abstain' })],

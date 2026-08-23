@@ -191,15 +191,41 @@ describe('governanceStatus — the DRep going inactive', () => {
     expect(statusOf({ account: account(), record: record({ expires_epoch_no: EPOCH + 6 }) })).toBe('represented');
   });
 
-  it('still reports drepInactiveSoon once the window has fully elapsed at 20 of 20', () => {
+  it('still reports drepInactiveSoon once the window has elapsed with no active flag to arbitrate', () => {
     const result = governanceStatus({
       account: account(),
-      record: record({ expires_epoch_no: EPOCH }),
+      record: record({ active: null, expires_epoch_no: EPOCH }),
       currentEpoch: EPOCH,
     });
     expect(result.status).toBe('drepInactiveSoon');
     expect(result.health.expired).toBe(true);
-    expect(result.health.epochsSinceVote).toBe(20);
+    expect(result.health.windowUsed).toBe(20);
+  });
+
+  // The Cardano Foundation false positive: an indexed record can say
+  // active: true beside an expiry epochs in the past. The explicit flag wins;
+  // the stale countdown is withheld rather than shown as "0 of 20 left".
+  it('stays represented when active: true contradicts an elapsed expiry', () => {
+    const result = governanceStatus({
+      account: account(),
+      record: record({ active: true, expires_epoch_no: EPOCH - 22 }),
+      currentEpoch: EPOCH,
+    });
+    expect(result.status).toBe('represented');
+    expect(result.health.expired).toBe(false);
+    expect(result.health.expiryStale).toBe(true);
+    expect(result.health.epochsLeft).toBeNull();
+    expect(result.health.windowUsed).toBeNull();
+  });
+
+  it('reports drepInactiveSoon on an explicit active: false, whatever the expiry says', () => {
+    const result = governanceStatus({
+      account: account(),
+      record: record({ active: false, expires_epoch_no: EPOCH + 10 }),
+      currentEpoch: EPOCH,
+    });
+    expect(result.status).toBe('drepInactiveSoon');
+    expect(result.health.expired).toBe(true);
   });
 
   it('takes the warning threshold as a parameter', () => {
@@ -215,7 +241,7 @@ describe('governanceStatus — the DRep going inactive', () => {
       currentEpoch: EPOCH,
       activityWindow: 30,
     });
-    expect(result.health.epochsSinceVote).toBe(25);
+    expect(result.health.windowUsed).toBe(25);
     expect(result.health.activityWindow).toBe(30);
   });
 });

@@ -193,8 +193,8 @@ const alerts = computed(() => governanceAlertsStore.activeAlerts());
 /**
  * Whether there is a DRep to say anything about at all.
  *
- * Without this the panel renders its "nothing to flag, your DRep is registered,
- * active and voting" empty state on the very screens that exist BECAUSE the
+ * Without this the panel renders its "nothing to flag, your DRep is registered
+ * and active" empty state on the very screens that exist BECAUSE the
  * wallet has no DRep — flatly contradicting the hero above it on
  * registeredNoDRep and notInGovernance, and misdescribing an always-abstain
  * delegation as a healthy representative. The gate lives here rather than in
@@ -264,22 +264,26 @@ function body(alert: GovernanceAlert): string {
   return alert.severity === 'critical'
     ? t('governance.alerts.inactivityExpiredBody', { window: facts.activityWindow, amount: stake(alert) })
     : t('governance.alerts.inactivityBody', {
-        since: facts.epochsSinceVote ?? 0,
+        since: facts.windowUsed ?? 0,
         window: facts.activityWindow,
         amount: stake(alert),
       });
 }
 
-/** How far through the activity window the DRep is, as a percentage of the track. */
+/**
+ * How far through the activity window the countdown says the DRep is, as a
+ * percentage of the track. `windowUsed` is expiry-derived, so the copy around
+ * it speaks of the window, never of votes.
+ */
 function progress(alert: GovernanceAlert): number | null {
-  const { epochsSinceVote, activityWindow: window } = alert.facts;
-  if (epochsSinceVote === null || window <= 0) return null;
-  return Math.min(100, Math.max(0, Math.round((epochsSinceVote / window) * 100)));
+  const { windowUsed, activityWindow: window } = alert.facts;
+  if (windowUsed === null || window <= 0) return null;
+  return Math.min(100, Math.max(0, Math.round((windowUsed / window) * 100)));
 }
 
 function progressLabel(alert: GovernanceAlert): string {
   return t('governance.alerts.inactivityProgress', {
-    since: alert.facts.epochsSinceVote ?? 0,
+    since: alert.facts.windowUsed ?? 0,
     window: alert.facts.activityWindow,
   });
 }

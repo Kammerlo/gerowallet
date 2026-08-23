@@ -5,21 +5,44 @@ import { pctOf } from '@/shared/utils/lovelace';
 /**
  * Health of the DRep a wallet has delegated its voting power to.
  *
- * Pure over its arguments: this module NEVER fetches. The caller supplies the
- * DRep record (gero-backend `GET /api/dreps/{id}`, snake_case) and the current
- * epoch (`networkStore.getCurrentEpoch()`), so the same maths is reusable from
- * a view, from an alert evaluator, and from a test with no store at all.
+ * Pure over its arguments: this module NEVER fetches and reads no ambient
+ * clock. The caller supplies the DRep record (gero-backend
+ * `GET /api/dreps/{id}`, snake_case), the current epoch
+ * (`networkStore.getCurrentEpoch()`) and optionally the wall time (`nowSec`),
+ * so the same maths is reusable from a view, from an alert evaluator, and from
+ * a test with no store at all.
  *
- * Two CIP-1694 facts drive everything here:
+ * The CIP-1694 / Conway-ledger facts that drive everything here:
  *
- *  - A DRep that does not vote for `drep_activity` epochs stops counting. The
- *    node tracks this as `expires_epoch_no`, which it pushes forward on every
- *    vote — so `expires_epoch_no − currentEpoch` is the authoritative countdown
- *    and "epochs since the last vote" is derived FROM it, not from `votes[]`.
- *    Deriving it the other way round is wrong: registration and delegation
- *    changes also move the expiry.
- *  - Delegated stake behind an expired DRep is excluded from every tally until
- *    that DRep votes again. That is why the warning exists at all.
+ *  - A DRep that neither votes nor submits a DRep update certificate for
+ *    `drep_activity` epochs stops counting: "Inactive DReps do not count
+ *    towards the active voting stake anymore, and can become active again ...
+ *    by voting on any governance actions or submitting a DRep update
+ *    certificate" (CIP-1694). That exclusion is why the warning exists at all.
+ *  - A stored expiry is NOT a clean countdown. Epochs with no open proposals
+ *    are dormant (`numDormantEpochs`) and do not consume the window, but the
+ *    accrued credit is only folded into stored expiries when the NEXT proposal
+ *    is submitted (cardano-ledger, Certs.hs `updateDormantDRepExpiry`). During
+ *    a proposal drought an indexer's `expires_epoch_no` can therefore sit in
+ *    the past for a DRep that has missed nothing. A past expiry is evidence of
+ *    inactivity, never proof.
+ *  - What refreshes the expiry: the DRep's own votes (Certs.hs,
+ *    `updateVotingDRepExpiries`) and its registration/update certificates
+ *    (GovCert.hs). A delegator's vote-delegation certificate does NOT.
+ *
+ * Hence the trust hierarchy `delegationHealth` implements, strongest first:
+ *
+ *  1. `registered: false` is retirement. Permanent, outranks everything.
+ *  2. An explicit `active` flag is the indexer's own verdict and beats any
+ *     arithmetic done here on `expires_epoch_no`. `active: true` beside an
+ *     already-passed expiry is a self-contradiction: the expiry is provably
+ *     stale, so the countdown is discarded (`expiryStale`) instead of being
+ *     rendered as "0 left".
+ *  3. With no `active` flag, expiry arithmetic may conclude "expired", but a
+ *     vote younger than the activity window vetoes it: a vote fully resets the
+ *     window and dormancy only ever ADDS credit, so expiry after a recent vote
+ *     is impossible. The veto needs wall time, so it runs only when the caller
+ *     passes `nowSec`.
  *
  * `n/a` is not `0`. A DRep with no votes has NO rationale rate — reporting 0%
  * would accuse them of withholding rationales they were never asked for. Those
@@ -69,20 +92,48 @@ export interface DelegationHealthOptions {
   warnAt?: number;
   /** How many of the newest votes `rationaleRecent` covers. */
   recentWindow?: number;
+  /**
+   * Wall time in unix seconds, enabling the recent-vote veto (rule 3 of the
+   * trust hierarchy). Optional on purpose: the module reads no ambient clock,
+   * so a caller that does not pass it simply forgoes the veto.
+   */
+  nowSec?: number | null;
+  /** Seconds per epoch for the veto's age arithmetic. Cardano: 432000 (5 days). */
+  epochLengthSec?: number;
 }
 
 export interface DelegationHealth {
-  /** Whole epochs until the DRep goes inactive; 0 once passed, null if unknown. */
+  /**
+   * Whole epochs until the DRep goes inactive; 0 once passed, null when the
+   * expiry is unknown or was discarded as stale (`expiryStale`).
+   */
   epochsLeft: number | null;
-  /** `activityWindow − epochsLeft`, i.e. how far into the window they are. */
-  epochsSinceVote: number | null;
+  /**
+   * Epochs into the activity window, derived as `activityWindow − epochsLeft`.
+   * A statement about the EXPIRY COUNTDOWN, never about voting behaviour: in
+   * Conway the expiry also moves on DRep update certificates and dormancy
+   * credits, so this must never be rendered as "epochs since their last vote".
+   * Real vote recency is `lastVoteAt`.
+   */
+  windowUsed: number | null;
+  /**
+   * The expiry countdown contradicted stronger evidence (an explicit
+   * `active: true`, or a vote younger than the activity window) and was
+   * discarded as stale. `epochsLeft`/`windowUsed` are null; surfaces must drop
+   * the countdown line rather than render "0 more epochs".
+   */
+  expiryStale: boolean;
   /** The window actually used, after the `drep_activity` fallback. */
   activityWindow: number;
   /** The epochs-left threshold actually used. */
   warnAt: number;
   /** Going inactive (or already there) and not retired: the amber state. */
   inactiveSoon: boolean;
-  /** Already stopped counting — expired window, or an explicit `active: false`. */
+  /**
+   * Already stopped counting: an explicit `active: false`, or an elapsed
+   * countdown that no stronger evidence vetoed. Never true while the record
+   * itself claims `active: true` — the explicit flag outranks the arithmetic.
+   */
   expired: boolean;
   /** Deregistered on-chain. Permanent, and it outranks the inactivity warning. */
   retired: boolean;
@@ -104,6 +155,8 @@ export const DEFAULT_DREP_ACTIVITY_EPOCHS = 20;
 export const DEFAULT_WARN_EPOCHS_LEFT = 5;
 /** "Their last 10 votes" is the recency window the DRep surfaces quote. */
 export const DEFAULT_RATIONALE_WINDOW = 10;
+/** A Cardano epoch is 432,000 seconds (5 days). */
+export const DEFAULT_EPOCH_LENGTH_SEC = 432_000;
 
 /** A value, a ref of it, or a getter for it — so callers can stay reactive or not. */
 export type HealthSource<T> = T | Ref<T> | (() => T);
@@ -138,21 +191,61 @@ export function delegationHealth(
   const activityWindow = options.activityWindow ?? DEFAULT_DREP_ACTIVITY_EPOCHS;
   const warnAt = options.warnAt ?? DEFAULT_WARN_EPOCHS_LEFT;
   const recentWindow = options.recentWindow ?? DEFAULT_RATIONALE_WINDOW;
-
-  // `epochsRemaining` clamps at 0, so an over-expired DRep reads "0 left" rather
-  // than a negative countdown; `expired` carries the fact that it is past due.
-  const epochsLeft = epochsRemaining(options.currentEpoch, record?.expires_epoch_no);
-  const epochsSinceVote = epochsLeft === null ? null : Math.min(activityWindow, activityWindow - epochsLeft);
-
-  const retired = record?.registered === false;
-  const expired = !retired && (record?.active === false || (epochsLeft !== null && epochsLeft <= 0));
-  const inactiveSoon = !retired && (expired || (epochsLeft !== null && epochsLeft <= warnAt));
+  const epochLengthSec = options.epochLengthSec ?? DEFAULT_EPOCH_LENGTH_SEC;
 
   const ordered = newestFirst(record?.votes ?? []);
+  const lastVoteAt = ordered[0]?.block_time ?? null;
+
+  const retired = record?.registered === false;
+
+  // `epochsRemaining` clamps at 0, so an over-expired countdown reads "0 left"
+  // rather than a negative number; `expired` carries the fact it is past due.
+  let epochsLeft = epochsRemaining(options.currentEpoch, record?.expires_epoch_no);
+  let expiryStale = false;
+
+  if (epochsLeft !== null && epochsLeft <= 0) {
+    if (record?.active === true) {
+      // Rule 2: the indexer says active while its own expiry says long gone.
+      // In Conway that is exactly what a stale index looks like (the dormancy
+      // credit is only folded into stored expiries when the next proposal is
+      // submitted), so the countdown is unreliable and must not be rendered.
+      expiryStale = true;
+      epochsLeft = null;
+    } else if (
+      record?.active !== false &&
+      options.nowSec !== null &&
+      options.nowSec !== undefined &&
+      lastVoteAt !== null &&
+      (options.nowSec - lastVoteAt) / epochLengthSec < activityWindow
+    ) {
+      // Rule 3: no `active` flag to arbitrate, but the record itself carries a
+      // vote younger than the activity window. Per CIP-1694 a vote fully
+      // resets the window, and dormancy only ever ADDS credit on top, so this
+      // expiry cannot be current. Without `nowSec` the veto is simply skipped.
+      expiryStale = true;
+      epochsLeft = null;
+    }
+  }
+
+  // Derived from the countdown, NOT from `votes[]` — see `windowUsed`'s doc.
+  const windowUsed = epochsLeft === null ? null : Math.min(activityWindow, activityWindow - epochsLeft);
+
+  // `active: false` is the indexer's explicit verdict and stands on its own.
+  // The arithmetic verdict only stands where no explicit flag contradicts it:
+  // an `active: true` survivor was already cleared via `expiryStale` above,
+  // and the `!== true` guard keeps the hierarchy true by construction.
+  const expired =
+    !retired &&
+    (record?.active === false || (record?.active !== true && epochsLeft !== null && epochsLeft <= 0));
+
+  // The legitimate early warning: a COHERENT low countdown warns even for a
+  // DRep the indexer still calls active. A stale-nulled countdown never warns.
+  const inactiveSoon = !retired && (expired || (epochsLeft !== null && epochsLeft <= warnAt));
 
   return {
     epochsLeft,
-    epochsSinceVote,
+    windowUsed,
+    expiryStale,
     activityWindow,
     warnAt,
     inactiveSoon,
@@ -162,7 +255,7 @@ export function delegationHealth(
     rationaleLongRun: rationaleRate(ordered),
     recentWindow,
     voteCount: ordered.length,
-    lastVoteAt: ordered[0]?.block_time ?? null,
+    lastVoteAt,
   };
 }
 
