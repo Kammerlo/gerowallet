@@ -89,6 +89,7 @@
       </div>
 
       <!-- alerts-panel: wired by delegation-alerts -->
+      <DelegationAlertsPanel />
 
       <!-- ── Registered but undelegated: the three ways to unlock ───────── -->
       <template v-if="status.status === 'registeredNoDRep'">
@@ -244,6 +245,7 @@ import blockchainApi from '@/api/blockchain-api';
 import { useGovernanceStatus } from '@/shared/composables/useGovernanceStatus';
 import type { DelegatedDRepRecord, DRepVoteRecord } from '@/shared/composables/useDelegationHealth';
 import { useWithdrawal } from '@/shared/composables/useWithdrawal';
+import DelegationAlertsPanel from '@/modules/governance/components/alerts/DelegationAlertsPanel.vue';
 import { useTranslation } from '@/shared/composables/useTranslation';
 import { formatInt } from '@/shared/utils/format';
 import filters from '@/shared/utils/filters';

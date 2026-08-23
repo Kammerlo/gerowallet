@@ -23,7 +23,9 @@ export interface PendingDRep {
   has_script?: boolean;
   delegators?: number;
   votes?: number;
-  voting_power?: number;
+  // Lovelace: BigInt since the voting-power precision fix; number kept for
+  // records parked before it, string for anything re-serialized in between.
+  voting_power?: string | number | bigint;
 }
 
 export interface PendingDRepDelegation {
