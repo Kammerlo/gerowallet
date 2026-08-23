@@ -191,15 +191,26 @@ describe('governanceStatus — the DRep going inactive', () => {
     expect(statusOf({ account: account(), record: record({ expires_epoch_no: EPOCH + 6 }) })).toBe('represented');
   });
 
-  it('still reports drepInactiveSoon once the window has elapsed with no active flag to arbitrate', () => {
-    const result = governanceStatus({
+  it('reports the final-epoch warning at the exact expiry epoch, and drepInactive one past it', () => {
+    // Conway RATIFY: the expiry epoch itself still counts, so exclusion may
+    // only be claimed strictly past it.
+    const atExpiry = governanceStatus({
       account: account(),
       record: record({ active: null, expires_epoch_no: EPOCH }),
       currentEpoch: EPOCH,
     });
-    expect(result.status).toBe('drepInactiveSoon');
-    expect(result.health.expired).toBe(true);
-    expect(result.health.windowUsed).toBe(20);
+    expect(atExpiry.status).toBe('drepInactiveSoon');
+    expect(atExpiry.health.expired).toBe(false);
+    expect(atExpiry.health.windowUsed).toBe(20);
+
+    const pastExpiry = governanceStatus({
+      account: account(),
+      record: record({ active: null, expires_epoch_no: EPOCH - 1 }),
+      currentEpoch: EPOCH,
+    });
+    expect(pastExpiry.status).toBe('drepInactive');
+    expect(pastExpiry.tone).toBe('critical');
+    expect(pastExpiry.health.expired).toBe(true);
   });
 
   // The Cardano Foundation false positive: an indexed record can say
@@ -218,13 +229,14 @@ describe('governanceStatus — the DRep going inactive', () => {
     expect(result.health.windowUsed).toBeNull();
   });
 
-  it('reports drepInactiveSoon on an explicit active: false, whatever the expiry says', () => {
+  it('reports drepInactive on an explicit active: false, whatever the expiry says', () => {
     const result = governanceStatus({
       account: account(),
       record: record({ active: false, expires_epoch_no: EPOCH + 10 }),
       currentEpoch: EPOCH,
     });
-    expect(result.status).toBe('drepInactiveSoon');
+    expect(result.status).toBe('drepInactive');
+    expect(result.titleKey).toBe('governance.status.drepInactive.title');
     expect(result.health.expired).toBe(true);
   });
 

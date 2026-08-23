@@ -149,8 +149,15 @@ describe('evaluateAlerts: inactivity', () => {
     expect(alerts.map((a) => a.kind)).toEqual([]);
   });
 
-  it('escalates to critical once the window has run out with no active flag to arbitrate', () => {
+  it('stays a warning at the exact expiry epoch: the ledger still counts it', () => {
     const alerts = evaluateAlerts(account(), record({ active: null, expires_epoch_no: EPOCH }), EPOCH);
+    expect(alerts.map((a) => a.kind)).toEqual(['inactivity']);
+    expect(alerts[0].severity).toBe('warning');
+    expect(alerts[0].facts.epochsLeft).toBe(0);
+  });
+
+  it('escalates to critical strictly past the expiry with no active flag to arbitrate', () => {
+    const alerts = evaluateAlerts(account(), record({ active: null, expires_epoch_no: EPOCH - 1 }), EPOCH);
     expect(alerts.map((a) => a.kind)).toEqual(['inactivity']);
     expect(alerts[0].severity).toBe('critical');
     expect(alerts[0].facts.epochsLeft).toBe(0);

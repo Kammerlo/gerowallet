@@ -198,45 +198,61 @@ export function delegationHealth(
 
   const retired = record?.registered === false;
 
-  // `epochsRemaining` clamps at 0, so an over-expired countdown reads "0 left"
-  // rather than a negative number; `expired` carries the fact it is past due.
+  // Ledger boundary (Conway RATIFY): a DRep is excluded only when
+  // `currentEpoch > expiry` — the expiry epoch itself still counts. So
+  // "0 left" means "final active epoch", a warning, never an exclusion.
+  // `epochsRemaining` clamps at 0, and `expiryPassed` carries the strict test.
+  const expiryPassed =
+    typeof options.currentEpoch === 'number' &&
+    typeof record?.expires_epoch_no === 'number' &&
+    options.currentEpoch > record.expires_epoch_no;
   let epochsLeft = epochsRemaining(options.currentEpoch, record?.expires_epoch_no);
   let expiryStale = false;
 
-  if (epochsLeft !== null && epochsLeft <= 0) {
-    if (record?.active === true) {
-      // Rule 2: the indexer says active while its own expiry says long gone.
-      // In Conway that is exactly what a stale index looks like (the dormancy
-      // credit is only folded into stored expiries when the next proposal is
-      // submitted), so the countdown is unreliable and must not be rendered.
-      expiryStale = true;
-      epochsLeft = null;
-    } else if (
-      record?.active !== false &&
-      options.nowSec !== null &&
-      options.nowSec !== undefined &&
-      lastVoteAt !== null &&
-      (options.nowSec - lastVoteAt) / epochLengthSec < activityWindow
-    ) {
-      // Rule 3: no `active` flag to arbitrate, but the record itself carries a
-      // vote younger than the activity window. Per CIP-1694 a vote fully
-      // resets the window, and dormancy only ever ADDS credit on top, so this
-      // expiry cannot be current. Without `nowSec` the veto is simply skipped.
-      expiryStale = true;
-      epochsLeft = null;
-    }
+  if (record?.active === true && expiryPassed) {
+    // Rule 2: the indexer says active while its own expiry says already gone.
+    // In Conway that is exactly what a stale index looks like (the dormancy
+    // credit is only folded into stored expiries when the next proposal is
+    // submitted), so the countdown is unreliable and must not be rendered.
+    expiryStale = true;
+  } else if (record?.active === false && epochsLeft !== null && !expiryPassed) {
+    // Rule 2, mirrored: an explicit inactive verdict beside a countdown that
+    // claims epochs remain. Whichever field is right, rendering "window has
+    // run out" next to "N epochs left" would state at least one falsehood, so
+    // the flag is trusted (it is the indexer's verdict) and the countdown is
+    // discarded rather than displayed against it.
+    expiryStale = true;
+  } else if (
+    record?.active !== false &&
+    epochsLeft !== null &&
+    lastVoteAt !== null &&
+    options.nowSec !== null &&
+    options.nowSec !== undefined
+  ) {
+    // Rule 3: the record's own newest vote proves a MINIMUM headroom — per
+    // CIP-1694 a vote fully resets the window, and dormancy only ever ADDS
+    // credit on top. A stored countdown materially below that proof is stale,
+    // whether it has already elapsed or is merely counting down toward a
+    // false warning. One epoch of slack absorbs the wall-clock estimate of
+    // the vote's age, so a countdown a single epoch adrift is never
+    // discarded. Without `nowSec` the veto is simply skipped.
+    const voteAgeEpochs = Math.floor((options.nowSec - lastVoteAt) / epochLengthSec);
+    if (activityWindow - voteAgeEpochs - epochsLeft > 1) expiryStale = true;
   }
+  if (expiryStale) epochsLeft = null;
 
   // Derived from the countdown, NOT from `votes[]` — see `windowUsed`'s doc.
-  const windowUsed = epochsLeft === null ? null : Math.min(activityWindow, activityWindow - epochsLeft);
+  // Clamped both ways: a dormancy-bumped expiry can exceed the fallback
+  // window, which would otherwise read as negative usage.
+  const windowUsed =
+    epochsLeft === null ? null : Math.min(activityWindow, Math.max(0, activityWindow - epochsLeft));
 
   // `active: false` is the indexer's explicit verdict and stands on its own.
-  // The arithmetic verdict only stands where no explicit flag contradicts it:
-  // an `active: true` survivor was already cleared via `expiryStale` above,
-  // and the `!== true` guard keeps the hierarchy true by construction.
-  const expired =
-    !retired &&
-    (record?.active === false || (record?.active !== true && epochsLeft !== null && epochsLeft <= 0));
+  // The arithmetic verdict needs the STRICTLY passed expiry (see the boundary
+  // note above) and only stands where no explicit flag contradicts it: an
+  // `active: true` survivor was already cleared via `expiryStale` above, and
+  // the `!== true` guard keeps the hierarchy true by construction.
+  const expired = !retired && (record?.active === false || (record?.active !== true && expiryPassed && !expiryStale));
 
   // The legitimate early warning: a COHERENT low countdown warns even for a
   // DRep the indexer still calls active. A stale-nulled countdown never warns.

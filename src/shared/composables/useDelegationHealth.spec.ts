@@ -117,12 +117,22 @@ describe('delegationHealth — the inactivity warning boundary', () => {
     expect(health.expired).toBe(false);
   });
 
-  it('is expired at 0 epochs left — the 20 of 20 boundary — when no active flag arbitrates', () => {
+  it('the expiry epoch itself still counts: 0 left is the final warning, not exclusion', () => {
+    // Conway RATIFY excludes a DRep only when currentEpoch > expiry, so the
+    // expiry epoch is the last ACTIVE epoch and must never claim exclusion.
     const health = delegationHealth(record({ active: null, expires_epoch_no: EPOCH }), {
       currentEpoch: EPOCH,
     });
     expect(health.epochsLeft).toBe(0);
     expect(health.windowUsed).toBe(20);
+    expect(health.expired).toBe(false);
+    expect(health.inactiveSoon).toBe(true);
+  });
+
+  it('is expired one epoch past the expiry when no active flag arbitrates', () => {
+    const health = delegationHealth(record({ active: null, expires_epoch_no: EPOCH - 1 }), {
+      currentEpoch: EPOCH,
+    });
     expect(health.expired).toBe(true);
     expect(health.inactiveSoon).toBe(true);
   });
@@ -171,21 +181,26 @@ describe('delegationHealth — the trust hierarchy', () => {
     expect(health.windowUsed).toBeNull();
   });
 
-  it('active: true at the exact expiry epoch is also a contradiction, not an expiry', () => {
+  it('active: true at the exact expiry epoch is coherent: the final-epoch warning, not a contradiction', () => {
     const health = delegationHealth(record({ active: true, expires_epoch_no: EPOCH }), {
       currentEpoch: EPOCH,
     });
     expect(health.expired).toBe(false);
-    expect(health.expiryStale).toBe(true);
+    expect(health.expiryStale).toBe(false);
+    expect(health.epochsLeft).toBe(0);
+    expect(health.inactiveSoon).toBe(true);
   });
 
-  it('an explicit active: false alone still means expired, whatever the expiry says', () => {
+  it('an explicit active: false still means expired, and a future countdown beside it is discarded', () => {
+    // Whichever field is right, "window has run out" cannot render beside
+    // "8 epochs left" — the flag is trusted, the countdown withheld.
     const health = delegationHealth(record({ active: false, expires_epoch_no: EPOCH + 8 }), {
       currentEpoch: EPOCH,
     });
     expect(health.expired).toBe(true);
     expect(health.inactiveSoon).toBe(true);
-    expect(health.expiryStale).toBe(false);
+    expect(health.expiryStale).toBe(true);
+    expect(health.epochsLeft).toBeNull();
   });
 
   it('a coherent future expiry beside active: true stays a normal countdown', () => {
@@ -231,6 +246,39 @@ describe('delegationHealth — the trust hierarchy', () => {
     );
     expect(health.expired).toBe(true);
     expect(health.expiryStale).toBe(false);
+  });
+
+  it('the veto also catches a stale countdown that has not elapsed yet', () => {
+    const nowSec = 1_800_000_000;
+    // Voted 1 epoch ago: at least 19 epochs provably remain, so a stored
+    // countdown of 2 is stale and the amber warning must not fire on it.
+    const recent = vote(nowSec - 1 * DEFAULT_EPOCH_LENGTH_SEC);
+    const health = delegationHealth(
+      record({ active: true, expires_epoch_no: EPOCH + 2, votes: [recent] }),
+      { currentEpoch: EPOCH, nowSec },
+    );
+    expect(health.expiryStale).toBe(true);
+    expect(health.inactiveSoon).toBe(false);
+    expect(health.epochsLeft).toBeNull();
+  });
+
+  it('one epoch of slack: a countdown a single epoch adrift of the vote proof is kept', () => {
+    const nowSec = 1_800_000_000;
+    // Voted 4 epochs ago: the proof says at least 16 left; the stored
+    // countdown says 15. Within the wall-clock slack, so it stands.
+    const recent = vote(nowSec - 4 * DEFAULT_EPOCH_LENGTH_SEC);
+    const health = delegationHealth(
+      record({ active: true, expires_epoch_no: EPOCH + 15, votes: [recent] }),
+      { currentEpoch: EPOCH, nowSec },
+    );
+    expect(health.expiryStale).toBe(false);
+    expect(health.epochsLeft).toBe(15);
+  });
+
+  it('windowUsed never goes negative when the expiry outruns the window (dormancy credit)', () => {
+    const health = delegationHealth(record({ expires_epoch_no: EPOCH + 28 }), { currentEpoch: EPOCH });
+    expect(health.epochsLeft).toBe(28);
+    expect(health.windowUsed).toBe(0);
   });
 
   it('the veto never overrides an explicit active: false — the indexer said inactive', () => {

@@ -437,6 +437,7 @@ const legend = [
 const heroCta = computed<{ labelKey: string; run: () => void } | null>(() => {
   switch (status.value.status) {
     case 'drepRetired':
+    case 'drepInactive':
     case 'drepInactiveSoon':
       return { labelKey: 'governance.findAReplacement', run: () => goToDReps() };
     case 'selfDRep':

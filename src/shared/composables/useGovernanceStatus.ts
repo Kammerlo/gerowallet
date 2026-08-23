@@ -25,18 +25,23 @@ import {
  *   2. `registeredNoDRep`  registered but undelegated: rewards are LOCKED
  *   3. `drepRetired`       the DRep deregistered; the delegation is dead
  *   4. `selfDRep`          the wallet delegated to its own DRep key
- *   5. `drepInactiveSoon`  the DRep is running out of activity window
- *   6. `represented`       delegated and healthy
+ *   5. `drepInactive`      the DRep stopped counting; the stake is excluded NOW
+ *   6. `drepInactiveSoon`  the DRep is running out of activity window
+ *   7. `represented`       delegated and healthy
  *
  * Retirement outranks self because a retired registration is dead whoever owns
- * it. Self outranks the inactivity warning because the remedy differs — you go
+ * it. Self outranks both inactivity states because the remedy differs — you go
  * and vote, you do not go and find a replacement — and `health` is exposed
- * alongside so a self-DRep view can still show the countdown.
+ * alongside so a self-DRep view can still show the countdown. Inactive and
+ * inactive-soon are separate states because their copy differs in tense: one
+ * is a fact about the present, the other a warning about the future, and
+ * rendering the warning while the stake is already excluded understates it.
  */
 export type GovernanceStatus =
   | 'notInGovernance'
   | 'registeredNoDRep'
   | 'represented'
+  | 'drepInactive'
   | 'drepInactiveSoon'
   | 'drepRetired'
   | 'selfDRep';
@@ -117,6 +122,7 @@ const TONES: Record<string, GovernanceStatusTone> = {
   represented: 'success',
   abstaining: 'neutral',
   noConfidence: 'neutral',
+  drepInactive: 'critical',
   drepInactiveSoon: 'warning',
   drepRetired: 'critical',
   selfDRep: 'success',
@@ -199,6 +205,9 @@ export function governanceStatus(input: GovernanceStatusInput = {}): GovernanceS
   } else if (isSelf) {
     status = 'selfDRep';
     copyStem = 'selfDRep';
+  } else if (health.expired) {
+    status = 'drepInactive';
+    copyStem = 'drepInactive';
   } else if (health.inactiveSoon) {
     status = 'drepInactiveSoon';
     copyStem = 'drepInactiveSoon';
