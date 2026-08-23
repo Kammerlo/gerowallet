@@ -307,6 +307,7 @@ import assts from '@/utils/assets'
 import changeLog from '@/plugins/changeLog'
 import { Cardano } from '@cardano-sdk/core'
 import { walletStore } from '@/stores/walletStore';
+import governanceAlertsStore from '@/stores/governanceAlertsStore';
 import { geroStore } from '@/stores/geroStore';
 import geroStoreDefault from '@/stores/geroStore';
 import snackbar from '@/plugins/snackbar';
@@ -435,8 +436,7 @@ const navLogo = computed(() => {
  * Delegation-health alerts waiting on the user. Drives the amber dot on My
  * governance and its mirror on the Governance parent row.
  */
-// wired by delegation-alerts
-const governanceAlertCount = computed(() => 0);
+const governanceAlertCount = computed(() => governanceAlertsStore.alertCount());
 
 /**
  * Governance submenu open state. It auto-opens on any governance route and
