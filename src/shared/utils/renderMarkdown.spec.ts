@@ -295,6 +295,14 @@ describe('renderMarkdown, a [n] marker inside link text', () => {
     expect(el.querySelectorAll('a button')).toHaveLength(0);
   });
 
+  it('claims one level of nesting and no more, leaving a deeper shape literal', () => {
+    // Not a regression: `[a [b [c] d] e](url)` rendered as literal text before
+    // too. It is here so the pattern's limit is a stated outcome rather than a
+    // surprise, and so nobody reads the fix as full bracket balancing.
+    const out = renderMarkdown('[a [b [c] d] e](https://x.test/)', options);
+    expect(out).toBe('<p>[a [b [c] d] e](https://x.test/)</p>');
+  });
+
   it('does not let a bracketed alt turn an image into an anchor with a stray "!"', () => {
     // The alt tolerates the same one level of brackets the link text does, so
     // the image rule still matches first and the whole thing stays literal.

@@ -97,12 +97,14 @@ function escapeHtml(s: string): string {
  * group. Link text and image alt both use it, and they must keep using the
  * SAME one.
  *
- * Real proposals write `[see note [2] here](https://…)`, and a text pattern
- * that cannot cross the inner `]` matches nothing at all — the anchor is lost
- * and, worse, the `[2]` left behind in the wreckage becomes a marker button
- * embedded in literal text. One level of nesting is enough for every shape
- * seen in the wild and keeps the pattern unambiguous (the two branches differ
- * on their first character, so there is nothing to backtrack over).
+ * A citation inside link text, `[see note [2] here](https://…)`, is the shape
+ * this exists for: a text pattern that cannot cross the inner `]` matches
+ * nothing at all — the anchor is lost and, worse, the `[2]` left behind in the
+ * wreckage becomes a marker button embedded in literal text. One level of
+ * nesting covers that, and it keeps the pattern unambiguous (the two branches
+ * differ on their first character, so there is nothing to backtrack over).
+ * Deeper nesting is not claimed: `[a [b [c] d] e](url)` stays literal text,
+ * which is the same outcome it had before.
  *
  * The alt shares it so that the image rule stays a SUPERSET of the link rule:
  * whatever `[…](…)` shape the link rule could match, the image rule matches
