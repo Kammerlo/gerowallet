@@ -4,8 +4,12 @@
          on the screen only when it has something to say; until then it states
          the fact and stays out of the way of the page's actual purpose. -->
     <section v-if="healthy" class="delegation-alerts__strip">
-      <v-icon size="16" color="var(--g-success)">mdi-shield-check-outline</v-icon>
-      <span class="t-body-sm delegation-alerts__strip-text">{{ $t('governance.alerts.allHealthy') }}</span>
+      <!-- Shield and sentence are ONE flex item. Wrapping can move the pair but
+           can never split it, so no width strands the icon above its own line. -->
+      <span class="delegation-alerts__strip-lead">
+        <v-icon size="16" color="var(--g-success)">mdi-shield-check-outline</v-icon>
+        <span class="t-body-sm delegation-alerts__strip-text">{{ $t('governance.alerts.allHealthy') }}</span>
+      </span>
       <AsOf :timestamp="state.evaluatedAt" />
       <AlertSettings
         class="delegation-alerts__disclosure"
@@ -114,9 +118,19 @@
         </li>
       </ul>
 
+      <!-- The neutrality promise, stated in the open. This is the weight that
+           renders "Find a replacement" and "Choose a new DRep", so the line
+           saying the wallet names no replacement of its own has to be readable
+           without a click. It sits outside the disclosure in every state this
+           card renders in, error and loading included. The compact healthy
+           strip flags nothing and offers nothing, so there it rides inside the
+           settings disclosure instead and the strip stays one row. -->
+      <p class="t-caption delegation-alerts__neutrality">{{ $t('governance.alerts.footer') }}</p>
+
       <AlertSettings
         :settings="settings"
         :activity-window="activityWindow"
+        :show-neutrality-note="false"
         @warn-at="onWarnAtChange"
         @rationale="onRationaleChange"
       />
@@ -149,7 +163,7 @@ import NetworkStore from '@/stores/networkStore';
  * and holds no state of its own. Its sources are `governanceAlertsStore` (which
  * owns evaluation, the settings and the snoozes) and the router. Everything it
  * renders is a public on-chain fact the store already asserted, which is what
- * the neutrality footnote inside the settings disclosure promises the user.
+ * the neutrality footnote promises the user.
  *
  * The replacement CTAs route to the DRep DIRECTORY, never to a named DRep — the
  * wallet does not put candidates forward.
@@ -159,6 +173,10 @@ import NetworkStore from '@/stores/networkStore';
  * nothing to flag it is a single line, because a watchdog that has found
  * nothing has no claim on half the page — and the settings it used to shout
  * about live behind a closed disclosure in both shapes.
+ *
+ * The neutrality footnote does NOT follow the settings into the disclosure. It
+ * is only collapsible on the shape that flags nothing; wherever alerts and
+ * their replacement CTAs render, it is a visible line on the card.
  */
 
 const router = useRouter();
@@ -357,8 +375,16 @@ onMounted(() => {
   border: 1px solid var(--g-hairline-1);
   border-radius: var(--g-r-control);
 }
+/* The lead is the flex item, not the sentence: the shield travels with the
+   words it belongs to at every width. */
+.delegation-alerts__strip-lead {
+  display: flex;
+  align-items: center;
+  gap: var(--g-s-2);
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .delegation-alerts__strip-text {
-  flex: 1;
   min-width: 0;
   color: var(--g-text-2);
 }
@@ -501,8 +527,22 @@ onMounted(() => {
   gap: var(--g-s-2);
 }
 
+.delegation-alerts__neutrality {
+  margin: 0;
+  color: var(--g-text-3);
+}
+
+/* Narrow surfaces are real here: the extension popup sits around 360px and the
+   side panel is not much wider. At those widths the sentence, the timestamp and
+   the disclosure preview cannot share a row, so the strip degrades to two
+   predictable rows — status line with its shield, then timestamp and settings —
+   rather than three with the icon stranded above the words. The lead moves as a
+   unit, so the previous rule's orphan is not reachable at any width. */
 @media (max-width: 720px) {
-  .delegation-alerts__strip-text {
+  .delegation-alerts__strip {
+    padding: var(--g-s-2) var(--g-s-4);
+  }
+  .delegation-alerts__strip-lead {
     flex-basis: 100%;
   }
 }

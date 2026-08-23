@@ -41,10 +41,17 @@
       </div>
       <p class="t-caption alert-settings__note">{{ $t('governance.alerts.pushUnavailable') }}</p>
 
-      <!-- The standing neutrality promise. It describes how this panel behaves,
-           which is exactly what the disclosure is about, so it lives here rather
-           than claiming a full-width block on a page that had nothing to flag. -->
-      <p class="t-caption alert-settings__note">{{ $t('governance.alerts.footer') }}</p>
+      <!-- The standing neutrality promise, but ONLY where nothing is being
+           flagged. On a strip that says "nothing to flag" there is no call to
+           action to qualify, so the promise can ride inside the disclosure
+           rather than claim a full-width block. The moment alerts and their
+           replacement CTAs are on screen the host renders it in the open and
+           sets `show-neutrality-note` false, because a promise that the wallet
+           never names a replacement may not sit behind a click on the very
+           weight that offers to find one. -->
+      <p v-if="showNeutralityNote" class="t-caption alert-settings__note">
+        {{ $t('governance.alerts.footer') }}
+      </p>
     </div>
   </details>
 </template>
@@ -61,7 +68,9 @@ import type { GovernanceAlertSettings } from '@/stores/governanceAlertsStore';
  *  - it keeps its children MOUNTED when closed, so nothing that reads the
  *    rendered markup loses sight of a setting the user can still reach;
  *  - it is keyboard-operable and screen-reader-labelled with no JS and no
- *    `@click` on a `<div>`, and it keeps the baseline focus ring;
+ *    `@click` on a `<div>`. The baseline :focus-visible selector does NOT list
+ *    `summary`, so the ring is re-stated in this file's styles rather than left
+ *    to whatever the user agent draws;
  *  - it costs zero pixels until opened, which is the whole point: the healthy
  *    state of the watchdog had been spending a full card on controls nobody
  *    opened.
@@ -76,6 +85,15 @@ defineProps({
   settings: { type: Object as PropType<GovernanceAlertSettings>, required: true },
   /** The activity window the warning threshold is quoted against. */
   activityWindow: { type: Number, required: true },
+  /**
+   * Whether the neutrality promise lives inside this disclosure.
+   *
+   * True only where the disclosure is the whole surface — the compact healthy
+   * strip, which flags nothing and offers nothing. A host that is showing
+   * alerts renders that line in the open and passes false, so it is never
+   * collapsed on a weight that carries replacement CTAs.
+   */
+  showNeutralityNote: { type: Boolean, default: true },
 });
 
 const emit = defineEmits<{
@@ -108,12 +126,21 @@ function onRationale(value: boolean | null): void {
   min-height: var(--g-btn-h-compact);
   color: var(--g-text-3);
   cursor: pointer;
-  /* Drop the default triangle without touching the focus ring: the baseline
-     :focus-visible rule is the accessibility floor for this control. */
+  /* Drops the default triangle only. Nothing here removes an outline. */
   list-style: none;
 }
 .alert-settings__summary::-webkit-details-marker {
   display: none;
+}
+/* The accessibility floor for the one control that gates every alert setting.
+   baseline.css matches a, button, [role='button'], .v-btn, inputs and
+   [tabindex] — `summary` is on none of those lists, so without this rule a
+   keyboard user gets whatever ring the user agent happens to draw. Same 2px
+   accent ring as the baseline; the outline is drawn here, never removed. */
+.alert-settings__summary:focus-visible {
+  outline: 2px solid var(--g-accent);
+  outline-offset: 2px;
+  border-radius: var(--g-r-control);
 }
 .alert-settings__summary:hover {
   color: var(--g-text-2);

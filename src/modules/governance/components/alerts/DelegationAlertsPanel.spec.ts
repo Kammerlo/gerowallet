@@ -172,6 +172,72 @@ describe('DelegationAlertsPanel', () => {
     expect(html).toContain('governance.alerts.footer');
   });
 
+  // This is the weight that renders "Find a replacement" and "Choose a new
+  // DRep", so it is the weight where "Gero never suggests a specific
+  // replacement" has to be readable. Behind a closed disclosure it is worth
+  // least exactly where it is needed most, so on this shape it is a line on the
+  // card, and the disclosure gives it up.
+  it('states the neutrality promise in the open, not inside the disclosure, whenever alerts show', () => {
+    const wrapper = render();
+    expect(wrapper.find('.delegation-alerts__neutrality').text()).toContain('governance.alerts.footer');
+    expect(wrapper.find('details').html()).not.toContain('governance.alerts.footer');
+  });
+
+  // A failed check and a running check both keep the feed card, and the promise
+  // stays visible with it. There is no state of this card in which the reader
+  // has to open something to find out what the wallet does not do.
+  it('keeps the neutrality promise visible on the error and loading weights too', () => {
+    state.errorKey = 'governance.alerts.checkFailed';
+    try {
+      expect(render().find('.delegation-alerts__neutrality').exists()).toBe(true);
+    } finally {
+      state.errorKey = null;
+    }
+
+    const alerts = state.alerts;
+    state.alerts = [];
+    state.loading = true;
+    try {
+      expect(render().find('.delegation-alerts__neutrality').exists()).toBe(true);
+    } finally {
+      state.alerts = alerts;
+      state.loading = false;
+    }
+  });
+
+  // The healthy strip is one row by design and flags nothing, so there is no
+  // claim on screen for the promise to qualify. Only there does it fold back
+  // into the disclosure — reachable, still mounted, and off the row.
+  it('folds the neutrality promise back into the disclosure on the compact strip', () => {
+    const alerts = state.alerts;
+    state.alerts = [];
+    try {
+      const wrapper = render();
+      expect(wrapper.find('.delegation-alerts__neutrality').exists()).toBe(false);
+      expect(wrapper.find('details').html()).toContain('governance.alerts.footer');
+    } finally {
+      state.alerts = alerts;
+    }
+  });
+
+  // The narrow-viewport rule used to give the sentence `flex-basis: 100%` while
+  // the shield stayed a sibling flex item, so at extension-popup and side-panel
+  // widths the icon wrapped onto a line of its own above the words it belongs
+  // to. Grouping them is what makes that unreachable at ANY width, and grouping
+  // is markup, so it is pinned here rather than left to a stylesheet.
+  it('keeps the success shield inside the same flex item as its sentence', () => {
+    const alerts = state.alerts;
+    state.alerts = [];
+    try {
+      const lead = render().find('.delegation-alerts__strip-lead');
+      expect(lead.exists()).toBe(true);
+      expect(lead.html()).toContain('mdi-shield-check-outline');
+      expect(lead.find('.delegation-alerts__strip-text').exists()).toBe(true);
+    } finally {
+      state.alerts = alerts;
+    }
+  });
+
   // Renamed from "shows the positive empty state ...": what this now guards is
   // the COMPACTION itself. The `.empty-state` assertion below is the load-
   // bearing one — without it nothing in the file would catch a regression back
@@ -182,6 +248,13 @@ describe('DelegationAlertsPanel', () => {
     try {
       const wrapper = render();
       expect(wrapper.findAll('.delegation-alerts__card')).toHaveLength(0);
+      // These two replace this test's original single assertion, which was
+      // `expect(wrapper.find('.empty-state').exists()).toBe(true)`. That
+      // selector pinned the tall EmptyState block the compaction removes, so
+      // leaving it as-is would have pinned the very thing being deleted. It is
+      // inverted rather than dropped: the pair now pins the SWAP — strip
+      // rendered, EmptyState gone — so a revert to the tall block fails here
+      // instead of quietly passing on a selector nobody asserts against.
       expect(wrapper.find('.delegation-alerts__strip').exists()).toBe(true);
       expect(wrapper.find('.empty-state').exists()).toBe(false);
       // And no feed card either: the eyebrow heading over a line that says
