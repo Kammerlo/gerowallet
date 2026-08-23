@@ -41,7 +41,7 @@
             </span>
             <span class="my-governance__drep-ident">
               <span class="t-body-sm my-governance__drep-name">{{ drepName }}</span>
-              <span class="t-caption g-mono my-governance__drep-id">{{ truncate(status.drepId) }}</span>
+              <span v-if="!keywordNameKey" class="t-caption g-mono my-governance__drep-id">{{ truncate(status.drepId) }}</span>
             </span>
           </div>
           <div v-else-if="status.withdrawalsBlocked" class="my-governance__locked">
@@ -237,11 +237,16 @@
  * DRep with no votes has no rationale rate, and printing 0% would accuse them
  * of withholding rationales nobody asked for.
  */
-import { computed, onMounted, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router/composables';
+import { Cardano } from '@cardano-sdk/core';
 import { walletStore } from '@/stores/walletStore';
 import NetworkStore, { networkStore } from '@/stores/networkStore';
+import governanceStoreActions from '@/stores/governanceStore';
 import blockchainApi from '@/api/blockchain-api';
+import { isCardanoTx } from '@/models/transaction.types';
+import { extractCip149Compensation } from '@/shared/utils/builder';
+import { KEYWORD_DREPS } from '@/shared/utils/drepId';
 import { useGovernanceStatus } from '@/shared/composables/useGovernanceStatus';
 import type { DelegatedDRepRecord, DRepVoteRecord } from '@/shared/composables/useDelegationHealth';
 import { useWithdrawal } from '@/shared/composables/useWithdrawal';
@@ -333,10 +338,24 @@ const expiresDisplay = computed(() =>
 );
 
 /**
+ * The two predefined choices are positions, not representatives: there is no
+ * DRep behind `drep_always_abstain` to name, and rendering the keyword as if
+ * it were a bech32 id (which is what truncating it produced) told the user
+ * nothing. They get their proper name and no id line at all.
+ */
+const KEYWORD_NAME_KEYS: Record<string, string> = {
+  abstain: 'governance.alwaysAbstain',
+  noConfidence: 'governance.alwaysNoConfidence',
+};
+
+const keywordNameKey = computed(() => KEYWORD_NAME_KEYS[status.value.delegation] ?? null);
+
+/**
  * CIP-119 `givenName` arrives either as a bare string or as a JSON-LD
  * `{ '@value': … }`. Falls back to the id so the chip is never blank.
  */
 const drepName = computed(() => {
+  if (keywordNameKey.value) return String(t(keywordNameKey.value));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- upstream metadata is untyped JSON-LD
   const given = (record.value?.metadata as any)?.meta_json?.body?.givenName;
   const name = typeof given === 'object' && given !== null ? given['@value'] : given;
@@ -446,6 +465,60 @@ function goToRegister(): void {
 }
 
 /**
+ * Hydrate the shared governance store from the record this page already has.
+ *
+ * `useWithdrawal.compensationInfo` reads `currentDRep` (for the DRep's CIP-119
+ * payment address) and `currentCompensationBps` to decide whether a withdrawal
+ * carries a CIP-149 donation output. CardanoGovernance.vue used to be the only
+ * thing in the dashboard context that wrote either, and it is being deleted, so
+ * that hydration lives here now.
+ *
+ * Deliberately reuses the record already fetched rather than calling
+ * `loadDRepById`, which would repeat the same request.
+ */
+function hydrateGovernanceStore(): void {
+  const drepId = walletStore.account?.drep_id;
+  if (!drepId) {
+    governanceStoreActions.clearCurrentDRep();
+    governanceStoreActions.setCompensationBps(null);
+    return;
+  }
+
+  // The predefined choices have no record to fetch; the store only ever held
+  // the bare id for them, and compensation cannot apply to a keyword.
+  governanceStoreActions.setCurrentDRep(
+    KEYWORD_DREPS.includes(drepId as (typeof KEYWORD_DREPS)[number])
+      ? { drep_id: drepId }
+      : record.value,
+  );
+  governanceStoreActions.setCompensationBps(activeCompensationBps());
+}
+
+/**
+ * The donation rate the user last committed to, read off the newest CONFIRMED
+ * vote-delegation transaction's CIP-149 metadata. A pending one is excluded:
+ * it can still fail, and acting on it would attach a donation the chain never
+ * agreed to.
+ */
+function activeCompensationBps(): number | null {
+  const txs = walletStore.transactions ?? [];
+  const latestDelegation = txs
+    .filter(
+      tx =>
+        !tx.pending &&
+        isCardanoTx(tx) &&
+        (tx.body?.certificates ?? []).some(
+          (cert: Cardano.Certificate) =>
+            cert.__typename === Cardano.CertificateType.VoteDelegation ||
+            cert.__typename === Cardano.CertificateType.VoteRegistrationDelegation,
+        ),
+    )
+    .sort((a, b) => (b.block_height || 0) - (a.block_height || 0))[0];
+
+  return latestDelegation ? extractCip149Compensation(latestDelegation.auxiliaryData) : null;
+}
+
+/**
  * Fetch the delegated DRep's record. Absence is not retirement: a 404 leaves
  * `record` null, `recordAvailable` false, and the health strip hidden rather
  * than reporting a DRep as dead on missing data.
@@ -454,27 +527,38 @@ async function loadDRep(): Promise<void> {
   error.value = '';
   const drepId = walletStore.account?.drep_id;
   const wallet = walletStore.loggedWallet;
-  if (!drepId || !wallet) {
+  // A keyword delegation has no record to fetch: the id is the whole story,
+  // and asking the indexer for it only earns a 404.
+  const fetchable =
+    !!drepId && !!wallet && !KEYWORD_DREPS.includes(drepId as (typeof KEYWORD_DREPS)[number]);
+
+  if (!fetchable) {
     record.value = null;
     loading.value = false;
+    hydrateGovernanceStore();
     return;
   }
+
   loading.value = true;
   try {
     record.value = await blockchainApi.getDRepById(drepId, wallet.chain, wallet.network);
     fetchedAt.value = Date.now();
+    hydrateGovernanceStore();
   } catch (err: unknown) {
     debugLog('MyGovernance: DRep lookup failed', err);
     record.value = null;
     error.value = String(t('governance.drepLookupFailed'));
+    // Leave the store alone on failure rather than blanking a good record
+    // with a transient network error.
   } finally {
     loading.value = false;
   }
 }
 
-onMounted(() => {
-  void loadDRep();
-});
+// Re-reads whenever the delegation itself changes, so delegating from another
+// surface (or a confirmation landing via Gero Sync) refreshes this page instead
+// of stranding it on the previous DRep until a reload.
+watch(() => walletStore.account?.drep_id, () => void loadDRep(), { immediate: true });
 </script>
 
 <style scoped>

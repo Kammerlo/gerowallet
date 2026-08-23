@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mount, type Wrapper } from '@vue/test-utils';
 import Vue, { ref } from 'vue';
+import { Cardano } from '@cardano-sdk/core';
 
 const withdraw = vi.fn();
 const closeWithdrawalDialog = vi.fn();
@@ -30,6 +31,7 @@ vi.mock('vue-router/composables', () => ({ useRouter: () => ({ push: vi.fn() }) 
 // @ts-ignore — tsconfig ships no `*.vue` shim; vite resolves this fine.
 import MyGovernance from './MyGovernance.vue';
 import { walletStore } from '@/stores/walletStore';
+import { governanceStore } from '@/stores/governanceStore';
 
 const $t = (key: string, values?: Record<string, unknown>): string =>
   values ? `${key}:${JSON.stringify(values)}` : key;
@@ -98,6 +100,9 @@ beforeEach(() => {
   getDRepById.mockResolvedValue(null);
   walletStore.loggedWallet = { chain: 'Cardano', network: 'Mainnet', stakeAddress: 'stake1uexample' };
   walletStore.keys = null;
+  walletStore.transactions = [];
+  governanceStore.currentDRep = null;
+  governanceStore.currentCompensationBps = null;
 });
 
 afterEach(() => {
@@ -242,6 +247,140 @@ describe('MyGovernance', () => {
     const primaries = wrapper.findAll('.g-btn--primary');
     expect(primaries).toHaveLength(1);
     expect(primaries.at(0).text()).toContain('governance.browseDReps');
+  });
+
+  // CardanoGovernance.vue was the only dashboard-context writer of these, and
+  // it is gone. useWithdrawal.compensationInfo reads both to decide whether a
+  // withdrawal carries a CIP-149 donation output, so without this the donation
+  // would silently stop being attached.
+  describe('governance store hydration', () => {
+    /** A confirmed vote delegation carrying a 5% CIP-149 donation rate. */
+    function delegationTxWithDonation(bps: number, pending = false) {
+      return {
+        pending,
+        block_height: 100,
+        body: { certificates: [{ __typename: Cardano.CertificateType.VoteDelegation }] },
+        auxiliaryData: { blob: new Map([[3692n, new Map([['donationBasisPoints', bps]])]]) },
+      };
+    }
+
+    it('populates currentDRep from the record it already fetched', async () => {
+      represented();
+      const drepRecord = {
+        registered: true,
+        votes: [],
+        metadata: { meta_json: { body: { paymentAddress: 'addr1qexample' } } },
+      };
+      getDRepById.mockResolvedValue(drepRecord);
+
+      wrapper = mountPage();
+      await settle();
+
+      expect(governanceStore.currentDRep).toEqual(drepRecord);
+      // One request, not two: hydration reuses the page's own fetch rather
+      // than repeating it through governanceStore.loadDRepById.
+      expect(getDRepById).toHaveBeenCalledTimes(1);
+    });
+
+    it('recovers the committed donation rate from the newest confirmed delegation', async () => {
+      represented();
+      getDRepById.mockResolvedValue({ registered: true, votes: [] });
+      walletStore.transactions = [delegationTxWithDonation(50)];
+
+      wrapper = mountPage();
+      await settle();
+
+      expect(governanceStore.currentCompensationBps).toBe(50);
+    });
+
+    it('ignores a pending delegation, which the chain has not agreed to yet', async () => {
+      represented();
+      getDRepById.mockResolvedValue({ registered: true, votes: [] });
+      walletStore.transactions = [delegationTxWithDonation(50, true)];
+
+      wrapper = mountPage();
+      await settle();
+
+      expect(governanceStore.currentCompensationBps).toBeNull();
+    });
+
+    it('clears both when the wallet has no DRep to donate to', async () => {
+      governanceStore.currentDRep = { drep_id: 'stale' };
+      governanceStore.currentCompensationBps = 50;
+      registeredNoDRep();
+
+      wrapper = mountPage();
+      await settle();
+
+      expect(governanceStore.currentDRep).toBeNull();
+      expect(governanceStore.currentCompensationBps).toBeNull();
+    });
+
+    it('keeps a good record rather than blanking it on a transient lookup failure', async () => {
+      represented();
+      governanceStore.currentDRep = { drep_id: 'drep1yfrexample' };
+      getDRepById.mockRejectedValue(new Error('boom'));
+
+      wrapper = mountPage();
+      await settle();
+
+      expect(governanceStore.currentDRep).toEqual({ drep_id: 'drep1yfrexample' });
+    });
+  });
+
+  describe('predefined choices', () => {
+    function abstaining(): void {
+      walletStore.account = {
+        active: true,
+        pool_id: 'pool1abc',
+        drep_id: 'drep_always_abstain',
+        controlled_amount: '23718000000',
+        withdrawable_amount: '0',
+      } as unknown as typeof walletStore.account;
+    }
+
+    it('names the position instead of rendering the keyword as an id', async () => {
+      abstaining();
+      wrapper = mountPage();
+      await settle();
+
+      const html = wrapper.html();
+      expect(html).toContain('governance.alwaysAbstain');
+      // The keyword is a position, not a credential: no truncated "id" line.
+      expect(html).not.toContain('drep_always_abstain');
+      expect(wrapper.findAll('.my-governance__drep-id')).toHaveLength(0);
+      // And nothing to look up, so no doomed 404 on mount.
+      expect(getDRepById).not.toHaveBeenCalled();
+    });
+
+    it('records the keyword in the store so the withdrawal path still sees a delegation', async () => {
+      abstaining();
+      wrapper = mountPage();
+      await settle();
+
+      expect(governanceStore.currentDRep).toEqual({ drep_id: 'drep_always_abstain' });
+    });
+  });
+
+  it('refreshes when the delegation changes, without a reload', async () => {
+    registeredNoDRep();
+    wrapper = mountPage();
+    await settle();
+    expect(wrapper.html()).toContain('governance.status.registeredNoDRep.title');
+    expect(getDRepById).not.toHaveBeenCalled();
+
+    getDRepById.mockResolvedValue({ registered: true, votes: [] });
+    walletStore.account = {
+      ...walletStore.account,
+      drep_id: 'drep1yfrexample',
+    } as unknown as typeof walletStore.account;
+    await settle();
+
+    expect(getDRepById).toHaveBeenCalledTimes(1);
+    expect(wrapper.html()).toContain('governance.status.represented.title');
+    // The unlock choices are gone. (The hero title is not a safe probe here:
+    // the legend names every state by design.)
+    expect(wrapper.html()).not.toContain('governance.unlocksWithdrawals');
   });
 
   it('surfaces a retryable error instead of an empty page when the lookup fails', async () => {
