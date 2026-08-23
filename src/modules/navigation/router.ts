@@ -24,6 +24,8 @@ const Governance = () => import('@/modules/governance/Governance.vue');
 const GovernanceActionList = () => import('@/modules/governance/views/ActionList.vue');
 const GovernanceActionDetail = () => import('@/modules/governance/views/ActionDetail.vue');
 const GovernanceDReps = () => import('@/modules/governance/components/CardanoGovernance.vue');
+const GovernanceMe = () => import('@/modules/governance/views/MyGovernance.vue');
+const GovernanceRegister = () => import('@/modules/governance/views/BecomeDRep.vue');
 const Dao = () => import('@/modules/dao/Dao.vue');
 const WarningPopUp = () => import('@/popup/modules/views/WarningPopUp.vue');
 const Transactions = () => import('@/modules/transactions/Transactions.vue');
@@ -112,6 +114,28 @@ const routes = [
     path: '/governance',
     name: 'governance',
     component: Governance,
+    meta: {
+      layout: ContentLayout,
+      requiresAuth: true,
+    },
+  },
+  {
+    // The governance landing page: what THIS wallet's stake is doing. The
+    // `/governance` shell redirects here.
+    path: '/governance/me',
+    name: 'governanceMe',
+    component: GovernanceMe,
+    meta: {
+      layout: ContentLayout,
+      requiresAuth: true,
+    },
+  },
+  {
+    // DRep registration. Gated one notch tighter than the rest of governance —
+    // see the `governanceRegister` maintenance case below.
+    path: '/governance/register',
+    name: 'governanceRegister',
+    component: GovernanceRegister,
     meta: {
       layout: ContentLayout,
       requiresAuth: true,
@@ -427,11 +451,18 @@ function isRouteUnderMaintenance(routeName: string | null | undefined): boolean 
       return !featureFlagsStore.isRealFiEnabled();
 
     case 'governance':
+    case 'governanceMe':
     case 'governanceActions':
     case 'governanceAction':
     case 'governanceDReps':
       // Cardano governance ships dark — enabled deliberately via gero-sync.
       return !featureFlagsStore.isGovernanceEnabled();
+
+    case 'governanceRegister':
+      // Registration posts a deposit and a certificate on chain, so it rides the
+      // voting sub-flag on top of the master governance gate rather than opening
+      // with the read-only surfaces. Both must be on.
+      return !featureFlagsStore.isGovernanceEnabled() || !featureFlagsStore.isGovernanceVotingEnabled();
 
     case 'copilotFeed':
       // Gero Copilot feed gated by the master feature flag (ships dark)
@@ -512,6 +543,8 @@ router.beforeEach(async (to: Route, from: Route, next: NavigationGuardNext) => {
     const routeNetworkGuards: Record<string, (c: string, n: string) => boolean> = {
       cashback: (c, n) => networks.resolveCashbackSupport(c, n),
       governance: (c, n) => networks.resolveGovernanceSupport(c, n),
+      governanceMe: (c, n) => networks.resolveGovernanceSupport(c, n),
+      governanceRegister: (c, n) => networks.resolveGovernanceSupport(c, n),
       governanceActions: (c, n) => networks.resolveGovernanceSupport(c, n),
       governanceAction: (c, n) => networks.resolveGovernanceSupport(c, n),
       governanceDReps: (c, n) => networks.resolveGovernanceSupport(c, n),
