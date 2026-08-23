@@ -17,17 +17,15 @@ import { debugLog } from '@/utils/debug';
  * `DRepDelegateDialog`.
  *
  * The directory and the profile are two routes with one delegate button between
- * them, and `CardanoGovernance.vue` already owns a working copy of this build
- * for the pre-split surface. Rather than fork that copy twice, the build lives
- * here once and both new views mount the same dialog with the same
- * `{ drep, tx }` props it has always taken. `CardanoGovernance.vue` is left
- * untouched on disk so the old route stays a working fallback until parity is
- * confirmed.
+ * them, so the build lives here once and both mount the same dialog with the
+ * same `{ drep, tx }` props it has always taken. This is the sole owner of the
+ * flow: the pre-split `CardanoGovernance.vue`, which used to carry its own copy,
+ * has been deleted now that the side-panel handoff is re-homed on the directory.
  *
- * The Nexus-vs-local branch is the one from `CardanoGovernance.drepDelegate`
- * and matters: Trezor cannot sign the combined Conway certificates Nexus emits,
- * so it keeps the client-side builder. First-time stake registration folds the
- * deposit in on both paths.
+ * The Nexus-vs-local branch is inherited from that surface and matters: Trezor
+ * cannot sign the combined Conway certificates Nexus emits, so it keeps the
+ * client-side builder. First-time stake registration folds the deposit in on
+ * both paths.
  */
 
 /** The shape `DRepDelegateDialog` reads. `hex` + `has_script` drive the certificate. */

@@ -176,8 +176,13 @@
                 </div>
               </div>
               <div class="match__card-actions">
-                <GButton tier="secondary" compact @click="$emit('delegate', entry.record)">
-                  {{ $t('governance.delegate') }}
+                <GButton
+                  tier="secondary"
+                  compact
+                  :disabled="isCurrentDRep(entry)"
+                  @click="$emit('delegate', entry.record)"
+                >
+                  {{ isCurrentDRep(entry) ? $t('governance.delegated') : $t('governance.delegate') }}
                 </GButton>
                 <GButton tier="tertiary" compact @click="$emit('open-profile', entry.stats.drepId)">
                   {{ $t('governance.fullRecord') }}
@@ -209,8 +214,13 @@
                 </div>
               </div>
               <div class="match__card-actions">
-                <GButton tier="secondary" compact @click="$emit('delegate', nearMiss.record)">
-                  {{ $t('governance.delegate') }}
+                <GButton
+                  tier="secondary"
+                  compact
+                  :disabled="isCurrentDRep(nearMiss)"
+                  @click="$emit('delegate', nearMiss.record)"
+                >
+                  {{ isCurrentDRep(nearMiss) ? $t('governance.delegated') : $t('governance.delegate') }}
                 </GButton>
                 <GButton tier="tertiary" compact @click="$emit('open-profile', nearMiss.stats.drepId)">
                   {{ $t('governance.fullRecord') }}
@@ -237,6 +247,7 @@
 import Vue, { computed, onUnmounted, reactive, ref, watch } from 'vue';
 import type { PropType } from 'vue';
 import { setWalletConfiguration } from '@/db/wallet-db';
+import { MATCH_CRITERIA_KEY } from '@/stores/governanceAlertsStore';
 import BaseDialog from '@/shared/dialogs/BaseDialog.vue';
 import GButton from '@/shared/components/GButton/GButton.vue';
 import EmptyState from '@/shared/components/feedback/EmptyState.vue';
@@ -249,6 +260,7 @@ import filters from '@/shared/utils/filters';
 import networks from '@/utils/networks';
 import { debugLog } from '@/utils/debug';
 import { drepBio, drepDisplayName, powerConcentration } from '@/shared/utils/drepView';
+import { sameDRep } from '@/shared/utils/drepId';
 import {
   drepMatch,
   type DRepCriterionName,
@@ -356,11 +368,9 @@ const criteria = reactive<CriteriaState>(defaults());
 // derived from the criteria on the way in and collapsed back on the way out:
 // a criterion that is off is simply null, exactly as `drepMatch` reads it.
 //
-// The key name is duplicated here rather than imported because the alerts store
-// lands separately; both sides quote this literal.
+// The key itself is owned by the alerts store, which is the other half of that
+// contract; importing it is what keeps the two from drifting apart.
 // ---------------------------------------------------------------------------
-
-const MATCH_CRITERIA_KEY = 'governanceMatchCriteria';
 
 /** The user's intent, ungated by data availability — see `activeCriteria` for the applied set. */
 function toStoredCriteria(): DRepMatchCriteria {
@@ -554,6 +564,15 @@ function adaOf(entry: DRepMatchEntry): string {
     '',
     true,
   );
+}
+
+/**
+ * The DRep this wallet is already delegated to. Re-delegating to them builds a
+ * transaction that changes nothing, so the card says so rather than offering a
+ * button whose handler silently returns.
+ */
+function isCurrentDRep(entry: DRepMatchEntry): boolean {
+  return sameDRep(entry.stats.drepId, walletStore.account?.drep_id);
 }
 
 function passCount(entry: DRepMatchEntry): number {
@@ -775,6 +794,13 @@ function chipsFor(entry: DRepMatchEntry): CriterionChip[] {
   border-radius: var(--g-r-chip);
   border: 1px solid var(--g-hairline-2);
   color: var(--g-text-3);
+}
+/* The criterion this DRep did not meet. It still shows its real figure -- hiding
+   it would leave the user unable to see how close a near miss came. */
+.match__chip--fail {
+  color: var(--g-text-3);
+  background: var(--g-raised);
+  border-color: var(--g-hairline-2);
 }
 .match__chip--pass {
   color: var(--g-success);
