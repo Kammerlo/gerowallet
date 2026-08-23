@@ -241,7 +241,7 @@ async function withdrawWithAbstain(): Promise<void> {
     return;
   }
   if (!epochParams.value) {
-    buildError.value = String(t('governance.epochParametersNotAvailable'));
+    buildError.value = String(t('common.epochParametersNotAvailable'));
     return;
   }
 
