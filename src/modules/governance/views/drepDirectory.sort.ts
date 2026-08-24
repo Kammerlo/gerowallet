@@ -13,6 +13,10 @@
  *  - Ties break on the DRep credential, never on power, so equal figures cannot
  *    turn into a power ranking by the back door. Unknown figures sort LAST in
  *    BOTH directions: "pending" is not "worst", it is absent.
+ *
+ * Every order here spans the WHOLE register, never the loaded page. Which of the
+ * two mechanisms delivers that is `SERVER_SORT_BY`'s to say — see the comment on
+ * it, and `drepRegister.ts` for the client-side half.
  */
 import { compareLovelace } from '@/shared/utils/lovelace';
 
@@ -35,6 +39,41 @@ export const SORTABLE_KEYS: readonly SortKey[] = Object.freeze([
   'lastVote',
   'power',
 ]);
+
+/**
+ * Which columns `/api/dreps` can order for us, and under what name.
+ *
+ * An ALLOW-LIST, not a translation table, because the endpoint does not validate
+ * this parameter: `sort_by=participation` and `sort_by=garbage_key` both return
+ * HTTP 200 carrying the server's DEFAULT order (verified against mainnet
+ * 2026-08-24). Passing a sort key through would therefore paint an arbitrary
+ * order under a header claiming to be sorted — the exact failure this whole
+ * change exists to remove. Anything mapped to null is ordered client side over
+ * the full register instead.
+ *
+ * `lastVote` is null DELIBERATELY. The endpoint does offer `sort_by=votes`, but
+ * that orders by how MANY votes a DRep has cast, and this column shows WHEN they
+ * last voted. Wiring the two together would swap one page-local lie for a
+ * register-wide one.
+ */
+export const SERVER_SORT_BY: Readonly<Record<SortKey, string | null>> = Object.freeze({
+  participation: null,
+  rationale: null,
+  delegators: 'delegators',
+  lastVote: null,
+  power: 'voting_power',
+});
+
+/** The `/api/dreps` query fields for one sort state, or null when only the client can order it. */
+export function serverSortFor(state: SortState): { sort_by: string; sort_direction: SortDir } | null {
+  const sortBy = SERVER_SORT_BY[state.key];
+  return sortBy ? { sort_by: sortBy, sort_direction: state.dir } : null;
+}
+
+/** True when the server can deliver this column's order across every page. */
+export function isServerSortable(key: SortKey): boolean {
+  return SERVER_SORT_BY[key] !== null;
+}
 
 /**
  * The minimum a row must expose to be ordered. Deliberately structural rather

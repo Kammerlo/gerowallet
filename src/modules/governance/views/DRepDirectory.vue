@@ -40,6 +40,11 @@
     <ErrorState v-if="error" :message="error" retryable @retry="reload()" />
 
     <div v-else-if="loading" class="drep-directory__rows">
+      <!-- Ordering by a figure the server cannot sort means loading every DRep
+           first. That is a wait worth naming rather than an unexplained delay. -->
+      <span v-if="loadingRegister" class="t-caption drep-directory__loading-note">
+        {{ $t('governance.orderingRegister') }}
+      </span>
       <v-skeleton-loader v-for="n in 6" :key="n" type="list-item-two-line" />
     </div>
 
@@ -47,6 +52,14 @@
 
     <template v-else>
       <div class="drep-directory__table" role="table" :aria-label="String($t('governance.drepDirectoryTitle'))">
+        <!-- The one case where a header does NOT reach every page. It is stated
+             here, against the sort control itself, because a caveat in the footer
+             would be read after the order has already been believed. -->
+        <p v-if="!orderSpansRegister" class="t-caption drep-directory__scope-note" role="status">
+          <v-icon size="14" color="var(--g-warning)">mdi-alert-outline</v-icon>
+          {{ $t('governance.sortPageOnlyNotice') }}
+        </p>
+
         <!-- Column header. The headers ARE the sort control: each sortable one is
              a real button, so it is reachable by keyboard and carries the
              baseline focus ring, and its column announces `aria-sort`. -->
@@ -228,7 +241,12 @@
       <!-- Footer -->
       <div class="drep-directory__footer">
         <span class="t-caption">
-          {{ $t('governance.directoryFooter', { showing: rows.length, total: formatInt(totalItems || 0) }) }}
+          {{
+            $t(orderSpansRegister ? 'governance.directoryFooter' : 'governance.directoryFooterPageLocal', {
+              showing: rows.length,
+              total: formatInt(totalItems || 0),
+            })
+          }}
           ·
           {{
             eligibleCount
@@ -293,10 +311,13 @@ import {
   ariaSortFor,
   DEFAULT_SORT,
   nextSort,
+  serverSortFor,
   sortDirectory,
   type SortDir,
   type SortKey,
+  type SortState,
 } from '@/modules/governance/views/drepDirectory.sort';
+import { loadDRepRegister } from '@/modules/governance/views/drepRegister';
 import { formatInt } from '@/shared/utils/format';
 import filters from '@/shared/utils/filters';
 import networks from '@/utils/networks';
@@ -327,9 +348,9 @@ import { useDRepDelegation, type PredefinedDRep } from '@/modules/governance/com
  *  - The default order is PARTICIPATION, descending. Voting power is one
  *    sortable column among five and is only ever applied because the user
  *    clicked its header.
- *  - Ordering is applied to the loaded page, client side, with a BigInt
- *    comparator for power. Ties break on the DRep credential, never on power, so
- *    a tie can never quietly become a power ranking.
+ *  - Ordering uses a BigInt comparator for power. Ties break on the DRep
+ *    credential, never on power, so a tie can never quietly become a power
+ *    ranking.
  *  - A statistic the data cannot support renders as "pending", not as 0, and
  *    sorts LAST in both directions — unknown is not "worst". The focus-area
  *    column disappears entirely when governance actions are not loaded rather
@@ -337,6 +358,22 @@ import { useDRepDelegation, type PredefinedDRep } from '@/modules/governance/com
  *
  * Sorting lives on the column headers rather than in a pill row above them: one
  * control instead of two, and the direction is visible where the figures are.
+ *
+ * EVERY SORT SPANS EVERY PAGE. It used to span the loaded page of 15, which made
+ * "Voting power ↓" a claim the control could not honour. Two mechanisms replace
+ * that, chosen per column by `SERVER_SORT_BY`:
+ *
+ *  - Power and delegators go to `/api/dreps` as `sort_by`, and paging then walks
+ *    the server's global order. Cost: unchanged.
+ *  - Participation, rationale and last-vote cannot be ordered upstream at all, so
+ *    the whole register is loaded once (measured: 4 requests, 10.74 MB gzipped,
+ *    ~2 s — see `drepRegister.ts`) and paged IN MEMORY. Since the default sort is
+ *    participation, this is the arriving path, and it arrives behind a skeleton
+ *    that says what it is waiting for.
+ *
+ * When the register cannot be loaded the page still renders — from one server
+ * page, with the order plainly labelled as page-local next to the headers.
+ * A header never implies an order the data behind it does not deliver.
  */
 
 interface Column {
@@ -378,15 +415,27 @@ const { selectedDRep, tx, isDialogOpen, building, delegateToDRep, delegateToPred
 
 const records = ref<DRepRecord[]>([]);
 const loading = ref(false);
+/** True while the whole register is on its way, so the wait can be explained. */
+const loadingRegister = ref(false);
+/** True when `records` holds the whole matching set, so paging is a local slice. */
+const registerLoaded = ref(false);
+/**
+ * Whether the order on screen covers every page. False only on the degraded
+ * fallback, and the UI then says so beside the headers.
+ */
+const orderSpansRegister = ref(true);
 const error = ref<string | null>(null);
 const fetchedAt = ref<number | null>(null);
 const page = ref(1);
 const totalItems = ref<number | null>(null);
-const totalPages = ref(1);
+/** The server's page count. Only meaningful while the server is doing the paging. */
+const serverTotalPages = ref(1);
 const search = ref('');
 const sortKey = ref<SortKey>(DEFAULT_SORT.key);
 const sortDir = ref<SortDir>(DEFAULT_SORT.dir);
 const matchOpen = ref(false);
+
+const sortState = computed<SortState>(() => ({ key: sortKey.value, dir: sortDir.value }));
 
 const actionsState = governanceActionsStore.state;
 const currentEpoch = computed(() => NetworkStore.getCurrentEpoch());
@@ -497,45 +546,95 @@ function lastVoteLabel(blockTime: number | null): string | null {
   return new Date(blockTime * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-const enriched = computed<DirectoryRow[]>(() =>
+/**
+ * The comparator's view of a DRep: an identity and the figures, nothing else.
+ *
+ * Split out from `rows` deliberately. Under a client-ordered column this runs
+ * over the whole register — 1,682 records on mainnet — every time the stats
+ * context changes, and the presentation work below (currency formatting,
+ * translated labels, a health check per row) has no business running 1,682 times
+ * to render 15 rows.
+ */
+interface SortableEntry {
+  key: string;
+  id: string;
+  record: DRepRecord;
+  stats: DRepStats;
+}
+
+const sortable = computed<SortableEntry[]>(() =>
   records.value
     .map(record => {
       const stats = drepStats(record, statsContext.value);
       if (!stats) return null;
       const id = String(record.drep_id ?? '');
-      const pattern = stats.votePattern;
-      const inflow = epochInflow(record.delegators, currentEpoch.value);
-      return {
-        key: stats.credentialHex ?? id,
-        id,
-        name: drepDisplayName(record) ?? truncate(id),
-        image: drepImageUrl(record),
-        record,
-        stats,
-        status: statusFor(record),
-        isCurrent: sameDRep(id, walletStore.account?.drep_id),
-        patternLabel: String(
-          t('governance.votePatternSummary', {
-            yes: pattern.yesPct ?? 0,
-            no: pattern.noPct ?? 0,
-            abstain: pattern.abstainPct ?? 0,
-          }),
-        ),
-        // Only the DRep's own top categories; this orders nothing across DReps.
-        focus: (stats.focusAreas ?? [])
-          .filter(area => area.voted > 0)
-          .slice(0, 3)
-          .map(area => ({ type: area.type, label: typeLabel(area.type) })),
-        power: ada(stats.votingPower),
-        inflow: inflow !== null && inflow > 0n ? `+${ada(inflow)}` : null,
-        lastVote: lastVoteLabel(stats.lastVoteBlockTime),
-      } as DirectoryRow;
+      return { key: stats.credentialHex ?? id, id, record, stats } as SortableEntry;
     })
-    .filter((row): row is DirectoryRow => row !== null),
+    .filter((entry): entry is SortableEntry => entry !== null),
+);
+
+/**
+ * Everything loaded, in order.
+ *
+ * Applied on the server path too, where it is a no-op on the figure itself
+ * (`voting_power` and `delegators` order on exactly the fields this comparator
+ * reads) but still contributes the BigInt precision and the credential tie-break
+ * that the endpoint makes no promise about.
+ */
+const ordered = computed<SortableEntry[]>(() => sortDirectory(sortable.value, sortState.value));
+
+/**
+ * How many pages the pager offers. In register mode it counts the ROWS THAT WILL
+ * RENDER, not the records received: a record `drepStats` cannot identify never
+ * reaches a row, and counting it would offer a final page that comes up empty.
+ */
+const totalPages = computed(() =>
+  registerLoaded.value
+    ? Math.max(1, Math.ceil(ordered.value.length / PER_PAGE))
+    : serverTotalPages.value,
+);
+
+/**
+ * The rows this page shows. In register mode the slice is ours to take, and
+ * paging costs nothing; on the server path the server already sliced, and
+ * slicing again would empty every page but the first.
+ */
+const visible = computed<SortableEntry[]>(() =>
+  registerLoaded.value
+    ? ordered.value.slice((page.value - 1) * PER_PAGE, page.value * PER_PAGE)
+    : ordered.value,
 );
 
 const rows = computed<DirectoryRow[]>(() =>
-  sortDirectory(enriched.value, { key: sortKey.value, dir: sortDir.value }),
+  visible.value.map(({ key, id, record, stats }) => {
+    const pattern = stats.votePattern;
+    const inflow = epochInflow(record.delegators, currentEpoch.value);
+    return {
+      key,
+      id,
+      name: drepDisplayName(record) ?? truncate(id),
+      image: drepImageUrl(record),
+      record,
+      stats,
+      status: statusFor(record),
+      isCurrent: sameDRep(id, walletStore.account?.drep_id),
+      patternLabel: String(
+        t('governance.votePatternSummary', {
+          yes: pattern.yesPct ?? 0,
+          no: pattern.noPct ?? 0,
+          abstain: pattern.abstainPct ?? 0,
+        }),
+      ),
+      // Only the DRep's own top categories; this orders nothing across DReps.
+      focus: (stats.focusAreas ?? [])
+        .filter(area => area.voted > 0)
+        .slice(0, 3)
+        .map(area => ({ type: area.type, label: typeLabel(area.type) })),
+      power: ada(stats.votingPower),
+      inflow: inflow !== null && inflow > 0n ? `+${ada(inflow)}` : null,
+      lastVote: lastVoteLabel(stats.lastVoteBlockTime),
+    } as DirectoryRow;
+  }),
 );
 
 /**
@@ -560,11 +659,26 @@ function ariaSort(key: SortKey): 'ascending' | 'descending' | 'none' {
   return ariaSortFor({ key: sortKey.value, dir: sortDir.value }, key);
 }
 
-/** Clicking a header. The whole rule lives in `nextSort` — see drepDirectory.sort.ts. */
+/**
+ * Clicking a header. The ordering rule lives in `nextSort`; what changes here is
+ * that a new order spans the register, so the fifteen rows on screen are usually
+ * no longer the right fifteen.
+ *
+ * The reload is skipped in exactly one case: the register is already in memory
+ * and the new column is one the client orders. Every client-ordered column reads
+ * the same records, so re-ordering them is free — a two-second reload to move
+ * between Participation and Rationale would be a cost with nothing bought.
+ */
 function toggleSort(key: SortKey): void {
-  const next = nextSort({ key: sortKey.value, dir: sortDir.value }, key);
+  const next = nextSort(sortState.value, key);
+  const haveRegister = registerLoaded.value;
   sortKey.value = next.key;
   sortDir.value = next.dir;
+  if (serverSortFor(next) === null && haveRegister) {
+    page.value = 1; // a new order starts at the top
+    return;
+  }
+  void load(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -584,28 +698,88 @@ function searchTerm(raw: string): string {
   return toCip129(parsed.credentialHex, parsed.credentialType) ?? value;
 }
 
+/**
+ * One page from the server, in whatever order the active column asks for.
+ *
+ * `serverSortFor` is an allow-list, not a pass-through: `/api/dreps` answers an
+ * unrecognised `sort_by` with HTTP 200 and its default order, so forwarding the
+ * client's sort key would paint an arbitrary order under a sorted header.
+ */
+async function fetchServerPage(
+  wallet: { chain: string; network: string },
+  nextPage: number,
+  term: string,
+): Promise<void> {
+  const response = await blockchainApi.getDRepsPaginated(
+    { page: nextPage, per_page: PER_PAGE, search: term, ...(serverSortFor(sortState.value) ?? {}) },
+    wallet.chain,
+    wallet.network,
+  );
+  records.value = (response?.items ?? []) as DRepRecord[];
+  totalItems.value = response?.meta?.total_items ?? null;
+  serverTotalPages.value = Math.max(1, response?.meta?.total_pages ?? 1);
+  registerLoaded.value = false;
+  fetchedAt.value = Date.now();
+}
+
+/**
+ * Guards against an out-of-order landing. A register walk takes ~2 s and a server
+ * page ~0.3 s, so a sort toggled mid-walk would otherwise let the stale result
+ * overwrite the fresh one and leave the headers describing an order that is not
+ * on screen.
+ */
+let loadToken = 0;
+
 async function load(nextPage = 1): Promise<void> {
   const wallet = walletStore.loggedWallet;
   if (!wallet) return;
+  const token = (loadToken += 1);
+  const serverSorted = serverSortFor(sortState.value) !== null;
   loading.value = true;
+  loadingRegister.value = !serverSorted;
   error.value = null;
   page.value = nextPage;
+  const term = searchTerm(search.value);
+
   try {
-    const response = await blockchainApi.getDRepsPaginated(
-      { page: nextPage, per_page: PER_PAGE, search: searchTerm(search.value) },
-      wallet.chain,
-      wallet.network,
-    );
-    records.value = (response?.items ?? []) as DRepRecord[];
-    totalItems.value = response?.meta?.total_items ?? null;
-    totalPages.value = Math.max(1, response?.meta?.total_pages ?? 1);
-    fetchedAt.value = Date.now();
+    if (serverSorted) {
+      // The server orders every page, so paging IS the global order.
+      await fetchServerPage(wallet, nextPage, term);
+      if (token !== loadToken) return;
+      orderSpansRegister.value = true;
+      return;
+    }
+
+    // Nothing upstream can order this column, so hold the whole matching set and
+    // page it locally. See `drepRegister.ts` for what that costs and why.
+    const register = await loadDRepRegister(wallet.chain, wallet.network, term);
+    if (token !== loadToken) return;
+
+    if (register.records.length) {
+      records.value = register.records;
+      totalItems.value = register.totalItems ?? register.records.length;
+      registerLoaded.value = true;
+      orderSpansRegister.value = register.complete;
+      fetchedAt.value = register.fetchedAt;
+      return;
+    }
+
+    // The walk delivered nothing. Render one server page rather than an empty
+    // directory, and label the order as covering only that page — the header
+    // must not imply a reach the data behind it does not have.
+    await fetchServerPage(wallet, nextPage, term);
+    if (token !== loadToken) return;
+    orderSpansRegister.value = false;
   } catch (err) {
+    if (token !== loadToken) return;
     debugLog('DRepDirectory: load failed', err);
     error.value = err instanceof Error ? err.message : String(t('errors.unknownError'));
     records.value = [];
   } finally {
-    loading.value = false;
+    if (token === loadToken) {
+      loading.value = false;
+      loadingRegister.value = false;
+    }
   }
 }
 
@@ -613,7 +787,16 @@ function reload(): void {
   void load(page.value);
 }
 
+/**
+ * Paging. With the register in memory this is a slice, not a request: page 3 is
+ * rows 31–45 of the global order. On the server path it is the request it always
+ * was, against an order the server is now applying across all of its pages.
+ */
 function onPage(next: number): void {
+  if (registerLoaded.value) {
+    page.value = next;
+    return;
+  }
   void load(next);
 }
 
@@ -854,6 +1037,22 @@ onUnmounted(() => {
   flex-direction: column;
   gap: var(--g-s-2);
   min-width: 0;
+}
+.drep-directory__loading-note {
+  color: var(--g-text-2);
+}
+/* The page-local caveat. Warning-toned because it narrows a claim the control
+   otherwise makes, but a line rather than a banner: the data is still good. */
+.drep-directory__scope-note {
+  display: flex;
+  align-items: center;
+  gap: var(--g-s-2);
+  margin: 0;
+  padding: var(--g-s-2) var(--g-s-3);
+  border: 1px solid var(--g-warning-line);
+  background: var(--g-warning-fill);
+  border-radius: var(--g-r-control);
+  color: var(--g-text-2);
 }
 .drep-directory__columns {
   display: grid;

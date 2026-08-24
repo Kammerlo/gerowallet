@@ -9,7 +9,10 @@ import { describe, it, expect } from 'vitest';
 import {
   ariaSortFor,
   DEFAULT_SORT,
+  isServerSortable,
   nextSort,
+  SERVER_SORT_BY,
+  serverSortFor,
   SORTABLE_KEYS,
   sortDirectory,
   type SortableRow,
@@ -74,6 +77,56 @@ describe('DRep directory: the default order', () => {
     expect([...SORTABLE_KEYS].sort()).toEqual(
       ['delegators', 'lastVote', 'participation', 'power', 'rationale'],
     );
+  });
+});
+
+describe('DRep directory: which columns the server can order', () => {
+  it('maps power and delegators to the names `/api/dreps` understands', () => {
+    expect(serverSortFor({ key: 'power', dir: 'desc' })).toEqual({
+      sort_by: 'voting_power',
+      sort_direction: 'desc',
+    });
+    expect(serverSortFor({ key: 'delegators', dir: 'asc' })).toEqual({
+      sort_by: 'delegators',
+      sort_direction: 'asc',
+    });
+    expect(isServerSortable('power')).toBe(true);
+    expect(isServerSortable('delegators')).toBe(true);
+  });
+
+  it('refuses to push a column the endpoint cannot really order', () => {
+    // `/api/dreps` answers an unrecognised `sort_by` with HTTP 200 and its own
+    // default order — verified against mainnet. So a key with no server
+    // equivalent must produce NO parameter, never a hopeful pass-through: a
+    // header would otherwise sit above an order nobody applied.
+    for (const key of ['participation', 'rationale', 'lastVote'] as const) {
+      expect(serverSortFor({ key, dir: 'desc' })).toBeNull();
+      expect(isServerSortable(key)).toBe(false);
+      expect(SERVER_SORT_BY[key]).toBeNull();
+    }
+  });
+
+  it('never maps last-vote to the endpoint`s vote COUNT sort', () => {
+    // `sort_by=votes` exists upstream and orders by how many votes were cast.
+    // This column shows WHEN the last one was. Wiring them together would trade
+    // a page-local lie for a register-wide one.
+    expect(Object.values(SERVER_SORT_BY)).not.toContain('votes');
+  });
+
+  it('has an explicit answer for every sortable column', () => {
+    // A key added to SORTABLE_KEYS without a decision here would fall through as
+    // `undefined`, which `serverSortFor` would read as "client side" by accident
+    // rather than by choice.
+    for (const key of SORTABLE_KEYS) {
+      expect(Object.prototype.hasOwnProperty.call(SERVER_SORT_BY, key)).toBe(true);
+    }
+  });
+
+  it('leaves the arriving order to nobody: the default is never pushed', () => {
+    // Participation is the default AND client-computed, so the first request the
+    // page makes carries no `sort_by` at all. The server therefore never gets to
+    // choose the order a user sees first.
+    expect(serverSortFor(DEFAULT_SORT)).toBeNull();
   });
 });
 
