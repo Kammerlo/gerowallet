@@ -18,10 +18,26 @@ import type { MidnightUnshieldedUtxo } from './midnightTypes';
  * check is deliberately loose: it accepts an all-zero string of ANY length,
  * not just the canonical 64 hex chars.
  *
- * This is now the single canonical predicate — both `midnight-sync.service.ts`
- * (the CATCH_UP snapshot re-sum and the former `isNightOutput` helper) and
- * `midnightStore.ts` (`applyUtxoDeltas`'s `isNight` closure) import and call
- * this function directly rather than keeping their own copies.
+ * This is the LOOSE predicate, and only two call sites import and use it
+ * directly: `midnight-sync.service.ts`'s CATCH_UP snapshot re-sum (~line 460)
+ * and `midnightStore.ts`'s `applyUtxoDeltas` `isNight` closure (~line 957).
+ *
+ * Three OTHER call sites still keep their own STRICT inline copy —
+ * `tt === '' || tt === NIGHT_TOKEN_TYPE_NULL` (exactly 64 zeros) — and do
+ * NOT import this function:
+ *   - `midnight-sync.service.ts`'s counterparty selection (~line 533)
+ *   - `midnight-sync.service.ts`'s `sumOutputsForOwner` (~line 590), which
+ *     feeds tx amount + send/receive classification
+ *   - `background.ts`'s DApp-facing `getUnshieldedBalances` handler
+ *     (~line 5308) — load-bearing there since `midnightStore.utxos` now
+ *     holds every color, not just NIGHT
+ *
+ * This loose/strict split across five copies is PRE-EXISTING and NOT
+ * resolved by this module. Unifying the three strict sites onto
+ * `isNativeNight` is a separate change with its own blast radius (it would
+ * also start accepting non-canonical-length all-zero strings at those
+ * sites, which hasn't been evaluated) — do not assume they agree, and do
+ * not "tidy" them together without treating that as its own task.
  */
 export function isNativeNight(tokenType: string | undefined | null): boolean {
   const tt = tokenType ?? '';

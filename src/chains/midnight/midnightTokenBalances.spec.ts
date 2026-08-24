@@ -1,6 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { isNativeNight, midnightTokenBalances } from './midnightTokenBalances';
 import type { MidnightUnshieldedUtxo } from './midnightTypes';
+// Store integration: drives the actual `isNight` guard inside
+// `applyUtxoDeltas` rather than re-implementing it in the test body. Safe to
+// import under vitest — `context` resolves to `'content'` (no `chrome-extension:`
+// protocol in happy-dom), so every `chrome.*` call in this module sits behind
+// an `if (context === 'background' | 'browser')` guard that never opens here.
+import { midnightActions, midnightStore } from '@/stores/midnightStore';
 
 const USDM = '8c2c22bc0c37fa999d0611cb5c570f587938ac5ffc8b0925143dad4c0764e94b';
 const NIGHT_ZERO = '0'.repeat(64);
@@ -75,14 +81,40 @@ describe('midnightTokenBalances', () => {
   });
 });
 
-describe('NIGHT balance isolation', () => {
-  it('a non-native color contributes nothing to a native-NIGHT sum', () => {
-    // Mirrors the filter both balance paths apply (delta path in
-    // midnightStore.applyUtxoDeltas, snapshot path in midnight-sync.service).
-    // If either drops its filter, USDM would inflate nightUnshielded.
-    const set = [utxo(NIGHT_ZERO, 100n, 0), utxo(USDM, 5000000n, 1), utxo('', 25n, 2)];
-    const night = set.filter(u => isNativeNight(u.tokenType)).reduce((s, u) => s + u.value, 0n);
-    expect(night).toBe(125n);
-    expect(midnightTokenBalances(set)).toEqual({ [USDM]: 5000000n });
+describe('NIGHT balance isolation (store integration)', () => {
+  // Reset so the test doesn't depend on what ran before it, and so it
+  // doesn't leak state into whatever runs after.
+  beforeEach(() => {
+    midnightStore.utxos = [];
+    midnightStore.balances = {
+      nightShielded: 0n,
+      nightUnshielded: 0n,
+      nightRegistered: 0n,
+      dust: 0n,
+      dustGenerating: 0n,
+    };
+    midnightStore.lastMidnightTxId = null;
+  });
+
+  it('applyUtxoDeltas counts only the NIGHT UTxOs toward nightUnshielded, never USDM', () => {
+    // Drives the real per-transaction delta path (the thing Task 2 fixed):
+    // a single batch receiving native NIGHT alongside a non-native color.
+    midnightActions.applyUtxoDeltas({
+      added: [
+        utxo(NIGHT_ZERO, 100n, 0),
+        utxo(USDM, 5000000n, 1),
+        utxo('', 25n, 2),
+      ],
+      removed: [],
+    });
+
+    // 100 + 25 native, USDM excluded — proves the isNight() guard inside
+    // applyUtxoDeltas is actually filtering, not just present in the source.
+    expect(midnightStore.balances.nightUnshielded).toBe(125n);
+    // All three colors are still stored in the UTxO set itself — per-color
+    // token balances are derived from it via midnightTokenBalances(), not
+    // tracked as separate fields.
+    expect(midnightStore.utxos).toHaveLength(3);
+    expect(midnightTokenBalances(midnightStore.utxos)).toEqual({ [USDM]: 5000000n });
   });
 });

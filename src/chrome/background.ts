@@ -5297,11 +5297,14 @@ app.add(MIDNIGHT_METHOD.getUnshieldedBalances, async (request, sendResponse) => 
     sendResponse({ id: request.id, error: midnightApiError(MidnightErrorCode.Disconnected, 'No Midnight wallet connected'), target: TARGET, sender: SENDER.extension });
     return;
   }
-  // midnightStore.utxos only ever carries NIGHT-type outputs today (the sync
-  // layer filters non-native tokenTypes out — see midnight-sync.service.ts's
-  // isNightOutput), so this record has at most one key. Normalize an empty
-  // tokenType (Gero's internal "native NIGHT" convention) to the canonical
-  // 32-byte-zero hex a dapp checking nativeToken().raw would expect.
+  // midnightStore.utxos now carries every token color the wallet holds — the
+  // sync layer (midnight-sync.service.ts's CATCH_UP snapshot and per-tx delta
+  // paths) no longer filters non-native tokenTypes out. The strict native
+  // check below is therefore load-bearing: without it a dapp's "NIGHT"
+  // balance would pick up USDM or any other token the wallet holds. Do not
+  // remove it as redundant. It also normalizes an empty tokenType (Gero's
+  // internal "native NIGHT" convention) to the canonical 32-byte-zero hex a
+  // dapp checking nativeToken().raw would expect.
   let night = 0n;
   for (const u of midnightStore.utxos) {
     const tt = u.tokenType ?? '';

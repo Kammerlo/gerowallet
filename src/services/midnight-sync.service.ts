@@ -413,6 +413,14 @@ class MidnightSyncService {
         const removed: Array<{ intentHash: string; outputIndex: number }> = [];
         for (const o of this.readOutputs(rawTx, 'created')) {
           if (o.owner !== myUnshielded) continue;
+          // Mirrors the removal loop's guard below: a created output with no
+          // intentHash would key into the store's byKey map as `":<index>"`,
+          // sharing that bucket with every other intentHash-less output at
+          // the same index — and since the removal loop also refuses to
+          // enqueue a removal without an intentHash, that entry could never
+          // be targeted for removal again.
+          const intentHash = o.intentHash ?? o.intent_hash ?? '';
+          if (!intentHash) continue;
           // Admit every token color, matching the CATCH_UP snapshot path
           // (parseUtxos applies no token filter). Without this the delta path
           // removed spent token UTxOs but never re-added received ones, so
