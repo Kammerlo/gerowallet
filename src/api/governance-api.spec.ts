@@ -87,3 +87,84 @@ describe('governance-api', () => {
     });
   });
 });
+
+describe('governance-api: the filter vocabulary goes OUT too', () => {
+  // Normalising only inbound was half a fix, and the missing half failed the
+  // same silent way: the filter chips carry the wallet's spelling, so asking
+  // production for `type=TreasuryWithdrawals` returned an empty list, which
+  // reads as "there are no treasury withdrawals".
+  it('translates the type and status filters to the projection spelling', async () => {
+    const { api, instance } = await loadApi();
+    const get = vi.spyOn(instance, 'get').mockResolvedValue({ status: 200, data: EMPTY_PAGE } as never);
+
+    await api.listProposals({ network: 'Mainnet', type: 'TreasuryWithdrawals', status: 'active' });
+
+    expect(get).toHaveBeenCalledWith('/api/governance/proposals', {
+      params: {
+        network: 'cardano-mainnet',
+        type: 'TREASURY_WITHDRAWALS_ACTION',
+        status: 'LIVE',
+      },
+    });
+  });
+
+  it('omits the filters entirely when none is chosen', async () => {
+    const { api, instance } = await loadApi();
+    const get = vi.spyOn(instance, 'get').mockResolvedValue({ status: 200, data: EMPTY_PAGE } as never);
+
+    await api.listProposals({ network: 'Mainnet' });
+
+    expect(get.mock.calls[0][1].params).not.toHaveProperty('type');
+    expect(get.mock.calls[0][1].params).not.toHaveProperty('status');
+  });
+});
+
+describe('governance-api: a body that did not parse is not an answer', () => {
+  // bigJsonTransform returns NULL for a malformed or truncated body rather than
+  // throwing. Every one of these used to read that null as content: an empty
+  // list, or the same `null` a genuine 404 produces. Both state something about
+  // the chain on the strength of bytes nobody could read.
+  it('rejects rather than reporting an empty action list', async () => {
+    const { api, instance } = await loadApi();
+    vi.spyOn(instance, 'get').mockResolvedValue({ status: 200, data: null } as never);
+
+    await expect(api.listProposals({ network: 'Mainnet' })).rejects.toBeTruthy();
+  });
+
+  it('rejects rather than reporting an action that does not exist', async () => {
+    const { api, instance } = await loadApi();
+    vi.spyOn(instance, 'get').mockResolvedValue({ status: 200, data: null } as never);
+
+    await expect(api.getProposal(`${TX_HASH}#0`, 'Mainnet')).rejects.toBeTruthy();
+  });
+
+  it('rejects rather than reporting an action with no votes', async () => {
+    const { api, instance } = await loadApi();
+    vi.spyOn(instance, 'get').mockResolvedValue({ status: 200, data: null } as never);
+
+    await expect(api.getProposalVotes(`${TX_HASH}#0`, 'Mainnet')).rejects.toBeTruthy();
+  });
+
+  it('rejects rather than reporting no committee and no constitution', async () => {
+    const { api, instance } = await loadApi();
+    vi.spyOn(instance, 'get').mockResolvedValue({ status: 200, data: null } as never);
+
+    await expect(api.getCommittee('Mainnet')).rejects.toBeTruthy();
+    await expect(api.getConstitution('Mainnet')).rejects.toBeTruthy();
+    await expect(api.getVotingSummary(`${TX_HASH}#0`, 'Mainnet')).rejects.toBeTruthy();
+  });
+
+  it('still returns null for a REAL 404, which is a different thing', async () => {
+    // The distinction the collapse destroyed: "this action does not exist" is an
+    // answer; "the body did not parse" is not.
+    const { api, instance } = await loadApi();
+    const notFound = Object.assign(new Error('not found'), {
+      isAxiosError: true,
+      response: { status: 404 },
+    });
+    vi.spyOn(instance, 'get').mockRejectedValue(notFound as never);
+
+    await expect(api.getProposal(`${TX_HASH}#0`, 'Mainnet')).resolves.toBeNull();
+    await expect(api.getCommittee('Mainnet')).resolves.toBeNull();
+  });
+});

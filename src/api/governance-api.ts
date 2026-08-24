@@ -2,7 +2,12 @@ import axios from 'axios';
 import { parseHttpError } from '@/shared/utils/parser';
 import { bigJsonTransform } from '@/api/bigJson';
 import { parseGovActionId } from '@/shared/utils/govActionId';
-import { normalizeProposal, normalizeVote } from '@/api/govVocabulary';
+import {
+  normalizeProposal,
+  normalizeVote,
+  toNexusActionStatus,
+  toNexusActionType,
+} from '@/api/govVocabulary';
 import type {
   Committee,
   Constitution,
@@ -53,6 +58,24 @@ function idSegments(govActionId: string): { txHash: string; index: number } {
   return parsed;
 }
 
+/**
+ * A 200 whose body did not parse.
+ *
+ * `bigJsonTransform` returns NULL rather than throwing on a malformed or
+ * truncated body — deliberately, so a bad body cannot blow up a caller mid-render
+ * — which leaves it to each client to notice. This one did not: `data?.items ?? []`
+ * turned a parse failure into an empty list, and the single-item getters collapsed
+ * it into the same `null` they use for a genuine 404. Both render as a statement
+ * about the chain ("no actions", "this action does not exist") made from bytes
+ * nobody could read.
+ */
+function parsed<T>(data: T | null | undefined, what: string): T {
+  if (data === null || data === undefined) {
+    throw new Error(`Malformed response body for ${what}`);
+  }
+  return data;
+}
+
 /** True for an Axios error whose upstream response was a 404. */
 function isNotFound(error: unknown): boolean {
   return axios.isAxiosError(error) && error.response?.status === 404;
@@ -69,8 +92,11 @@ export interface ListProposalsParams {
 export default {
   async listProposals(params: ListProposalsParams): Promise<GovPage<GovProposal>> {
     const query: Record<string, string | number> = { network: toNexusNetwork(params.network) };
-    if (params.type) query['type'] = params.type;
-    if (params.status) query['status'] = params.status;
+    // Translated OUT of the wallet's vocabulary, exactly as responses are
+    // translated into it. See govVocabulary: sending `TreasuryWithdrawals` where
+    // the server expects `TREASURY_WITHDRAWALS_ACTION` returned an empty list.
+    if (params.type) query['type'] = toNexusActionType(params.type);
+    if (params.status) query['status'] = toNexusActionStatus(params.status);
     if (params.page !== undefined) query['page'] = params.page;
     if (params.pageSize !== undefined) query['pageSize'] = params.pageSize;
 
@@ -78,7 +104,10 @@ export default {
       const { data, status } = await governanceAxiosInstance.get('/api/governance/proposals', { params: query });
       // Vocabulary is normalised HERE, at the boundary, so no component, store
       // or spec has to know which projection answered. See govVocabulary.
-      if (status === 200) return { ...data, items: (data?.items ?? []).map(normalizeProposal) };
+      if (status === 200) {
+        const body = parsed(data, 'the governance action list');
+        return { ...body, items: (body.items ?? []).map(normalizeProposal) };
+      }
       throw parseHttpError(data);
     } catch (error) {
       throw parseHttpError(error);
@@ -91,7 +120,7 @@ export default {
       const { data, status } = await governanceAxiosInstance.get(`/api/governance/proposals/${txHash}/${index}`, {
         params: { network: toNexusNetwork(network) },
       });
-      if (status === 200) return normalizeProposal(data);
+      if (status === 200) return normalizeProposal(parsed(data, 'a governance action'));
       throw parseHttpError(data);
     } catch (error) {
       if (isNotFound(error)) return null;
@@ -111,7 +140,10 @@ export default {
         `/api/governance/proposals/${txHash}/${index}/votes`,
         { params: { network: toNexusNetwork(network), page, pageSize } }
       );
-      if (status === 200) return { ...data, items: (data?.items ?? []).map(normalizeVote) };
+      if (status === 200) {
+        const body = parsed(data, "an action's votes");
+        return { ...body, items: (body.items ?? []).map(normalizeVote) };
+      }
       throw parseHttpError(data);
     } catch (error) {
       throw parseHttpError(error);
@@ -125,7 +157,7 @@ export default {
         `/api/governance/proposals/${txHash}/${index}/voting-summary`,
         { params: { network: toNexusNetwork(network) } }
       );
-      if (status === 200) return data;
+      if (status === 200) return parsed(data, 'a voting summary');
       throw parseHttpError(data);
     } catch (error) {
       if (isNotFound(error)) return null;
@@ -138,7 +170,7 @@ export default {
       const { data, status } = await governanceAxiosInstance.get('/api/governance/committee', {
         params: { network: toNexusNetwork(network) },
       });
-      if (status === 200) return data;
+      if (status === 200) return parsed(data, 'the constitutional committee');
       throw parseHttpError(data);
     } catch (error) {
       if (isNotFound(error)) return null;
@@ -151,7 +183,7 @@ export default {
       const { data, status } = await governanceAxiosInstance.get('/api/governance/constitution', {
         params: { network: toNexusNetwork(network) },
       });
-      if (status === 200) return data;
+      if (status === 200) return parsed(data, 'the constitution');
       throw parseHttpError(data);
     } catch (error) {
       if (isNotFound(error)) return null;

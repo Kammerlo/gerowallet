@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   normalizeActionStatus,
+  toNexusActionStatus,
+  toNexusActionType,
   normalizeActionType,
   normalizeProposal,
   normalizeVote,
@@ -100,5 +102,62 @@ describe('govVocabulary, row helpers', () => {
   it('does not throw on a malformed row', () => {
     expect(normalizeProposal(null as never)).toBeNull();
     expect(normalizeVote({} as never)).toEqual({ voterRole: undefined, vote: undefined });
+  });
+});
+
+describe('govVocabulary, the outbound direction', () => {
+  // Normalising only inbound was half a fix. The action list's filter chips
+  // carry the wallet's spelling and are sent as `type=` / `status=`, so
+  // filtering against production asked for `TreasuryWithdrawals` and got an
+  // EMPTY LIST back — which reads as "no actions of this kind", a claim about
+  // the chain made from a vocabulary mismatch.
+  it.each([
+    ['TreasuryWithdrawals', 'TREASURY_WITHDRAWALS_ACTION'],
+    ['ParameterChange', 'PARAMETER_CHANGE_ACTION'],
+    ['HardForkInitiation', 'HARD_FORK_INITIATION_ACTION'],
+    ['NoConfidence', 'NO_CONFIDENCE'],
+    ['NewConstitution', 'NEW_CONSTITUTION'],
+    ['InfoAction', 'INFO_ACTION'],
+    // The wallet says New, the ledger and Nexus say Update. Send theirs.
+    ['NewCommittee', 'UPDATE_COMMITTEE'],
+  ])('sends the type %s as %s', (wallet, wire) => {
+    expect(toNexusActionType(wallet)).toBe(wire);
+  });
+
+  it.each([
+    ['active', 'LIVE'],
+    ['ratified', 'RATIFIED'],
+    ['enacted', 'ENACTED'],
+    ['expired', 'EXPIRED'],
+    ['dropped', 'DROPPED'],
+  ])('sends the status %s as %s', (wallet, wire) => {
+    expect(toNexusActionStatus(wallet)).toBe(wire);
+  });
+
+  it('round-trips: everything sent comes back as what was asked for', () => {
+    // The two directions have to stay inverses. A type added to one map and not
+    // the other is filterable but not displayable, or the reverse — and both
+    // failures are silent.
+    const walletTypes = [
+      'ParameterChange',
+      'HardForkInitiation',
+      'TreasuryWithdrawals',
+      'NoConfidence',
+      'NewCommittee',
+      'NewConstitution',
+      'InfoAction',
+    ];
+    for (const type of walletTypes) {
+      expect(normalizeActionType(toNexusActionType(type)), type).toBe(type);
+    }
+
+    for (const status of ['active', 'ratified', 'enacted', 'expired', 'dropped']) {
+      expect(normalizeActionStatus(toNexusActionStatus(status)), status).toBe(status);
+    }
+  });
+
+  it('passes an unrecognised filter through rather than inventing one', () => {
+    expect(toNexusActionType('SomethingNew')).toBe('SomethingNew');
+    expect(toNexusActionStatus('whatever')).toBe('whatever');
   });
 });

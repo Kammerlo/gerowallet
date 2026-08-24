@@ -119,6 +119,22 @@ export function isDRepId(input: string | null | undefined): boolean {
 /**
  * True when both inputs denote the same DRep, in whatever form each is written.
  * False if either side is unparseable — never throws.
+ *
+ * `credentialType` is deliberately NOT compared, and it is worth saying why
+ * because the omission reads like an oversight.
+ *
+ * Raw 56-character hex carries no type byte, so `parseDRepId` has to assume one
+ * and assumes `keyHash` (see the CIP-30/95 branch above). Bare hex is exactly
+ * how the votes feed and the dApp connector hand credentials over. Requiring the
+ * types to match would therefore make a SCRIPT DRep — a DAO or a multisig, which
+ * do exist — compare false against its own bech32 form, and this predicate
+ * decides "is this my DRep" and "is this vote mine" across the whole governance
+ * surface. That false negative is the damaging direction.
+ *
+ * What comparing types would buy is safety against two DIFFERENT DReps sharing
+ * 28 credential bytes across a key hash and a script hash, which needs a
+ * blake2b-224 collision. Trading a real, reachable false negative against an
+ * infeasible false positive is the wrong way round.
  */
 export function sameDRep(a: string | null | undefined, b: string | null | undefined): boolean {
   const left = parseDRepId(a);

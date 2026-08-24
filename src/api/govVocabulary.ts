@@ -112,6 +112,66 @@ export function normalizeVoteChoice<T>(value: T): T | VoteChoice {
   return lookup(CHOICES, value) ?? value;
 }
 
+// ---------------------------------------------------------------------------
+// Outbound: the wallet's spelling -> the projection's
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalising only on the way IN is half a fix, and the missing half fails the
+ * same silent way the original bug did.
+ *
+ * The action list's filter chips carry the wallet's own spelling
+ * (`TreasuryWithdrawals`, `active` — see `ActionList.vue`'s ACTION_TYPES), and
+ * those values are sent to Nexus as `type=` / `status=` query parameters. Nexus
+ * does not know them: filtering by type or status returned an EMPTY LIST rather
+ * than an error, which reads as "no governance actions of this kind" — a
+ * statement about the chain, made from a vocabulary mismatch.
+ *
+ * These maps are the inverse of `TYPES` / `STATUSES` above, and the two must be
+ * kept in step: a type added to one and not the other is filterable but not
+ * displayable, or the reverse.
+ *
+ * The target is the deployed projection's spelling. The Koios-shaped dev shim
+ * accepts the wallet's spelling instead, so filtering against a local shim needs
+ * the shim taught this vocabulary rather than the wallet un-taught it.
+ */
+const TYPES_OUT: Record<GovActionType, string> = {
+  ParameterChange: 'PARAMETER_CHANGE_ACTION',
+  HardForkInitiation: 'HARD_FORK_INITIATION_ACTION',
+  TreasuryWithdrawals: 'TREASURY_WITHDRAWALS_ACTION',
+  NoConfidence: 'NO_CONFIDENCE',
+  // The ledger and Nexus call this UpdateCommittee; the wallet has always called
+  // it NewCommittee. Send what the server answers with.
+  NewCommittee: 'UPDATE_COMMITTEE',
+  NewConstitution: 'NEW_CONSTITUTION',
+  InfoAction: 'INFO_ACTION',
+};
+
+const STATUSES_OUT: Record<GovActionStatus, string> = {
+  active: 'LIVE',
+  ratified: 'RATIFIED',
+  enacted: 'ENACTED',
+  expired: 'EXPIRED',
+  dropped: 'DROPPED',
+};
+
+/**
+ * An action type as the projection spells it, for a query parameter.
+ *
+ * An unrecognised value passes through untouched, for the same reason the
+ * inbound direction does: a filter this module has not been taught about should
+ * reach the server as the caller wrote it and be answered (or rejected) there,
+ * rather than silently becoming a different filter.
+ */
+export function toNexusActionType(value: string): string {
+  return TYPES_OUT[value as GovActionType] ?? value;
+}
+
+/** A lifecycle status as the projection spells it. Unrecognised values pass through. */
+export function toNexusActionStatus(value: string): string {
+  return STATUSES_OUT[value as GovActionStatus] ?? value;
+}
+
 /** Apply the type and status vocabulary to one proposal-shaped row, in place of a copy. */
 export function normalizeProposal<T extends { type?: unknown; status?: unknown }>(row: T): T {
   if (!row || typeof row !== 'object') return row;
