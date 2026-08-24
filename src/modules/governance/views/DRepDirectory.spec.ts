@@ -94,10 +94,23 @@ vi.mock('@/shared/composables/useTranslation', () => ({ useTranslation: () => ({
 // @ts-ignore — tsconfig ships no `*.vue` shim; vite resolves this fine.
 import DRepDirectory from './DRepDirectory.vue';
 import { toCip129 } from '@/shared/utils/drepId';
+import { resetDRepRegister } from './drepRegister';
 
-/** 56 hex chars: `drepStats` keys a row on the credential, not the label. */
-const credential = (name: string): string =>
-  name.charCodeAt(0).toString(16).padStart(2, '0').repeat(28);
+/**
+ * 56 hex chars: `drepStats` keys a row on the credential, not the label.
+ *
+ * Derived from the WHOLE name. Keying on the first character alone collides for
+ * any two DReps sharing an initial, and a shared credential is a shared row key —
+ * which both breaks Vue's list rendering and hands the comparator's tie-break
+ * nothing to separate the rows with.
+ */
+const credential = (name: string): string => {
+  let hex = '';
+  for (let i = 0; i < 28; i += 1) {
+    hex += ((name.charCodeAt(i % name.length) + i * 7 + name.length) % 256).toString(16).padStart(2, '0');
+  }
+  return hex;
+};
 
 /** The real CIP-129 form, so `sameDRep` can match on credential as it does live. */
 const drepId = (name: string): string => toCip129(credential(name)) as string;
@@ -170,6 +183,9 @@ function header(w: Wrapper<Vue>, labelKey: string): Wrapper<Vue> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The register is cached at module scope for the session; without this, the
+  // second test in this file would render the first test's DReps.
+  resetDRepRegister();
   h.wallet.account = { drep_id: null };
   h.getDRepsPaginated.mockResolvedValue({
     items: [
@@ -250,8 +266,10 @@ describe('DRepDirectory: the header is the sort control', () => {
     wrapper = mountPage();
     await settle();
 
+    // `settle`, not one tick: voting power is ordered by the endpoint across all
+    // of its pages, so taking that column over re-fetches page 1.
     await header(wrapper, 'governance.votingPower').trigger('click');
-    await Vue.nextTick();
+    await settle();
 
     expect(renderedNames(wrapper)).toEqual(['quiet', 'steady']);
     const cells = wrapper.findAll('[role="columnheader"]').wrappers;
@@ -284,8 +302,10 @@ describe('DRepDirectory: the row action', () => {
     wrapper = mountPage();
     await settle();
 
+    // `settle`, not one tick: this column is ordered by the endpoint, so the
+    // click re-fetches page 1 before the new order is on screen.
     await header(wrapper, 'governance.votingPower').trigger('click');
-    await Vue.nextTick();
+    await settle();
 
     // `quiet` is now FIRST. The same position must now delegate to it.
     const rows = wrapper.findAll('.drep-directory__row').wrappers;
@@ -317,6 +337,257 @@ describe('DRepDirectory: the row action', () => {
     const button = first.find('.drep-directory__col-action button');
     expect(button.text()).toBe('governance.delegated');
     expect(button.attributes('disabled')).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ordering the whole register
+// ---------------------------------------------------------------------------
+
+/**
+ * A server holding `total` DReps but handing out only `stride` a page, and
+ * reporting `total_items` without `total_pages`.
+ *
+ * Both halves are deliberate. The clamp is what a real endpoint may do with a
+ * wide `per_page`, and the missing `total_pages` forces the walk to derive the
+ * page count from the rows it actually received — the one arithmetic that decides
+ * whether the tail of the register is reached or quietly abandoned.
+ */
+function pagedServer(total: number, stride: number) {
+  return vi.fn(async (params: { page?: number }) => {
+    const page = params?.page ?? 1;
+    const start = (page - 1) * stride;
+    return {
+      items: Array.from({ length: Math.max(0, Math.min(stride, total - start)) }, (_, i) =>
+        // Only the LAST DRep has voted on all four eligible actions; every other
+        // one has voted once. So the top of a participation order lives on the
+        // final page, exactly where a page-local sort could never find it.
+        start + i + 1 === total
+          ? drep(`d${start + i}`, { votes: 4, rationale: 4, power: '1', delegators: 1 })
+          : drep(`d${start + i}`, { votes: 1, rationale: 0, power: '900000000000000', delegators: 800 }),
+      ),
+      meta: { page, per_page: stride, total_items: total },
+    };
+  });
+}
+
+describe('DRepDirectory: a client-computed column orders every page', () => {
+  it('puts the best participation first even when it sits on the last page', async () => {
+    h.getDRepsPaginated.mockImplementation(pagedServer(40, 15));
+    wrapper = mountPage();
+    await settle();
+
+    // Three requests: the register was walked, not sampled.
+    expect(h.getDRepsPaginated).toHaveBeenCalledTimes(3);
+    // `d39` is the 40th DRep — the third page. Under page-local sorting the
+    // first row could only ever have been one of d0..d14.
+    expect(renderedNames(wrapper)[0]).toBe('d39');
+  });
+
+  it('pages the register in memory, without going back to the server', async () => {
+    h.getDRepsPaginated.mockImplementation(pagedServer(40, 15));
+    wrapper = mountPage();
+    await settle();
+
+    const firstPage = renderedNames(wrapper);
+    expect(firstPage).toHaveLength(15);
+    h.getDRepsPaginated.mockClear();
+
+    wrapper.find('v-pagination-stub').vm.$emit('input', 2);
+    await settle();
+
+    // Page 2 is rows 16-30 of the GLOBAL order, and it cost nothing.
+    expect(h.getDRepsPaginated).not.toHaveBeenCalled();
+    const secondPage = renderedNames(wrapper);
+    expect(secondPage).toHaveLength(15);
+    expect(secondPage).not.toEqual(firstPage);
+    for (const name of secondPage) expect(firstPage).not.toContain(name);
+  });
+
+  it('sends no sort parameter for a column the endpoint cannot order', async () => {
+    h.getDRepsPaginated.mockImplementation(pagedServer(40, 15));
+    wrapper = mountPage();
+    await settle();
+
+    // Participation is the arriving order AND client-computed. `/api/dreps`
+    // answers an unrecognised `sort_by` with its own default order, so pushing
+    // one would put an arbitrary order under a sorted header.
+    for (const call of h.getDRepsPaginated.mock.calls) {
+      expect(call[0]).not.toHaveProperty('sort_by');
+    }
+  });
+});
+
+describe('DRepDirectory: a server-sortable column is pushed to the endpoint', () => {
+  it('re-fetches page 1 with sort_by when voting power is clicked', async () => {
+    wrapper = mountPage();
+    await settle();
+    h.getDRepsPaginated.mockClear();
+
+    await header(wrapper, 'governance.votingPower').trigger('click');
+    await settle();
+
+    expect(h.getDRepsPaginated).toHaveBeenCalledTimes(1);
+    expect(h.getDRepsPaginated.mock.calls[0][0]).toMatchObject({
+      page: 1,
+      per_page: 15,
+      sort_by: 'voting_power',
+      sort_direction: 'desc',
+    });
+  });
+
+  it('sends the direction the header is showing', async () => {
+    wrapper = mountPage();
+    await settle();
+
+    await header(wrapper, 'governance.votingPower').trigger('click');
+    await settle();
+    h.getDRepsPaginated.mockClear();
+
+    // Second click on the active header flips it.
+    await header(wrapper, 'governance.votingPower').trigger('click');
+    await settle();
+
+    expect(h.getDRepsPaginated.mock.calls[0][0]).toMatchObject({
+      sort_by: 'voting_power',
+      sort_direction: 'asc',
+    });
+  });
+
+  it('pushes delegators too, and returns to no parameter on the way back', async () => {
+    wrapper = mountPage();
+    await settle();
+
+    await header(wrapper, 'governance.delegators').trigger('click');
+    await settle();
+    expect(h.getDRepsPaginated.mock.calls.at(-1)?.[0]).toMatchObject({ sort_by: 'delegators' });
+
+    h.getDRepsPaginated.mockClear();
+    await header(wrapper, 'governance.colParticipation').trigger('click');
+    await settle();
+
+    // Back on a client-ordered column: the register answers, so nothing that
+    // goes out may carry a sort the endpoint would ignore.
+    for (const call of h.getDRepsPaginated.mock.calls) {
+      expect(call[0]).not.toHaveProperty('sort_by');
+    }
+    expect(renderedNames(wrapper)).toEqual(['steady', 'quiet']);
+  });
+
+  it('does not re-fetch to move between two client-ordered columns', async () => {
+    h.getDRepsPaginated.mockImplementation(pagedServer(40, 15));
+    wrapper = mountPage();
+    await settle();
+    h.getDRepsPaginated.mockClear();
+
+    await header(wrapper, 'governance.colRationale').trigger('click');
+    await settle();
+
+    // The register in memory already holds every figure these columns read.
+    expect(h.getDRepsPaginated).not.toHaveBeenCalled();
+    expect(wrapper.findAll('.drep-directory__row')).toHaveLength(15);
+  });
+});
+
+/** Type into the search field the way the user does: through the field itself. */
+async function typeSearch(w: Wrapper<Vue>, term: string): Promise<void> {
+  w.find('v-text-field-stub').vm.$emit('input', term);
+  await Vue.nextTick();
+  await new Promise(resolve => setTimeout(resolve, 450)); // the field's own debounce
+  await settle();
+}
+
+describe('DRepDirectory: search and sort compose', () => {
+  it('sends both the term and the sort on a server-ordered column', async () => {
+    wrapper = mountPage();
+    await settle();
+
+    await header(wrapper, 'governance.votingPower').trigger('click');
+    await settle();
+    h.getDRepsPaginated.mockClear();
+
+    await typeSearch(wrapper, 'HeptaSean');
+
+    // The endpoint applies `search` BEFORE ordering, so the two compose into
+    // "the highest-power DRep among the matches" rather than fighting.
+    expect(h.getDRepsPaginated.mock.calls[0][0]).toMatchObject({
+      page: 1,
+      search: 'HeptaSean',
+      sort_by: 'voting_power',
+      sort_direction: 'desc',
+    });
+  });
+
+  it('carries the term into the register walk on a client-ordered column', async () => {
+    h.getDRepsPaginated.mockImplementation(pagedServer(40, 15));
+    wrapper = mountPage();
+    await settle();
+    h.getDRepsPaginated.mockClear();
+
+    await typeSearch(wrapper, 'HeptaSean');
+
+    // The searched set is walked in FULL, so the order spans all of it and not
+    // just its first page.
+    expect(h.getDRepsPaginated.mock.calls.length).toBeGreaterThan(1);
+    for (const call of h.getDRepsPaginated.mock.calls) {
+      expect(call[0].search).toBe('HeptaSean');
+      expect(call[0]).not.toHaveProperty('sort_by');
+    }
+    expect(renderedNames(wrapper)[0]).toBe('d39');
+  });
+});
+
+describe('DRepDirectory: an order it cannot deliver is never implied', () => {
+  it('says the sort is page-local when the register could not be loaded', async () => {
+    const paged = pagedServer(40, 15);
+    h.getDRepsPaginated.mockImplementation(async (params: { page?: number; per_page?: number }) => {
+      // The walk asks for wide pages and fails; the single-page fallback does not.
+      if ((params?.per_page ?? 0) > 15) throw new Error('gateway timeout');
+      return paged(params);
+    });
+
+    wrapper = mountPage();
+    await settle();
+
+    // Rows still render, from one server page.
+    expect(wrapper.findAll('.drep-directory__row').length).toBeGreaterThan(0);
+    // And the caveat sits against the sort control, not buried in the footer.
+    const note = wrapper.find('.drep-directory__scope-note');
+    expect(note.exists()).toBe(true);
+    expect(note.text()).toContain('governance.sortPageOnlyNotice');
+    expect(wrapper.find('.drep-directory__footer').text()).toContain(
+      'governance.directoryFooterPageLocal',
+    );
+  });
+
+  it('claims the register-wide order only when it really has the register', async () => {
+    h.getDRepsPaginated.mockImplementation(pagedServer(40, 15));
+    wrapper = mountPage();
+    await settle();
+
+    expect(wrapper.find('.drep-directory__scope-note').exists()).toBe(false);
+    expect(wrapper.find('.drep-directory__footer').text()).toContain('governance.directoryFooter');
+  });
+
+  it('explains the wait while the register is loading', async () => {
+    let release: (() => void) | null = null;
+    const gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    h.getDRepsPaginated.mockImplementation(async () => {
+      await gate;
+      return { items: [drep('steady')], meta: { total_items: 1, total_pages: 1 } };
+    });
+
+    wrapper = mountPage();
+    await Vue.nextTick();
+
+    expect(wrapper.find('.drep-directory__loading-note').text()).toContain(
+      'governance.orderingRegister',
+    );
+    release?.();
+    await settle();
+    expect(wrapper.find('.drep-directory__loading-note').exists()).toBe(false);
   });
 });
 
