@@ -8,6 +8,7 @@ import {
   committeeNameIndex,
   committeeNameOf,
   filterPositions,
+  isCommitteeRow,
   isYourRow,
   orderNoteKey,
   resolveYourPosition,
@@ -237,6 +238,26 @@ describe('committeeNameIndex', () => {
     const [drep] = toPositionRows([vote({ drepId: DREP_A, committeeColdHash: CC_COLD })]);
     expect(drep.committeeColdHex).toBeNull();
     expect(drep.committeeHex).toBeNull();
+  });
+
+  it('is a committee row by ROLE, not by which hashes happened to parse', () => {
+    // The lookup's gate. Reading it off `committeeHex` instead would skip the
+    // committee index entirely for a row whose hot credential arrived in a form
+    // `toCredentialHex` rejects — with a cold hash resolved and the name sitting
+    // right there in the index.
+    const [resolved] = toPositionRows([
+      committeeVote({ voterHash: 'cc_hot1notrawhex', committeeColdHash: CC_COLD }),
+    ]);
+    expect(resolved.committeeHex).toBeNull();
+    expect(resolved.committeeColdHex).toBe(CC_COLD);
+    expect(isCommitteeRow(resolved)).toBe(true);
+    expect(committeeNameOf(resolved, committeeNameIndex([member({ displayName: 'Tingvard' })]))).toBe(
+      'Tingvard',
+    );
+
+    // And a DRep row is never one, whatever it carries.
+    const [drep] = toPositionRows([vote({ drepId: DREP_A })]);
+    expect(isCommitteeRow(drep)).toBe(false);
   });
 
   it('never names a row of another body', () => {

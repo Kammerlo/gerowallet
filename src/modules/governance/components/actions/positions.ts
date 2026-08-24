@@ -142,6 +142,20 @@ function toHasRationale(value: unknown): boolean {
 const COMMITTEE_ROLE = 'ConstitutionalCommittee';
 
 /**
+ * Whether this row belongs to the committee register.
+ *
+ * The ROLE, not the presence of a hash. A caller that gates the name lookup on
+ * `committeeHex` instead is asserting "is this a committee row" from a value
+ * that may legitimately be absent — a hot credential the projection sent in a
+ * form `toCredentialHex` rejects would then skip the lookup entirely, even with
+ * a cold hash resolved and a name sitting in the index. Which register a row
+ * belongs to is a fact about the voter, so it is read from the voter.
+ */
+export function isCommitteeRow(row: PositionRow): boolean {
+  return row.role === COMMITTEE_ROLE;
+}
+
+/**
  * A 28-byte credential as lower-case hex, or null.
  *
  * Shape-checked rather than trusted: `voterHash` is whatever upstream sent, and

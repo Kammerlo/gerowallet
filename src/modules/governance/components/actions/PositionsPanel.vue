@@ -210,6 +210,7 @@ import {
   VOTE_CHOICES,
   committeeNameOf,
   filterPositions,
+  isCommitteeRow,
   isYourRow,
   orderNoteKey,
   resolveYourPosition,
@@ -303,7 +304,7 @@ const summary = computed(() => summarizePositions(rows.value));
  * register is consulted on the other's behalf.
  */
 function nameOf(row: PositionRow): string | null {
-  if (row.committeeHex) return committeeNameOf(row, props.committeeNames);
+  if (isCommitteeRow(row)) return committeeNameOf(row, props.committeeNames);
   return row.credentialHex ? (names.value.get(row.credentialHex)?.name ?? null) : null;
 }
 
