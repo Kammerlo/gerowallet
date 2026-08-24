@@ -160,11 +160,35 @@ export interface GovVotingSummary {
   notVotedPower: string | null;
 }
 
+/**
+ * One seat on the constitutional committee.
+ *
+ * Two facts about `hash`, both verified against mainnet through the gero-backend
+ * proxy on 2026-08-24, and both load-bearing for the votes list:
+ *
+ *  1. It is the member's COLD credential (`1980dbf1…`, `credType: SCRIPTHASH`).
+ *     A committee VOTE carries the HOT one (`voterHash: 2ea7a78e…`,
+ *     `voterId: cc_hot1…`), and the two are different key hashes — the eight
+ *     current members and the committee rows on
+ *     `529dccaa…#0` overlap on exactly ZERO hashes. So a vote row only resolves
+ *     to a member once upstream publishes the hot credential (or the name) on a
+ *     surface that carries it. Until then the row renders its truncated hash,
+ *     which is the honest answer; nothing may guess a name by position.
+ *  2. The set is the CURRENT committee. A member whose term expired before the
+ *     action may legitimately have voted and be absent here.
+ */
 export interface CommitteeMember {
   hash: string;
   credType: string | null;
   startEpoch: number | null;
   expiredEpoch: number | null;
+  /**
+   * The member's published name ("Tingvard"). OPTIONAL because the projection
+   * in front of the wallet today does not send it — the live response carries
+   * only the four fields above — while the newer Nexus does. Absent is not an
+   * empty name: it means the row falls back to its hash.
+   */
+  displayName?: string | null;
 }
 
 export interface Committee {

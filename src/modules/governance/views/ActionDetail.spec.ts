@@ -23,6 +23,7 @@ import Vue from 'vue';
 const getProposal = vi.fn();
 const getVotingSummary = vi.fn();
 const getProposalVotes = vi.fn();
+const getCommittee = vi.fn();
 
 vi.mock('@/api/governance-api', () => ({
   default: {
@@ -30,13 +31,17 @@ vi.mock('@/api/governance-api', () => ({
     getProposal: (...args: unknown[]) => getProposal(...args),
     getVotingSummary: (...args: unknown[]) => getVotingSummary(...args),
     getProposalVotes: (...args: unknown[]) => getProposalVotes(...args),
+    getCommittee: (...args: unknown[]) => getCommittee(...args),
   },
 }));
 
 vi.mock('@/api/blockchain-api', () => ({ default: { getDRepById: vi.fn() } }));
 
+/** Which tab the mocked route is on. Mutable so a case can open the Votes tab. */
+const routeQuery = vi.hoisted(() => ({ value: {} as Record<string, string> }));
+
 vi.mock('vue-router/composables', () => ({
-  useRoute: () => ({ params: { txHash: 'aa'.repeat(32), index: '0' }, query: {} }),
+  useRoute: () => ({ params: { txHash: 'aa'.repeat(32), index: '0' }, query: routeQuery.value }),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
 
@@ -47,10 +52,19 @@ vi.mock('@/modules/governance/dialogs/CastVoteDialog.vue', () => ({
   default: { name: 'CastVoteDialog', props: ['isOpen', 'actions'], render: () => null },
 }));
 vi.mock('@/modules/governance/components/actions/PositionsPanel.vue', () => ({
-  default: { name: 'PositionsPanel', render: () => null },
+  default: { name: 'PositionsPanel', props: ['presetRole', 'committeeNames', 'votes'], render: () => null },
 }));
+// This one renders a real element rather than null: where the cards SIT is what
+// the layout cases are about, and a component that renders nothing cannot be
+// found inside the rail.
 vi.mock('@/modules/governance/components/actions/BodyTallyCard.vue', () => ({
-  default: { name: 'BodyTallyCard', render: () => null },
+  default: {
+    name: 'BodyTallyCard',
+    props: ['result', 'composition', 'counts', 'thresholdNote'],
+    render(h: (tag: string, data: Record<string, unknown>) => unknown) {
+      return h('div', { class: 'body-card' });
+    },
+  },
 }));
 vi.mock('@/modules/governance/components/actions/VoteCta.vue', () => ({
   default: { name: 'VoteCta', props: ['action'], render: () => null },
@@ -67,7 +81,7 @@ vi.mock('@/modules/governance/components/actions/AsOf.vue', () => ({
 
 // @ts-ignore — tsconfig ships no `*.vue` shim; vite resolves this fine.
 import ActionDetail from './ActionDetail.vue';
-import governanceActionsStore from '@/stores/governanceActionsStore';
+import governanceActionsStore, { resetCommitteeCache } from '@/stores/governanceActionsStore';
 import { walletStore } from '@/stores/walletStore';
 import NetworkStore from '@/stores/networkStore';
 
@@ -78,11 +92,24 @@ const $t = (key: string): string => key;
 // an http: URL.
 const SOURCE = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'ActionDetail.vue'), 'utf8');
 
-/** The declaration block of the tally wrapper's rule in the scoped stylesheet. */
-function talliesRule(): string {
-  const match = /\.action-detail__tallies\s*\{([^}]*)\}/.exec(SOURCE);
-  expect(match, 'no CSS rule for .action-detail__tallies').not.toBeNull();
+/** The declaration block of one top-level rule in the scoped stylesheet. */
+function rule(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`^${escaped}\\s*\\{([^}]*)\\}`, 'm').exec(SOURCE);
+  expect(match, `no CSS rule for ${selector}`).not.toBeNull();
   return (match as RegExpExecArray)[1];
+}
+
+/**
+ * Everything inside one `@media` block. Read as a slice rather than by regex:
+ * the block holds whole rules, so the first `}` is the end of a rule, not of the
+ * block — it ends at the brace that closes it in column 0.
+ */
+function mediaBlock(query: string): string {
+  const start = SOURCE.indexOf(`@media ${query}`);
+  expect(start, `no @media ${query} block`).toBeGreaterThan(-1);
+  const rest = SOURCE.slice(start);
+  return rest.slice(0, rest.indexOf('\n}'));
 }
 
 /**
@@ -116,6 +143,11 @@ function detail(over: Record<string, unknown> = {}) {
   };
 }
 
+/** Enough of a voting summary for the recorded-positions card to have something to say. */
+function summary(over: Record<string, unknown> = {}) {
+  return { yesVotesCast: 3, noVotesCast: 1, abstainVotesCast: 0, ...over } as never;
+}
+
 function mountPage(): Wrapper<Vue> {
   return mount(ActionDetail, {
     attachTo: document.body,
@@ -143,12 +175,17 @@ let wrapper: Wrapper<Vue> | null = null;
 beforeEach(() => {
   vi.clearAllMocks();
   governanceActionsStore.reset();
+  // The committee is cached for the session, so one case's committee would
+  // otherwise still be in hand for the next.
+  resetCommitteeCache();
+  routeQuery.value = {};
   walletStore.loggedWallet = { chain: 'Cardano', network: 'Mainnet' } as never;
   walletStore.keys = null;
   walletStore.account = null as never;
   getProposal.mockResolvedValue(detail());
   getVotingSummary.mockResolvedValue(null);
   getProposalVotes.mockResolvedValue({ items: [], page: 1, pageSize: 200, total: 0 });
+  getCommittee.mockResolvedValue(null);
   vi.spyOn(NetworkStore, 'getCurrentEpoch').mockReturnValue(650);
 });
 
@@ -216,38 +253,87 @@ describe('ActionDetail references', () => {
   });
 });
 
-// The bodies vote in parallel, so they are read in parallel: DReps beside the
-// committee rather than stacked down a column. The layout lives in the scoped
-// stylesheet, which vitest does not apply in happy-dom, so it is asserted
-// against the file — after the DOM has confirmed there are two cards in the
-// wrapper to lay out.
-describe('ActionDetail body tallies', () => {
-  it('puts every voting body in one grid, side by side', async () => {
+// The Overview tab is prose on the left and a rail on the right, and the rail is
+// one vertical stack: every voting body's tally, then the recorded positions
+// with their jump into the Votes tab. The layout lives in the scoped stylesheet,
+// which vitest does not apply in happy-dom, so the grid itself is asserted
+// against the file — after the DOM has confirmed what is inside the rail.
+describe('ActionDetail overview rail', () => {
+  it('stacks every voting body in the rail, above the recorded positions', async () => {
     // A treasury withdrawal is decided by DReps AND the committee.
     getProposal.mockResolvedValue(detail({ type: 'TreasuryWithdrawals' }));
+    getVotingSummary.mockResolvedValue(summary());
     wrapper = mountPage();
     await settle();
 
-    const tallies = wrapper.find('.action-detail__tallies');
-    expect(tallies.exists()).toBe(true);
+    const rail = wrapper.find('.action-detail__rail');
+    expect(rail.exists()).toBe(true);
+    // Both cards are IN the rail, not in a band above the prose.
     expect(wrapper.findAllComponents({ name: 'BodyTallyCard' })).toHaveLength(2);
+    expect(rail.findAll('.body-card')).toHaveLength(2);
+    expect(wrapper.find('.action-detail__tallies').exists()).toBe(false);
 
-    const declarations = talliesRule();
-    expect(declarations).toMatch(/display:\s*grid/);
-    // auto-fit + a min track: two across where there is room, one column in the
-    // side panel and the popup, from the same markup.
-    expect(declarations).toMatch(/grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(/);
-    expect(declarations).not.toMatch(/flex-direction:\s*column/);
+    // Tallies first, the positions card last: the summary is read before the
+    // buttons that lead away from it.
+    const order = wrapper.findAll('.action-detail__rail > *').wrappers.map(cell => cell.classes().join(' '));
+    expect(order).toEqual(['body-card', 'body-card', 'action-detail__rail-card glass-panel']);
+
+    const grid = rule('.action-detail__overview-grid');
+    expect(grid).toMatch(/display:\s*grid/);
+    // A fixed narrow track for the rail, so the prose takes the extra width.
+    expect(grid).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s+300px/);
+    expect(rule('.action-detail__rail')).toMatch(/flex-direction:\s*column/);
   });
 
-  it('keeps the advisory panel instead of a tally grid for an info action', async () => {
+  it('keeps the rail in view while a long proposal scrolls past', async () => {
+    const declarations = rule('.action-detail__rail');
+    expect(declarations).toMatch(/position:\s*sticky/);
+    // A three-body action's stack can be taller than the window, and a sticky
+    // element taller than the viewport strands its own foot.
+    expect(declarations).toMatch(/max-height:\s*calc\(100vh/);
+    expect(declarations).toMatch(/overflow-y:\s*auto/);
+  });
+
+  it('collapses to one column and leads with the rail on a narrow viewport', async () => {
+    // The popup and the side panel are ~380px wide. One column there, with the
+    // rail ABOVE the prose: stacked after it, the tally and the "see the votes"
+    // buttons would sit below the entire proposal document.
+    const narrow = mediaBlock('(max-width: 1100px)');
+    expect(narrow).toMatch(/\.action-detail__overview-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+    expect(narrow).toMatch(/\.action-detail__rail\s*\{[^}]*order:\s*-1/);
+    // Nothing to stick beside once the second column is gone.
+    expect(narrow).toMatch(/\.action-detail__rail\s*\{[^}]*position:\s*static/);
+  });
+
+  it('keeps the advisory panel, and no tally at all, for an info action', async () => {
     // InfoAction has no threshold and can never ratify, so there is nothing to
-    // lay out side by side.
+    // tally and no rail to reserve a gutter for.
     wrapper = mountPage();
     await settle();
 
-    expect(wrapper.find('.action-detail__tallies').exists()).toBe(false);
     expect(wrapper.find('.action-detail__advisory').exists()).toBe(true);
+    expect(wrapper.findAllComponents({ name: 'BodyTallyCard' })).toHaveLength(0);
+    expect(wrapper.find('.action-detail__rail').exists()).toBe(false);
+    expect(wrapper.find('.action-detail__tallies').exists()).toBe(false);
+    // A 300px empty gutter would read as something that failed to load.
+    expect(wrapper.find('.action-detail__overview-grid').classes()).toContain(
+      'action-detail__overview-grid--single',
+    );
+    expect(rule('.action-detail__overview-grid--single')).toMatch(
+      /grid-template-columns:\s*minmax\(0,\s*1fr\)/,
+    );
+  });
+
+  it('still shows the tallies when an action has no recorded positions card', async () => {
+    // A summary that never came back costs the positions card, not the rail.
+    getProposal.mockResolvedValue(detail({ type: 'TreasuryWithdrawals' }));
+    getVotingSummary.mockResolvedValue(null);
+    wrapper = mountPage();
+    await settle();
+
+    expect(wrapper.find('.action-detail__rail').exists()).toBe(true);
+    expect(wrapper.findAll('.action-detail__rail-card')).toHaveLength(0);
+    expect(wrapper.findAllComponents({ name: 'BodyTallyCard' })).toHaveLength(2);
   });
 
   it('states the rough expiry day beside the epoch count', async () => {
@@ -267,5 +353,79 @@ describe('ActionDetail body tallies', () => {
     expect(wrapper.html()).not.toContain('governance.approxExpiryDate');
     // The epoch the chain published is still a fact and still renders.
     expect(wrapper.html()).toContain('governance.expiresEpochLabel');
+  });
+});
+
+// A committee row on the Votes tab shows a hash unless the committee names the
+// member. The view loads that committee for the network it is on, once, and
+// hands the votes panel an index — never a placeholder, and never a name it
+// inferred from anything else.
+describe('ActionDetail committee names', () => {
+  /** A real mainnet member: cold credential, script-based, mid-term. */
+  const MEMBER = {
+    hash: '1980dbf1ad624b0cb5410359b5ab14d008561994a6c2b6c53fabec00',
+    credType: 'SCRIPTHASH',
+    startEpoch: 581,
+    expiredEpoch: 726,
+  };
+
+  function openVotesTab(): void {
+    routeQuery.value = { tab: 'positions' };
+  }
+
+  function panelNames(): ReadonlyMap<string, string> {
+    return wrapper?.findComponent({ name: 'PositionsPanel' }).props('committeeNames') as ReadonlyMap<
+      string,
+      string
+    >;
+  }
+
+  it('hands the votes panel the name of a member the committee names', async () => {
+    openVotesTab();
+    getCommittee.mockResolvedValue({
+      thresholdNumerator: 2,
+      thresholdDenominator: 3,
+      members: [{ ...MEMBER, displayName: 'Tingvard' }],
+    });
+    wrapper = mountPage();
+    await settle();
+
+    // The wallet's own network value; the client maps it to Nexus's slug.
+    expect(getCommittee).toHaveBeenCalledWith('Mainnet');
+    expect(panelNames().get(MEMBER.hash)).toBe('Tingvard');
+  });
+
+  it('hands it nothing when the projection carries no names', async () => {
+    // The live shape today: four fields, no `displayName`. Every committee row
+    // then renders its hash, which is the honest answer.
+    openVotesTab();
+    getCommittee.mockResolvedValue({ thresholdNumerator: 2, thresholdDenominator: 3, members: [MEMBER] });
+    wrapper = mountPage();
+    await settle();
+
+    expect(panelNames().size).toBe(0);
+  });
+
+  it('asks for the committee once however many actions are opened', async () => {
+    // It changes at most once a term, and the detail view asks on every action.
+    wrapper = mountPage();
+    await settle();
+    wrapper.destroy();
+    wrapper = mountPage();
+    await settle();
+
+    expect(getCommittee).toHaveBeenCalledTimes(1);
+  });
+
+  it('costs only the names when the committee cannot be read', async () => {
+    openVotesTab();
+    getCommittee.mockRejectedValue(new Error('committee endpoint down'));
+    wrapper = mountPage();
+    await settle();
+
+    expect(panelNames().size).toBe(0);
+    // The action itself is unaffected: names are a courtesy on this surface.
+    expect(wrapper.find('.action-detail__title').text()).toBe('A test action');
+    expect(wrapper.find('.action-detail__body').exists()).toBe(true);
   });
 });

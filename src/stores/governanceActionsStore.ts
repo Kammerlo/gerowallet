@@ -2,7 +2,13 @@ import Vue from 'vue';
 import governanceApi from '@/api/governance-api';
 import { sameDRep } from '@/shared/utils/drepId';
 import { isOpen } from '@/shared/utils/govLifecycle';
-import type { GovProposal, GovProposalDetail, GovVote, GovVotingSummary } from '@/api/governance.types';
+import type {
+  Committee,
+  GovProposal,
+  GovProposalDetail,
+  GovVote,
+  GovVotingSummary,
+} from '@/api/governance.types';
 
 /**
  * Governance actions (CIP-1694 proposals).
@@ -147,6 +153,14 @@ export interface GovernanceActionsState {
   /** True when the page cap stopped the fetch short of `votesTotal`. */
   votesTruncated: boolean;
 
+  /**
+   * The constitutional committee of the network on screen, or null when it has
+   * not been read (yet, or at all). Null is NOT an empty committee: it is the
+   * absence of an answer, and the votes list must fall back to hashes rather
+   * than report a member as unknown on the strength of it.
+   */
+  committee: Committee | null;
+
   filters: { type: string | null; status: string | null };
 
   /** Result of the "has my DRep voted on this yet" join. */
@@ -188,6 +202,7 @@ const state = Vue.observable<GovernanceActionsState>({
   votesLoaded: false,
   votesError: null,
   votesTruncated: false,
+  committee: null,
   filters: { type: null, status: null },
   yourVotes: emptyYourVotes(),
   fetchedAt: null,
@@ -209,6 +224,33 @@ function message(error: unknown, fallback: string): string {
  * whatever is still running.
  */
 let votesRequest = 0;
+
+/**
+ * One committee request per network per session, shared by every caller.
+ *
+ * The committee changes at most once a term, and the detail view asks for it on
+ * every action it opens — so this is a promise cache rather than a fetch: ten
+ * actions read in a row cost one request, and a second view mounting mid-flight
+ * joins the one already running instead of starting another.
+ *
+ * A failure resolves to null and is CACHED as null: committee names are a
+ * courtesy on this surface, and retrying them on every action open would spend
+ * the user's bandwidth on something no row depends on.
+ */
+const committeeCache = new Map<string, Promise<Committee | null>>();
+
+/**
+ * Which network's committee the store is currently interested in. A wallet
+ * switched to preprod mid-flight must not have mainnet's committee written under
+ * it — the names would be attached to the wrong chain's members.
+ */
+let committeeNetwork = '';
+
+/** Test seam: forget the cached committees (mirrors `resetDRepNameIndex`). */
+export function resetCommitteeCache(): void {
+  committeeCache.clear();
+  committeeNetwork = '';
+}
 
 /** Invalidate any votes fetch in flight and blank the slice it would have written. */
 function resetVotes(): void {
@@ -282,6 +324,32 @@ const actions = {
     state.currentSummary = summary.status === 'fulfilled' ? summary.value : null;
     state.fetchedAt = Date.now();
     state.actionLoading = false;
+  },
+
+  /**
+   * The constitutional committee of one network, for naming the committee rows
+   * on the votes list.
+   *
+   * Never rejects, and never blanks a committee already in hand: names are a
+   * courtesy, and an outage must cost nothing but the names.
+   */
+  async loadCommittee(network: string): Promise<void> {
+    const key = String(network ?? '');
+    committeeNetwork = key;
+
+    let request = committeeCache.get(key);
+    if (!request) {
+      request = governanceApi.getCommittee(key).catch(() => null);
+      committeeCache.set(key, request);
+    }
+
+    const committee = await request;
+    // The wallet may have switched networks while this was in flight; one
+    // chain's members must never be published under another's. Written even
+    // when it is null, for the same reason: whatever committee was in hand
+    // belonged to the previous network and cannot name a row on this one.
+    if (committeeNetwork !== key) return;
+    state.committee = committee;
   },
 
   /**
@@ -397,6 +465,7 @@ const actions = {
     state.actionLoading = false;
     state.actionError = null;
     resetVotes();
+    state.committee = null;
     state.filters.type = null;
     state.filters.status = null;
     state.yourVotes = emptyYourVotes();

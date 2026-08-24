@@ -20,7 +20,7 @@
  * published nothing.
  */
 
-import type { GovVote } from '@/api/governance.types';
+import type { CommitteeMember, GovVote } from '@/api/governance.types';
 import { KEYWORD_DREPS, parseDRepId, sameDRep } from '@/shared/utils/drepId';
 import { safeExternalHref } from '@/shared/utils/externalLink';
 
@@ -42,6 +42,13 @@ export interface PositionRow {
   id: string;
   /** 28-byte credential of a DRep row — the only safe name-index key. Null otherwise. */
   credentialHex: string | null;
+  /**
+   * 28-byte credential of a COMMITTEE row, lower-case hex. Kept apart from
+   * `credentialHex` on purpose: the two are looked up in different indexes, and
+   * a shared field would let a committee hash collide with a DRep credential and
+   * borrow that DRep's name.
+   */
+  committeeHex: string | null;
   drepId: string | null;
   vote: string;
   /** Unix seconds, or null when the projection does not carry a block time. */
@@ -120,6 +127,52 @@ function toHasRationale(value: unknown): boolean {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+/** How the votes feed spells the committee, matching `ROLE_ORDER` above. */
+const COMMITTEE_ROLE = 'ConstitutionalCommittee';
+
+/**
+ * A 28-byte credential as lower-case hex, or null.
+ *
+ * Shape-checked rather than trusted: `voterHash` is whatever upstream sent, and
+ * a value that is not a credential must not become a map key that could collide
+ * with one.
+ */
+function toCredentialHex(value: unknown): string | null {
+  const hex = String(value ?? '').trim().toLowerCase();
+  return /^[0-9a-f]{56}$/.test(hex) ? hex : null;
+}
+
+/**
+ * A credential -> published-name index over the current committee.
+ *
+ * Members with no `displayName` are LEFT OUT rather than indexed as an empty
+ * name, so a lookup miss and a nameless member are the same answer: render the
+ * hash. Nothing here fills a gap — see `CommitteeMember` for why a vote may not
+ * join to any member at all (the feed carries the hot credential; the committee
+ * lists the cold one), and why guessing by position would be a fabrication.
+ */
+export function committeeNameIndex(
+  members: readonly CommitteeMember[] | null | undefined,
+): ReadonlyMap<string, string> {
+  const index = new Map<string, string>();
+  for (const member of members ?? []) {
+    const hex = toCredentialHex(member?.hash);
+    const name = typeof member?.displayName === 'string' ? member.displayName.trim() : '';
+    if (!hex || !name) continue;
+    index.set(hex, name);
+  }
+  return index;
+}
+
+/** This committee row's published name, or null when nothing in the index is it. */
+export function committeeNameOf(
+  row: PositionRow,
+  index: ReadonlyMap<string, string> | null | undefined,
+): string | null {
+  if (!row.committeeHex || !index) return null;
+  return index.get(row.committeeHex) ?? null;
+}
+
 export function toPositionRows(votes: GovVote[]): PositionRow[] {
   return (votes ?? []).map((vote, i) => {
     const role = String(vote.voterRole ?? '');
@@ -133,6 +186,7 @@ export function toPositionRows(votes: GovVote[]): PositionRow[] {
       role,
       id,
       credentialHex,
+      committeeHex: role === COMMITTEE_ROLE ? toCredentialHex(vote.voterHash) : null,
       drepId: vote.drepId ?? null,
       vote: String(vote.vote ?? ''),
       votedAt: toVotedAt(vote.votedAt),
@@ -190,7 +244,7 @@ export function summarizePositions(rows: PositionRow[]): PositionSummary {
 
 /** Case-insensitive substring match over the voter's name and every id form it has. */
 function matchesSearch(row: PositionRow, needle: string, name: string | null): boolean {
-  const haystack = [name, row.id, row.drepId, row.credentialHex]
+  const haystack = [name, row.id, row.drepId, row.credentialHex, row.committeeHex]
     .filter((v): v is string => !!v)
     .join(' ')
     .toLowerCase();

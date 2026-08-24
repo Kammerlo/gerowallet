@@ -76,108 +76,115 @@
           <v-icon small color="var(--g-text-2)" class="mr-2">mdi-information-outline</v-icon>
           <span class="t-body-2">{{ $t('governance.infoActionAdvisory') }}</span>
         </div>
-        <div v-else class="action-detail__tallies">
-          <BodyTallyCard
-            v-for="body in bodyResults"
-            :key="body.result.body"
-            :result="body.result"
-            :composition="body.composition"
-            :counts="body.counts"
-            :threshold-note="body.thresholdNote"
-          />
-        </div>
+        <!-- Prose left, everything the reader can ACT on stacked in a rail on
+             the right: the per-body tallies first, then the recorded positions
+             with their jump into the Votes tab. The tallies used to run
+             full-width above the prose, which put the summary and the "see the
+             votes" buttons at opposite ends of a long document. Below the
+             breakpoint the rail collapses into the same column and moves ABOVE
+             the prose, so the popup and the side panel still lead with the
+             tally rather than burying it under the whole proposal. -->
+        <div
+          class="action-detail__overview-grid"
+          :class="{ 'action-detail__overview-grid--single': !hasRail }"
+        >
+          <div class="action-detail__prose-col">
+            <!-- CIP-108 bodies are markdown documents, not captions: headings,
+                 tables and lists all appear in real proposals. Everything is
+                 HTML-escaped before a single markdown rule runs, so a proposal
+                 author cannot get markup into this page. -->
+            <section v-if="action.abstractText" class="action-detail__section">
+              <h2 class="t-heading">{{ $t('governance.abstract') }}</h2>
+              <div class="g-prose" v-html="renderedAbstract"></div>
+            </section>
+            <section v-if="action.motivation" class="action-detail__section">
+              <h2 class="t-heading">{{ $t('governance.motivation') }}</h2>
+              <div class="g-prose" v-html="renderedMotivation"></div>
+            </section>
+            <section v-if="action.rationale" class="action-detail__section">
+              <h2 class="t-heading">{{ $t('governance.rationale') }}</h2>
+              <div class="g-prose" v-html="renderedRationale"></div>
+            </section>
 
-        <!-- Prose left, positions rail right: TreasuryWithdrawals has only two
-             voting bodies, and without the rail the measure-constrained prose
-             left the right half of the page empty. -->
-        <div class="action-detail__overview-grid">
-        <div class="action-detail__prose-col">
-        <!-- CIP-108 bodies are markdown documents, not captions: headings,
-             tables and lists all appear in real proposals. Everything is
-             HTML-escaped before a single markdown rule runs, so a proposal
-             author cannot get markup into this page. -->
-        <section v-if="action.abstractText" class="action-detail__section">
-          <h2 class="t-heading">{{ $t('governance.abstract') }}</h2>
-          <div class="g-prose" v-html="renderedAbstract"></div>
-        </section>
-        <section v-if="action.motivation" class="action-detail__section">
-          <h2 class="t-heading">{{ $t('governance.motivation') }}</h2>
-          <div class="g-prose" v-html="renderedMotivation"></div>
-        </section>
-        <section v-if="action.rationale" class="action-detail__section">
-          <h2 class="t-heading">{{ $t('governance.rationale') }}</h2>
-          <div class="g-prose" v-html="renderedRationale"></div>
-        </section>
-
-        <section v-if="anchorHref || referenceLinks.length" class="action-detail__section">
-          <h2 class="t-heading">{{ $t('governance.references') }}</h2>
-          <!-- The anchor document is not a numbered reference, so it sits
-               outside the list the [n] markers point into. -->
-          <a
-            v-if="anchorHref"
-            :href="anchorHref"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="action-detail__link t-body-2"
-          >
-            <v-icon x-small class="mr-1">mdi-file-document-outline</v-icon>
-            {{ $t('governance.metadataDocument') }}
-          </a>
-          <!-- `value` on each item, not the browser's own 1..n counting: an
-               entry dropped as unsafe leaves a GAP, and the labels have to keep
-               agreeing with the [n] markers in the prose. Renumbering the
-               survivors would point a [2] marker at an entry labelled "1.".
-               `tabindex=-1` makes each entry a focus target, so activating a
-               marker from the keyboard actually moves the caret here. -->
-          <ol v-if="referenceLinks.length" class="action-detail__references">
-            <li
-              v-for="link in referenceLinks"
-              :id="referenceElementId(link.number)"
-              :key="`${link.href}-${link.number}`"
-              :value="link.number"
-              tabindex="-1"
-              class="action-detail__reference"
-              :class="{ 'action-detail__reference--jumped': jumpedReference === link.number }"
-            >
+            <section v-if="anchorHref || referenceLinks.length" class="action-detail__section">
+              <h2 class="t-heading">{{ $t('governance.references') }}</h2>
+              <!-- The anchor document is not a numbered reference, so it sits
+                   outside the list the [n] markers point into. -->
               <a
-                :href="link.href"
+                v-if="anchorHref"
+                :href="anchorHref"
                 target="_blank"
                 rel="noopener noreferrer"
                 class="action-detail__link t-body-2"
               >
-                <v-icon x-small class="mr-1">{{ link.icon }}</v-icon>
-                {{ link.label }}
+                <v-icon x-small class="mr-1">mdi-file-document-outline</v-icon>
+                {{ $t('governance.metadataDocument') }}
               </a>
-            </li>
-          </ol>
-          <p class="t-caption action-detail__note">{{ $t('governance.externalLinksNote') }}</p>
-        </section>
-        </div>
-
-        <!-- The recorded-positions rail: who has voted so far, per body, with a
-             jump into the Votes tab pre-filtered to that body. A pre-filtered
-             tab beats a second drawer: it reuses the full explorer (search,
-             avatars, rationale links) instead of duplicating a lesser copy. -->
-        <aside v-if="!isInfoAction && summary" class="action-detail__rail">
-          <div class="action-detail__rail-card glass-panel">
-            <span class="t-label">{{ $t('governance.positionsTitle') }}</span>
-            <div v-if="drepCastCounts" class="action-detail__rail-row">
-              <span class="t-body-2">{{ $t('governance.dReps') }}</span>
-              <span class="t-caption g-num">{{ $t('governance.votesCount', drepCastCounts) }}</span>
-            </div>
-            <GButton tier="tertiary" compact block @click="openVotesFor('DRep')">
-              {{ $t('governance.viewDRepVotes') }}
-            </GButton>
-            <div v-if="ccCounts" class="action-detail__rail-row">
-              <span class="t-body-2">{{ $t('governance.constitutionalCommittee') }}</span>
-              <span class="t-caption g-num">{{ $t('governance.votesCount', ccCounts) }}</span>
-            </div>
-            <GButton tier="tertiary" compact block @click="openVotesFor('ConstitutionalCommittee')">
-              {{ $t('governance.viewCommitteeVotes') }}
-            </GButton>
+              <!-- `value` on each item, not the browser's own 1..n counting: an
+                   entry dropped as unsafe leaves a GAP, and the labels have to
+                   keep agreeing with the [n] markers in the prose. Renumbering
+                   the survivors would point a [2] marker at an entry labelled
+                   "1.". `tabindex=-1` makes each entry a focus target, so
+                   activating a marker from the keyboard moves the caret here. -->
+              <ol v-if="referenceLinks.length" class="action-detail__references">
+                <li
+                  v-for="link in referenceLinks"
+                  :id="referenceElementId(link.number)"
+                  :key="`${link.href}-${link.number}`"
+                  :value="link.number"
+                  tabindex="-1"
+                  class="action-detail__reference"
+                  :class="{ 'action-detail__reference--jumped': jumpedReference === link.number }"
+                >
+                  <a
+                    :href="link.href"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="action-detail__link t-body-2"
+                  >
+                    <v-icon x-small class="mr-1">{{ link.icon }}</v-icon>
+                    {{ link.label }}
+                  </a>
+                </li>
+              </ol>
+              <p class="t-caption action-detail__note">{{ $t('governance.externalLinksNote') }}</p>
+            </section>
           </div>
-        </aside>
-      </div>
+
+          <!-- One card per body that votes on this action type, stacked in the
+               order they are read, then who has voted so far with a jump into
+               the Votes tab pre-filtered to that body. A pre-filtered tab beats
+               a second drawer: it reuses the full explorer (search, avatars,
+               rationale links) instead of duplicating a lesser copy. -->
+          <aside v-if="hasRail" class="action-detail__rail">
+            <BodyTallyCard
+              v-for="body in bodyResults"
+              :key="body.result.body"
+              :result="body.result"
+              :composition="body.composition"
+              :counts="body.counts"
+              :threshold-note="body.thresholdNote"
+            />
+
+            <div v-if="summary" class="action-detail__rail-card glass-panel">
+              <span class="t-label">{{ $t('governance.positionsTitle') }}</span>
+              <div v-if="drepCastCounts" class="action-detail__rail-row">
+                <span class="t-body-2">{{ $t('governance.dReps') }}</span>
+                <span class="t-caption g-num">{{ $t('governance.votesCount', drepCastCounts) }}</span>
+              </div>
+              <GButton tier="tertiary" compact block @click="openVotesFor('DRep')">
+                {{ $t('governance.viewDRepVotes') }}
+              </GButton>
+              <div v-if="ccCounts" class="action-detail__rail-row">
+                <span class="t-body-2">{{ $t('governance.constitutionalCommittee') }}</span>
+                <span class="t-caption g-num">{{ $t('governance.votesCount', ccCounts) }}</span>
+              </div>
+              <GButton tier="tertiary" compact block @click="openVotesFor('ConstitutionalCommittee')">
+                {{ $t('governance.viewCommitteeVotes') }}
+              </GButton>
+            </div>
+          </aside>
+        </div>
       </div>
 
       <!-- Positions (cast votes).
@@ -189,6 +196,7 @@
       <div v-else-if="tab === 'positions'" class="action-detail__body">
         <PositionsPanel
           :preset-role="presetRole"
+          :committee-names="committeeNames"
           :votes="state.currentVotes"
           :total="state.votesTotal"
           :loading="state.votesLoading"
@@ -249,6 +257,7 @@ import AsOf from '@/modules/governance/components/actions/AsOf.vue';
 import BodyTallyCard from '@/modules/governance/components/actions/BodyTallyCard.vue';
 import VoteCta from '@/modules/governance/components/actions/VoteCta.vue';
 import PositionsPanel from '@/modules/governance/components/actions/PositionsPanel.vue';
+import { committeeNameIndex } from '@/modules/governance/components/actions/positions';
 import type { PositionIdentity } from '@/modules/governance/components/actions/positions';
 import {
   hasReferenceIndex,
@@ -414,6 +423,22 @@ const bodyResults = computed<BodyCard[]>(() => {
   });
 });
 
+/**
+ * Whether the right rail has anything to hold. An InfoAction has no threshold
+ * and no tally, so on one it is the ADVISORY panel that stands above the prose
+ * and the grid runs as a single column — a 300px empty gutter would read as
+ * something that failed to load.
+ */
+const hasRail = computed(() => !isInfoAction.value && (bodyResults.value.length > 0 || !!summary.value));
+
+/**
+ * Committee credential -> published name, for the committee rows on the Votes
+ * tab. Built from the committee the store loaded for this network; an empty map
+ * (not loaded, endpoint down, or a projection that sends no names) leaves every
+ * committee row showing its hash.
+ */
+const committeeNames = computed(() => committeeNameIndex(state.committee?.members));
+
 const typeLabel = computed(() => {
   const type = String(action.value?.type ?? '');
   const key = `governance.actionType.${type.toLowerCase()}`;
@@ -557,6 +582,9 @@ function setTab(next: string): void {
 
 function reload(): void {
   governanceActionsStore.loadAction(govActionId.value, network.value);
+  // Cached per network for the session, so reading ten actions in a row costs
+  // one committee request and a failure costs only the names.
+  governanceActionsStore.loadCommittee(network.value);
 }
 
 function goBack(): void {
@@ -669,25 +697,47 @@ onBeforeUnmount(() => proseRoot.value?.removeEventListener('click', onProseClick
   margin: 0 0 var(--g-s-1);
   color: var(--g-text-3);
 }
-/* The bodies vote in PARALLEL, so they are read side by side: DReps beside the
-   committee, plus SPOs where the action type gives them a say. `auto-fit` +
-   a min track means the same markup collapses to a single column in the side
-   panel and the popup, where there is no room for two. Grid items stretch, so
-   the cards share a height however long a threshold note wraps. */
-.action-detail__tallies {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: var(--g-s-3);
-}
+/* Prose in the wide track, the rail in a fixed narrow one. The rail track is
+   fixed rather than fractional so the measure of the prose does the growing:
+   the tally cards read the same at 1200px as at 1600px. */
 .action-detail__overview-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
   gap: var(--g-s-5);
   align-items: start;
 }
+/* An InfoAction has no tallies and no positions card, so there is no rail and
+   nothing to reserve a gutter for. */
+.action-detail__overview-grid--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+/* The rail is one vertical stack: DReps, the committee, the SPOs where they
+   have a say, then the recorded positions. Sticky, so the tally stays in view
+   while a long proposal scrolls past, and scrollable in its own right for the
+   three-body actions whose stack is taller than the window. */
+.action-detail__rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-s-3);
+  min-width: 0;
+  position: sticky;
+  top: var(--g-s-4);
+  max-height: calc(100vh - var(--g-s-6));
+  overflow-y: auto;
+}
+/* Side panel, popup, and any narrow window: one column, and the rail moves
+   ABOVE the prose. Stacked after it, the tally and the "see the votes" buttons
+   would sit below the entire proposal document. Sticky is dropped with it —
+   there is no second column left for it to sit beside. */
 @media (max-width: 1100px) {
   .action-detail__overview-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .action-detail__rail {
+    order: -1;
+    position: static;
+    max-height: none;
+    overflow-y: visible;
   }
 }
 .action-detail__prose-col {
@@ -701,8 +751,6 @@ onBeforeUnmount(() => proseRoot.value?.removeEventListener('click', onProseClick
   flex-direction: column;
   gap: var(--g-s-3);
   padding: var(--g-s-4);
-  position: sticky;
-  top: var(--g-s-4);
 }
 .action-detail__rail-row {
   display: flex;

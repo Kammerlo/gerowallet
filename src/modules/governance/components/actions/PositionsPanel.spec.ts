@@ -34,6 +34,22 @@ function vote(over: Partial<GovVote> = {}): GovVote {
   return { voterRole: 'DRep', voterHash: CRED_A, drepId: DREP_A, vote: 'Yes', txHash: null, ...over };
 }
 
+/** A real mainnet committee hot credential — what a committee vote actually carries. */
+const CC_HOT = '2ea7a78eb914d988b9d368ed88906f3bc9fc5421667dea6a366710ec';
+/** A real CID, so the avatar's IPFS mapping is exercised rather than a stubbed one. */
+const CID_V1 = 'bafybeickzy3mupolsvukd2pt7huyba7a3wkln7vcfr47wnjkna7no6g72u';
+
+function committeeVote(over: Partial<GovVote> = {}): GovVote {
+  return {
+    voterRole: 'ConstitutionalCommittee',
+    voterHash: CC_HOT,
+    drepId: null,
+    vote: 'Yes',
+    txHash: null,
+    ...over,
+  };
+}
+
 function mountPanel(props: Record<string, unknown> = {}): Wrapper<Vue> {
   return mount(PositionsPanel, {
     mocks: { $t },
@@ -343,6 +359,70 @@ describe('PositionsPanel rows', () => {
     expect(when.attributes('aria-label')).toBeUndefined();
     expect(when.attributes('datetime')).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(when.text()).toContain('governance.votedOn');
+  });
+
+  it('shows a DRep avatar the DRep published on ipfs, not the anonymous glyph', async () => {
+    // Half of mainnet's avatars are `ipfs://`, and the index used to drop them
+    // before the avatar could map them onto the backend proxy — so a DRep with
+    // a picture rendered as one without.
+    getDRepsPaginated.mockResolvedValue({
+      items: [
+        {
+          drep_id: DREP_A,
+          metadata: { meta_json: { body: { givenName: 'CryptoCrow', image: { contentUrl: `ipfs://${CID_V1}` } } } },
+        },
+      ],
+      meta: { page: 1, total_items: 1, per_page: 500, total_pages: 1 },
+    });
+    wrapper = mountPanel({ votes: [vote({ drepId: DREP_A })], total: 1 });
+    await settle();
+
+    const img = wrapper.find('.vote-row__avatar img');
+    expect(img.exists()).toBe(true);
+    expect(img.attributes('src')).toContain(`/api/ipfs?path=${CID_V1}`);
+  });
+
+  it('names a committee member from the committee, and keeps their hash', async () => {
+    wrapper = mountPanel({
+      votes: [committeeVote()],
+      total: 1,
+      committeeNames: new Map([[CC_HOT, 'Tingvard']]),
+    });
+    await settle();
+
+    const row = wrapper.findAll('.vote-row').at(0);
+    expect(row.find('.vote-row__name').text()).toBe('Tingvard');
+    // Named rows keep the id beside the name; the avatar becomes the initial,
+    // exactly as it does for a DRep with no published picture.
+    expect(row.find('.vote-row__id').exists()).toBe(true);
+    expect(row.find('.drep-avatar__initial').text()).toBe('T');
+    // A member is not a DRep: no profile to route to.
+    expect(row.find('.vote-row__name--link').exists()).toBe(false);
+  });
+
+  it('leaves a member the committee does not name on their hash', async () => {
+    // Both live cases land here: a projection that sends no `displayName`, and
+    // a voter whose hot credential is not in the current committee at all.
+    wrapper = mountPanel({ votes: [committeeVote()], total: 1, committeeNames: new Map() });
+    await settle();
+
+    const row = wrapper.findAll('.vote-row').at(0);
+    expect(row.find('.vote-row__name').text()).toContain(CC_HOT.slice(0, 6));
+    expect(row.find('.vote-row__id').exists()).toBe(false);
+    expect(row.find('.drep-avatar__initial').exists()).toBe(false);
+  });
+
+  it('never lends a DRep name to a committee row that shares its hash', async () => {
+    // Two registers, one hash. Crossing them would put a DRep's name and face
+    // on a committee member's vote.
+    getDRepsPaginated.mockResolvedValue({
+      items: [{ drep_id: toCip129(CC_HOT), metadata: { meta_json: { body: { givenName: 'CryptoCrow' } } } }],
+      meta: { page: 1, total_items: 1, per_page: 500, total_pages: 1 },
+    });
+    wrapper = mountPanel({ votes: [committeeVote()], total: 1, committeeNames: new Map() });
+    await settle();
+
+    expect(wrapper.findAll('.vote-row').at(0).text()).not.toContain('CryptoCrow');
   });
 
   it('still renders every row when the name lookup fails outright', async () => {
