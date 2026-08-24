@@ -638,10 +638,18 @@ function chipsFor(entry: DRepMatchEntry): CriterionChip[] {
   grid-template-columns: 340px minmax(0, 1fr);
   gap: var(--g-s-4);
   padding: 0 var(--g-s-4) var(--g-s-4);
+  /* The dialog card does not scroll its slot, so a long result list used to
+     stretch the whole dialog past the viewport (and the criteria column with
+     it). Bound the panel and let each column scroll independently instead. */
+  max-height: min(72vh, 760px);
+  min-height: 0;
 }
 @media (max-width: 900px) {
   .match {
     grid-template-columns: minmax(0, 1fr);
+    /* Single column: one scroll context for the whole panel. */
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 }
 .match__criteria {
@@ -652,6 +660,15 @@ function chipsFor(entry: DRepMatchEntry): CriterionChip[] {
   background: var(--g-raised);
   border: 1px solid var(--g-hairline-1);
   border-radius: var(--g-r-card);
+}
+@media (min-width: 901px) {
+  .match__criteria,
+  .match__results {
+    max-height: inherit;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    align-self: start;
+  }
 }
 .match__criteria-head {
   display: flex;

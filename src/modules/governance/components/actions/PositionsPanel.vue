@@ -220,6 +220,12 @@ import type { PositionIdentity, PositionRow, PositionSort } from '@/modules/gove
 import type { GovVote } from '@/api/governance.types';
 
 const props = defineProps({
+  /**
+   * Body filter the panel opens with, set by the overview rail's "view votes"
+   * buttons. Applied on change so re-clicking a rail button re-filters even
+   * when the panel is already mounted; the user can still clear it.
+   */
+  presetRole: { type: String as PropType<string | null>, default: null },
   votes: { type: Array as PropType<GovVote[]>, default: () => [] },
   /** Upstream's count of ALL positions, or null when it does not count. */
   total: { type: Number as PropType<number | null>, default: null },
@@ -259,6 +265,14 @@ const PAGE_STEP = 50;
 
 const search = ref('');
 const roleFilter = ref('all');
+
+watch(
+  () => props.presetRole,
+  role => {
+    if (role) roleFilter.value = role;
+  },
+  { immediate: true },
+);
 const choiceFilter = ref('all');
 const rationaleOnly = ref(false);
 const sort = ref<PositionSort>('newest');

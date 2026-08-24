@@ -1730,6 +1730,8 @@ export default {
   'governance.usb': 'USB',
   'governance.useCardanoCompatibleWallet': 'Öffne den Gero DAO Tab im Governance-Bereich deiner Wallet',
   'governance.valueUSD': 'Wert (USD)',
+  'governance.viewCommitteeVotes': 'Komitee-Stimmen ansehen',
+  'governance.viewDRepVotes': 'DRep-Stimmen ansehen',
   'governance.visitGeroDAOPage': 'Klicke hier auf „DAO beitreten", um Mitglied zu werden',
   'governance.vote': 'Abstimmen',
   'governance.votedAbstain': 'Enthalten',

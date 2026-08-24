@@ -184,6 +184,11 @@ watch(() => [props.isOpen, props.url, props.hash], () => void load(), { immediat
   flex-direction: column;
   gap: var(--g-s-4);
   padding: var(--g-s-2) var(--g-s-4) var(--g-s-4);
+  /* Rationales are documents: they routinely outgrow the dialog, and the
+     BaseDialog card does not scroll its slot, so the body scrolls itself. */
+  max-height: min(68vh, 640px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .rationale-dialog__loading {
   display: flex;

@@ -87,6 +87,11 @@
           />
         </div>
 
+        <!-- Prose left, positions rail right: TreasuryWithdrawals has only two
+             voting bodies, and without the rail the measure-constrained prose
+             left the right half of the page empty. -->
+        <div class="action-detail__overview-grid">
+        <div class="action-detail__prose-col">
         <!-- CIP-108 bodies are markdown documents, not captions: headings,
              tables and lists all appear in real proposals. Everything is
              HTML-escaped before a single markdown rule runs, so a proposal
@@ -147,6 +152,32 @@
           </ol>
           <p class="t-caption action-detail__note">{{ $t('governance.externalLinksNote') }}</p>
         </section>
+        </div>
+
+        <!-- The recorded-positions rail: who has voted so far, per body, with a
+             jump into the Votes tab pre-filtered to that body. A pre-filtered
+             tab beats a second drawer: it reuses the full explorer (search,
+             avatars, rationale links) instead of duplicating a lesser copy. -->
+        <aside v-if="!isInfoAction && summary" class="action-detail__rail">
+          <div class="action-detail__rail-card glass-panel">
+            <span class="t-label">{{ $t('governance.positionsTitle') }}</span>
+            <div v-if="drepCastCounts" class="action-detail__rail-row">
+              <span class="t-body-2">{{ $t('governance.dReps') }}</span>
+              <span class="t-caption g-num">{{ $t('governance.votesCount', drepCastCounts) }}</span>
+            </div>
+            <GButton tier="tertiary" compact block @click="openVotesFor('DRep')">
+              {{ $t('governance.viewDRepVotes') }}
+            </GButton>
+            <div v-if="ccCounts" class="action-detail__rail-row">
+              <span class="t-body-2">{{ $t('governance.constitutionalCommittee') }}</span>
+              <span class="t-caption g-num">{{ $t('governance.votesCount', ccCounts) }}</span>
+            </div>
+            <GButton tier="tertiary" compact block @click="openVotesFor('ConstitutionalCommittee')">
+              {{ $t('governance.viewCommitteeVotes') }}
+            </GButton>
+          </div>
+        </aside>
+      </div>
       </div>
 
       <!-- Positions (cast votes).
@@ -157,6 +188,7 @@
            wherever the projection passes it through. -->
       <div v-else-if="tab === 'positions'" class="action-detail__body">
         <PositionsPanel
+          :preset-role="presetRole"
           :votes="state.currentVotes"
           :total="state.votesTotal"
           :loading="state.votesLoading"
@@ -326,6 +358,21 @@ const ccComposition = computed<Composition>(() => {
 });
 
 const ccCounts = computed(() => ccProgress(summary.value, null, null));
+
+/** Head-counts of DRep ballots cast, for the rail. Null when the summary has none. */
+const drepCastCounts = computed(() => {
+  const s = summary.value;
+  if (!s || s.yesVotesCast === null) return null;
+  return { yes: s.yesVotesCast, no: s.noVotesCast ?? 0, abstain: s.abstainVotesCast ?? 0 };
+});
+
+/** Body filter the Votes tab opens with; consumed by PositionsPanel. */
+const presetRole = ref<string | null>(null);
+
+function openVotesFor(role: string): void {
+  presetRole.value = role;
+  setTab('positions');
+}
 
 interface BodyCard {
   result: BodyResult;
@@ -631,6 +678,37 @@ onBeforeUnmount(() => proseRoot.value?.removeEventListener('click', onProseClick
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: var(--g-s-3);
+}
+.action-detail__overview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--g-s-5);
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .action-detail__overview-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.action-detail__prose-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-s-5);
+  min-width: 0;
+}
+.action-detail__rail-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-s-3);
+  padding: var(--g-s-4);
+  position: sticky;
+  top: var(--g-s-4);
+}
+.action-detail__rail-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--g-s-2);
 }
 .action-detail__section {
   display: flex;
