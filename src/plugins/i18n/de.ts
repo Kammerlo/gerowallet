@@ -4171,7 +4171,7 @@ export default {
   // Empfangsdialog Midnight-Bereich (Öffentlich / Privat / DUST Tabs)
   'midnight.receive.tabDust': 'DUST',
   'midnight.receive.publicLabel': 'Öffentliche Adresse',
-  'midnight.receive.publicInfo': 'Für normale (Unshielded) NIGHT-Transfers. Beträge und Adressen sind on-chain sichtbar.',
+  'midnight.receive.publicInfo': 'Für normale (Unshielded) Transfers von NIGHT und anderen Midnight-Token. Beträge und Adressen sind on-chain sichtbar.',
   'midnight.receive.privateLabel': 'Private Adresse',
   'midnight.receive.privateInfo': 'Für private (Shielded) Transfers. Beträge und Teilnehmer bleiben vertraulich.',
   'midnight.receive.dustLabel': 'DUST-Adresse',

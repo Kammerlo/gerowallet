@@ -4274,7 +4274,7 @@ export default {
   // Receive dialog Midnight branch (Public / Private / DUST tabs)
   'midnight.receive.tabDust': 'DUST',
   'midnight.receive.publicLabel': 'Public address',
-  'midnight.receive.publicInfo': 'For regular (unshielded) NIGHT transfers. Amounts and addresses are visible on-chain.',
+  'midnight.receive.publicInfo': 'For regular (unshielded) transfers of NIGHT and other Midnight tokens. Amounts and addresses are visible on-chain.',
   'midnight.receive.privateLabel': 'Private address',
   'midnight.receive.privateInfo': 'For private (shielded) transfers. Amounts and participants stay confidential.',
   'midnight.receive.dustLabel': 'DUST address',
