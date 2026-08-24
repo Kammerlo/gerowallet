@@ -182,15 +182,29 @@
                 />
 
                 <v-text-field
-                  v-model="profile.paymentAddress"
+                  v-model="paymentInput"
                   outlined
                   dense
                   :label="$t('governance.drepPaymentAddressOptional')"
                   :hint="$t('governance.drepOwnPaymentAddressHint')"
-                  :error-messages="errorFor('paymentAddress')"
+                  :error-messages="paymentErrors"
+                  :loading="handleState === 'resolving'"
                   persistent-hint
                   @blur="touch('paymentAddress')"
                 />
+
+                <!-- A handle is a POINTER, and what CIP-119 publishes is an
+                     address. So the address it resolves to is shown here: it is
+                     what goes in the document, it is what delegators will send
+                     to, and it will not follow the handle if it is ever sold. -->
+                <div v-if="handleState === 'resolved' && resolvedHandle" class="become-drep__handle">
+                  <v-icon size="16" color="var(--g-success)">mdi-check-circle-outline</v-icon>
+                  <span class="become-drep__handle-text">
+                    <span class="t-body-sm">{{ $t('governance.drepHandleResolved', { handle: resolvedHandle.handle }) }}</span>
+                    <span class="t-caption g-mono become-drep__handle-address">{{ resolvedHandle.address }}</span>
+                    <span class="t-caption">{{ $t('governance.drepHandlePublishesAddress') }}</span>
+                  </span>
+                </div>
               </div>
             </v-stepper-content>
 
@@ -397,6 +411,14 @@
               {{ $t('governance.back') }}
             </GButton>
             <span class="become-drep__footer-gap"></span>
+            <!-- A disabled button has to say what it is waiting for. Without
+                 this the step could be blocked by a field error the reader has
+                 not scrolled to, or by one that is not shown at all yet, and the
+                 only signal was a button that did nothing when clicked. -->
+            <span v-if="!canContinue && blockingReasons.length" class="t-caption become-drep__blocked" role="status">
+              <v-icon size="14" color="var(--g-text-3)">mdi-information-outline</v-icon>
+              {{ blockingReasons.join(' · ') }}
+            </span>
             <GButton
               v-if="currentStep < 3"
               tier="primary"
@@ -475,14 +497,18 @@ import {
 import { toLovelace } from '@/shared/utils/lovelace';
 import filters from '@/shared/utils/filters';
 import { isCardanoTx } from '@/models/transaction.types';
-import { WalletType } from '@/models/types';
+import { Blockchain, Network, WalletType } from '@/models/types';
 import snackbar from '@/plugins/snackbar';
 import { debugLog } from '@/utils/debug';
+import debounce from 'lodash/debounce';
+import adaHandleApi from '@/api/ada-handle.api';
+import { handleName, looksLikeHandle, readHandleResponse } from '@/modules/governance/utils/handleAddress';
 import {
   buildCip119Anchor,
   isAnchorUrl,
   validateCip119Profile,
   verifyUploadedBytes,
+  MAX_ANCHOR_URL_LENGTH,
   MAX_GIVEN_NAME_LENGTH,
   MAX_PROSE_LENGTH,
   type Cip119Profile,
@@ -572,6 +598,114 @@ function errorFor(field: keyof Cip119Profile): string[] {
   return issue ? [t(ISSUE_KEYS[issue.code] ?? 'errors.unknownError')] : [];
 }
 
+// ---------------------------------------------------------------------------
+// Payment address: an address, or an ADA Handle that resolves to one
+// ---------------------------------------------------------------------------
+
+/**
+ * What the reader typed. Separate from `profile.paymentAddress`, which holds
+ * only what will actually be PUBLISHED — an address, never a handle.
+ *
+ * CIP-119's `paymentAddress` is an address field, and a handle is a transferable
+ * pointer: publishing `$name` would send a delegator's support to whoever holds
+ * that handle at the time, which may not be this DRep. So the handle is resolved
+ * here and the resulting address is what goes into the document.
+ */
+const paymentInput = ref('');
+
+type HandleState = 'idle' | 'resolving' | 'resolved' | 'notFound' | 'failed' | 'unsupported';
+
+const handleState = ref<HandleState>('idle');
+const resolvedHandle = ref<{ handle: string; address: string } | null>(null);
+/** Guards against a slow lookup landing after a newer one. */
+let handleTicket = 0;
+
+/** Handles are a mainnet Cardano asset; there is nothing to resolve elsewhere. */
+const handlesSupported = computed(
+  () => loggedWallet.value?.chain === Blockchain.CARDANO && loggedWallet.value?.network === Network.MAINNET
+);
+
+const lookupHandle = debounce(async (raw: string): Promise<void> => {
+  const ticket = ++handleTicket;
+  try {
+    const response = await adaHandleApi.resolve(handleName(raw));
+    if (ticket !== handleTicket) return;
+    // `readHandleResponse` owns the acceptance rule — nothing that is not a real
+    // address becomes published metadata. See its header.
+    const resolution = readHandleResponse(response);
+    if (resolution.status === 'resolved') {
+      resolvedHandle.value = { handle: raw, address: resolution.address };
+      profile.paymentAddress = resolution.address;
+      handleState.value = 'resolved';
+      return;
+    }
+    resolvedHandle.value = null;
+    profile.paymentAddress = '';
+    handleState.value = 'notFound';
+  } catch (err) {
+    if (ticket !== handleTicket) return;
+    debugLog('BecomeDRep: handle lookup failed', err);
+    resolvedHandle.value = null;
+    profile.paymentAddress = '';
+    handleState.value = 'failed';
+  }
+}, 400);
+
+watch(paymentInput, (next) => {
+  const value = (next ?? '').trim();
+  resolvedHandle.value = null;
+
+  if (!value) {
+    lookupHandle.cancel();
+    handleTicket += 1;
+    profile.paymentAddress = '';
+    handleState.value = 'idle';
+    return;
+  }
+
+  if (!looksLikeHandle(value)) {
+    lookupHandle.cancel();
+    handleTicket += 1;
+    profile.paymentAddress = value;
+    handleState.value = 'idle';
+    return;
+  }
+
+  if (!handlesSupported.value) {
+    lookupHandle.cancel();
+    handleTicket += 1;
+    profile.paymentAddress = '';
+    handleState.value = 'unsupported';
+    return;
+  }
+
+  // Nothing is published until the lookup succeeds. Leaving the previous
+  // address in place would publish an address the field no longer shows.
+  profile.paymentAddress = '';
+  handleState.value = 'resolving';
+  void lookupHandle(value);
+});
+
+const HANDLE_ERROR_KEYS: Partial<Record<HandleState, string>> = {
+  notFound: 'governance.drepHandleNotFound',
+  failed: 'governance.drepHandleLookupFailed',
+  unsupported: 'governance.drepHandleMainnetOnly',
+};
+
+const paymentErrors = computed<string[]>(() => {
+  // A failed handle is stated as soon as it fails, touched or not: the reader is
+  // looking at the field they just typed into.
+  const key = HANDLE_ERROR_KEYS[handleState.value];
+  if (key) return [t(key) as string];
+  if (handleState.value === 'resolving') return [];
+  return errorFor('paymentAddress');
+});
+
+/** A handle still in flight, or one that never resolved, blocks the step. */
+const paymentPending = computed(
+  () => handleState.value === 'resolving' || !!HANDLE_ERROR_KEYS[handleState.value]
+);
+
 const previewName = computed(() => profile.givenName.trim() || t('governance.drepPreviewNamePlaceholder'));
 const previewBlurb = computed(
   () => profile.objectives.trim() || t('governance.drepPreviewBlurbPlaceholder')
@@ -584,8 +718,15 @@ const previewBlurb = computed(
 const anchorUrl = ref('');
 const anchorUrlValid = computed(() => isAnchorUrl(anchorUrl.value));
 const anchorUrlError = computed(() => {
-  if (!showErrors.value && !touched['anchorUrl']) return [];
-  if (!anchorUrl.value.trim()) return [t('common.required')];
+  const url = anchorUrl.value.trim();
+  // An EMPTY field is only a problem once the reader has been there, or has
+  // tried to continue. A field with content in it that cannot work is a problem
+  // NOW: pasting a link and reading "128 characters or fewer" as a hint, with no
+  // indication that this link is 214 of them, is how the step got stuck.
+  if (!url) return showErrors.value || touched['anchorUrl'] ? [t('common.required')] : [];
+  if (url.length > MAX_ANCHOR_URL_LENGTH) {
+    return [t('governance.drepAnchorUrlTooLong', { n: url.length, max: MAX_ANCHOR_URL_LENGTH })];
+  }
   return anchorUrlValid.value ? [] : [t('governance.drepAnchorUrlInvalid')];
 });
 
@@ -653,9 +794,38 @@ const steps = computed(() => [
 ]);
 
 const canContinue = computed(() => {
-  if (currentStep.value === 1) return profileValid.value;
+  if (currentStep.value === 1) return profileValid.value && !paymentPending.value;
   if (currentStep.value === 2) return anchorUrlValid.value && anchorVerified.value && acknowledged.value;
   return false;
+});
+
+/**
+ * Why `canContinue` is false, in the reader's words.
+ *
+ * The step-2 gate is three separate conditions and the button showed none of
+ * them: a link one character over Nexus's 128-character cap disabled the step
+ * while the field itself stayed silent, because its error only rendered once the
+ * field had been touched. Whatever blocks the step is named here.
+ */
+const blockingReasons = computed<string[]>(() => {
+  const reasons: string[] = [];
+  if (currentStep.value === 1) {
+    if (handleState.value === 'resolving') reasons.push(t('governance.drepBlockedHandleResolving') as string);
+    else if (paymentPending.value) reasons.push(t('governance.drepBlockedHandleUnresolved') as string);
+    if (!profileValid.value) reasons.push(t('governance.drepBlockedProfile') as string);
+    return reasons;
+  }
+  if (currentStep.value !== 2) return reasons;
+
+  const url = anchorUrl.value.trim();
+  if (!url) reasons.push(t('governance.drepBlockedNoUrl') as string);
+  else if (url.length > MAX_ANCHOR_URL_LENGTH) {
+    reasons.push(t('governance.drepBlockedUrlTooLong', { n: url.length, max: MAX_ANCHOR_URL_LENGTH }) as string);
+  } else if (!anchorUrlValid.value) reasons.push(t('governance.drepBlockedUrlInvalid') as string);
+
+  if (!anchorVerified.value) reasons.push(t('governance.drepBlockedNotVerified') as string);
+  if (!acknowledged.value) reasons.push(t('governance.drepBlockedNotAcknowledged') as string);
+  return reasons;
 });
 
 const continueLabel = computed(() =>
@@ -1154,6 +1324,40 @@ onMounted(loadRegistration);
 
 .become-drep__footer-gap {
   flex: 1;
+}
+
+/* Sits beside the disabled button, so the reason and the thing it blocks are
+   read together. Recessed: it is an explanation, not an error the reader made. */
+.become-drep__blocked {
+  display: flex;
+  align-items: center;
+  gap: var(--g-s-2);
+  color: var(--g-text-3);
+  text-align: right;
+  min-width: 0;
+}
+
+/* The resolved handle. Deliberately shows the ADDRESS in full rather than
+   truncating it: it is what will be published, and a reader confirming their own
+   payment address needs to see all of it. */
+.become-drep__handle {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--g-s-2);
+  padding: var(--g-s-3);
+  border: 1px solid var(--g-hairline-2);
+  border-radius: var(--g-r-control);
+  background: var(--g-raised);
+}
+.become-drep__handle-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-s-1);
+  min-width: 0;
+}
+.become-drep__handle-address {
+  color: var(--g-text-2);
+  overflow-wrap: anywhere;
 }
 
 /* Preview ----------------------------------------------------------------- */

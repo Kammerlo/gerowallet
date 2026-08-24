@@ -90,6 +90,34 @@ html .v-application .display-3, html .v-application .display-4 {
   color: var(--g-text-3) !important;
 }
 
+/* ---- Tooltip ----
+   Vuetify ships `.v-tooltip__content` at `opacity: .9` over a translucent grey,
+   so the page beneath shows THROUGH the tooltip's own text and the two sets of
+   glyphs interleave. On a dark canvas that is not "slightly transparent", it is
+   unreadable. Given an opaque surface, a hairline and the primary text tone
+   instead.
+
+   `.menuable__content__active` is (0,2,0) and re-asserts the opacity while the
+   tooltip is shown, so the override has to carry both that class and the `html`
+   prefix to reach (0,2,1) and win on specificity rather than by forcing it.
+
+   The descendant rule is the other half of the bug: tooltip bodies are written
+   with `.t-caption`, whose colour is `--g-text-3` — a dim grey chosen to recede
+   against the CANVAS, not to be read on a raised overlay. */
+html .v-tooltip__content,
+html .v-tooltip__content.menuable__content__active {
+  background: var(--g-overlay);
+  border: 1px solid var(--g-hairline-2);
+  border-radius: var(--g-r-control);
+  color: var(--g-text-1);
+  opacity: 1;
+  padding: var(--g-s-2) var(--g-s-3);
+}
+html .v-tooltip__content .t-caption,
+html .v-tooltip__content .t-body-sm {
+  color: var(--g-text-1);
+}
+
 /* ---- Skeleton: the one sanctioned shimmer (1.4s). Reduced-motion is handled
    by the global block at the bottom of this file, so no per-use override. ---- */
 .g-skeleton {
