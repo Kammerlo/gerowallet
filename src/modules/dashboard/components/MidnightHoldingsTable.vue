@@ -223,7 +223,9 @@ const nightValueUsd = computed<number>(() => {
  */
 const tokenRows = computed<MidnightHoldingRow[]>(() =>
   Object.entries(midnightTokenBalances(midnightStore.utxos)).map(([color, amount]) => ({
-    ticker: `${color.slice(0, 8)}…`,
+    // Head+tail, not a prefix: a prefix-only label lets a malicious issuer
+    // grind a colliding prefix and impersonate a legitimate token.
+    ticker: `${color.slice(0, 8)}…${color.slice(-6)}`,
     name: t('midnight.unknownToken') as string,
     balanceFormatted: amount.toString(),
     breakdownText: t('midnight.rawBalanceNotice') as string,
