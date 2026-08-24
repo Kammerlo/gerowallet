@@ -13,34 +13,28 @@
           }}
         </p>
       </div>
-      <div class="drep-directory__header-side">
-        <v-text-field
-          v-model="search"
-          dense
-          outlined
-          hide-details
-          clearable
-          prepend-inner-icon="mdi-magnify"
-          class="drep-directory__search"
-          :label="$t('governance.searchDReps')"
-          :placeholder="$t('governance.drepSearchPlaceholder')"
-          :loading="loading"
-        />
-        <GButton tier="primary" compact @click="matchOpen = true">
-          <v-icon small left>mdi-account-search-outline</v-icon>{{ $t('governance.findMatch') }}
-        </GButton>
-      </div>
+      <v-text-field
+        v-model="search"
+        dense
+        outlined
+        hide-details
+        clearable
+        prepend-inner-icon="mdi-magnify"
+        class="drep-directory__search"
+        :label="$t('governance.searchDReps')"
+        :placeholder="$t('governance.drepSearchPlaceholder')"
+        :loading="loading"
+      />
     </div>
 
-    <!-- Sort pills. Participation is the default; voting power is only ever an
-         explicit user choice, never the order the page arrives in. -->
-    <div class="drep-directory__sort">
-      <span class="t-label drep-directory__sort-label">{{ $t('governance.sortBy') }}</span>
-      <v-chip-group :value="sortKey" column @change="onSort">
-        <v-chip v-for="option in SORT_OPTIONS" :key="option" :value="option" small outlined>
-          {{ sortLabel(option) }}
-        </v-chip>
-      </v-chip-group>
+    <!-- The match CTA stands on its own line, deliberately off the search row.
+         Sitting beside the field it read as the field's own submit key; here it
+         is plainly a separate offer with its own prompt. -->
+    <div class="drep-directory__match">
+      <span class="t-body drep-directory__match-prompt">{{ $t('governance.matchPrompt') }}</span>
+      <GButton tier="primary" @click="matchOpen = true">
+        <v-icon small left>mdi-account-search-outline</v-icon>{{ $t('governance.findMatch') }}
+      </GButton>
     </div>
 
     <ErrorState v-if="error" :message="error" retryable @retry="reload()" />
@@ -52,119 +46,162 @@
     <EmptyState v-else-if="!rows.length" :message="t('governance.noDRepsFound')" />
 
     <template v-else>
-      <!-- Column header -->
-      <div class="drep-directory__columns" :class="{ 'drep-directory__grid--focus': focusAvailable }">
-        <span class="t-label drep-directory__col-name">{{ $t('governance.dRep') }}</span>
-        <span class="t-label drep-directory__col-stat">{{ $t('governance.colParticipation') }}</span>
-        <span class="t-label drep-directory__col-stat">{{ $t('governance.colRationale') }}</span>
-        <span class="t-label drep-directory__col-pattern">{{ $t('governance.colVotePattern') }}</span>
-        <span v-if="focusAvailable" class="t-label drep-directory__col-focus">
-          {{ $t('governance.colFocusAreas') }}
-        </span>
-        <span class="t-label drep-directory__col-power">{{ $t('governance.votingPower') }}</span>
-      </div>
-
-      <div class="drep-directory__rows">
+      <div class="drep-directory__table" role="table" :aria-label="String($t('governance.drepDirectoryTitle'))">
+        <!-- Column header. The headers ARE the sort control: each sortable one is
+             a real button, so it is reachable by keyboard and carries the
+             baseline focus ring, and its column announces `aria-sort`. -->
         <div
-          v-for="row in rows"
-          :key="row.key"
-          class="drep-directory__row glass-panel"
+          class="drep-directory__columns"
+          role="row"
           :class="{ 'drep-directory__grid--focus': focusAvailable }"
         >
-          <!-- Identity -->
-          <div class="drep-directory__col-name drep-directory__identity">
-            <v-avatar rounded size="36" color="var(--g-raised)" class="drep-directory__avatar">
-              <v-img v-if="row.image" :src="row.image" contain>
-                <template v-slot:error>
-                  <v-icon size="18" color="var(--g-text-3)">mdi-account</v-icon>
-                </template>
-              </v-img>
-              <v-icon v-else size="18" color="var(--g-text-3)">mdi-account</v-icon>
-            </v-avatar>
-            <span class="drep-directory__identity-text">
-              <span class="drep-directory__name-line">
-                <button type="button" class="t-body-lg drep-directory__name" @click="openProfile(row.id)">
-                  {{ row.name }}
-                </button>
-                <span
-                  v-if="row.status"
-                  class="t-caption drep-directory__pill"
-                  :class="`drep-directory__pill--${row.status.tone}`"
-                >
-                  {{ row.status.label }}
+          <span class="t-label drep-directory__col-name" role="columnheader">{{ $t('governance.dRep') }}</span>
+          <span
+            v-for="column in columns"
+            :key="column.key"
+            role="columnheader"
+            :class="['t-label', column.cls]"
+            :aria-sort="column.sort ? ariaSort(column.sort) : null"
+          >
+            <button
+              v-if="column.sort"
+              type="button"
+              class="t-label drep-directory__sort"
+              :class="{ 'drep-directory__sort--active': sortKey === column.sort }"
+              :title="String($t('governance.sortByColumn', { column: $t(column.label) }))"
+              @click="toggleSort(column.sort)"
+            >
+              {{ $t(column.label) }}
+              <span v-if="sortKey === column.sort" class="drep-directory__sort-glyph" aria-hidden="true">
+                {{ sortDir === 'asc' ? '↑' : '↓' }}
+              </span>
+            </button>
+            <template v-else>{{ $t(column.label) }}</template>
+          </span>
+          <span class="drep-directory__col-action" role="columnheader"></span>
+        </div>
+
+        <div class="drep-directory__rows" role="rowgroup">
+          <div
+            v-for="row in rows"
+            :key="row.key"
+            role="row"
+            class="drep-directory__row glass-panel"
+            :class="{ 'drep-directory__grid--focus': focusAvailable }"
+          >
+            <!-- Identity -->
+            <div role="cell" class="drep-directory__col-name drep-directory__identity">
+              <v-avatar rounded size="36" color="var(--g-raised)" class="drep-directory__avatar">
+                <!-- Avatar slot: DRepAvatar lands here once it exists; until then
+                     the image-with-initial fallback below stays as it is. -->
+                <v-img v-if="row.image" :src="row.image" contain>
+                  <template v-slot:error>
+                    <v-icon size="18" color="var(--g-text-3)">mdi-account</v-icon>
+                  </template>
+                </v-img>
+                <v-icon v-else size="18" color="var(--g-text-3)">mdi-account</v-icon>
+              </v-avatar>
+              <span class="drep-directory__identity-text">
+                <span class="drep-directory__name-line">
+                  <button type="button" class="t-body-lg drep-directory__name" @click="openProfile(row.id)">
+                    {{ row.name }}
+                  </button>
+                  <span
+                    v-if="row.status"
+                    class="t-caption drep-directory__pill"
+                    :class="`drep-directory__pill--${row.status.tone}`"
+                  >
+                    {{ row.status.label }}
+                  </span>
+                  <span v-if="row.isCurrent" class="t-caption drep-directory__pill drep-directory__pill--accent">
+                    {{ $t('governance.yours') }}
+                  </span>
                 </span>
-                <span v-if="row.isCurrent" class="t-caption drep-directory__pill drep-directory__pill--accent">
-                  {{ $t('governance.yours') }}
+                <span class="t-caption g-mono drep-directory__id">{{ truncate(row.id) }}</span>
+              </span>
+            </div>
+
+            <!-- Participation -->
+            <div role="cell" class="drep-directory__col-stat">
+              <template v-if="row.stats.participation.pct !== null">
+                <span class="t-body-lg g-num">{{ row.stats.participation.pct }}%</span>
+                <span class="drep-directory__bar">
+                  <span class="drep-directory__bar-fill" :style="{ width: `${row.stats.participation.pct}%` }"></span>
                 </span>
+              </template>
+              <span v-else class="t-caption">{{ $t('governance.pendingStat') }}</span>
+            </div>
+
+            <!-- Rationale -->
+            <div role="cell" class="drep-directory__col-stat">
+              <template v-if="row.stats.rationaleRate.pct !== null">
+                <span class="t-body-lg g-num">{{ row.stats.rationaleRate.pct }}%</span>
+                <span class="t-caption">{{ $t('governance.writesReasons') }}</span>
+              </template>
+              <span v-else class="t-caption">{{ $t('governance.pendingStat') }}</span>
+            </div>
+
+            <!-- Vote pattern -->
+            <div role="cell" class="drep-directory__col-pattern">
+              <template v-if="row.stats.votePattern.total > 0">
+                <span class="drep-directory__pattern" role="img" :aria-label="row.patternLabel">
+                  <span
+                    class="drep-directory__pattern--yes"
+                    :style="{ width: `${row.stats.votePattern.yesPct}%` }"
+                  ></span>
+                  <span class="drep-directory__pattern--no" :style="{ width: `${row.stats.votePattern.noPct}%` }"></span>
+                  <span
+                    class="drep-directory__pattern--abstain"
+                    :style="{ width: `${row.stats.votePattern.abstainPct}%` }"
+                  ></span>
+                </span>
+                <span class="t-caption g-num">{{ row.patternLabel }}</span>
+              </template>
+              <span v-else class="t-caption">{{ $t('governance.noVotesYet') }}</span>
+            </div>
+
+            <!-- Focus areas. The whole column is hidden when action types are not
+                 loaded: inventing a category from a proposal id is not an option. -->
+            <div v-if="focusAvailable" role="cell" class="drep-directory__col-focus">
+              <span v-for="area in row.focus" :key="area.type" class="t-caption drep-directory__chip">
+                {{ area.label }}
               </span>
-              <span class="t-caption g-mono drep-directory__id">
-                {{ truncate(row.id) }}
-                <template v-if="row.stats.delegatorCount !== null">
-                  · {{ $t('governance.delegatorCount', { n: formatInt(row.stats.delegatorCount) }) }}
-                </template>
+            </div>
+
+            <!-- Delegators -->
+            <div role="cell" class="drep-directory__col-num">
+              <span v-if="row.stats.delegatorCount !== null" class="t-body g-num">
+                {{ formatInt(row.stats.delegatorCount) }}
               </span>
-            </span>
-          </div>
+              <span v-else class="t-caption">{{ $t('governance.pendingStat') }}</span>
+            </div>
 
-          <!-- Participation -->
-          <div class="drep-directory__col-stat">
-            <template v-if="row.stats.participation.pct !== null">
-              <span class="t-body-lg g-num">{{ row.stats.participation.pct }}%</span>
-              <span class="drep-directory__bar">
-                <span class="drep-directory__bar-fill" :style="{ width: `${row.stats.participation.pct}%` }"></span>
-              </span>
-            </template>
-            <span v-else class="t-caption">{{ $t('governance.pendingStat') }}</span>
-          </div>
+            <!-- Last vote -->
+            <div role="cell" class="drep-directory__col-num">
+              <span v-if="row.lastVote" class="t-body g-num">{{ row.lastVote }}</span>
+              <span v-else class="t-caption">{{ $t('governance.noVoteShort') }}</span>
+            </div>
 
-          <!-- Rationale -->
-          <div class="drep-directory__col-stat">
-            <template v-if="row.stats.rationaleRate.pct !== null">
-              <span class="t-body-lg g-num">{{ row.stats.rationaleRate.pct }}%</span>
-              <span class="t-caption">{{ $t('governance.writesReasons') }}</span>
-            </template>
-            <span v-else class="t-caption">{{ $t('governance.pendingStat') }}</span>
-          </div>
-
-          <!-- Vote pattern -->
-          <div class="drep-directory__col-pattern">
-            <template v-if="row.stats.votePattern.total > 0">
-              <span class="drep-directory__pattern" role="img" :aria-label="row.patternLabel">
-                <span class="drep-directory__pattern--yes" :style="{ width: `${row.stats.votePattern.yesPct}%` }"></span>
-                <span class="drep-directory__pattern--no" :style="{ width: `${row.stats.votePattern.noPct}%` }"></span>
-                <span
-                  class="drep-directory__pattern--abstain"
-                  :style="{ width: `${row.stats.votePattern.abstainPct}%` }"
-                ></span>
-              </span>
-              <span class="t-caption g-num">{{ row.patternLabel }}</span>
-            </template>
-            <span v-else class="t-caption">{{ $t('governance.noVotesYet') }}</span>
-          </div>
-
-          <!-- Focus areas. The whole column is hidden when action types are not
-               loaded: inventing a category from a proposal id is not an option. -->
-          <div v-if="focusAvailable" class="drep-directory__col-focus">
-            <span v-for="area in row.focus" :key="area.type" class="t-caption drep-directory__chip">
-              {{ area.label }}
-            </span>
-          </div>
-
-          <!-- Power + action -->
-          <div class="drep-directory__col-power drep-directory__power">
-            <span class="drep-directory__power-figures">
+            <!-- Voting power -->
+            <div role="cell" class="drep-directory__col-power">
               <span class="t-body-lg g-num">{{ row.power }}</span>
               <span v-if="row.inflow" class="t-caption g-num delta-up">{{ row.inflow }}</span>
-            </span>
-            <GButton
-              tier="secondary"
-              compact
-              :disabled="row.isCurrent"
-              :loading="building === row.id"
-              @click="onDelegate(row.record)"
-            >
-              {{ row.isCurrent ? $t('governance.delegated') : $t('governance.delegate') }}
-            </GButton>
+            </div>
+
+            <!-- Action zone. Separated from the data columns by a hairline so the
+                 delegate control reads as an action on the row, not a figure in
+                 it. -->
+            <div role="cell" class="drep-directory__col-action">
+              <GButton
+                tier="secondary"
+                compact
+                :disabled="row.isCurrent"
+                :loading="building === row.id"
+                @click="onDelegate(row.record)"
+              >
+                {{ row.isCurrent ? $t('governance.delegated') : $t('governance.delegate') }}
+              </GButton>
+            </div>
           </div>
         </div>
       </div>
@@ -258,7 +295,15 @@ import {
   epochInflow,
 } from '@/shared/utils/drepView';
 import { parseDRepId, sameDRep, toCip129 } from '@/shared/utils/drepId';
-import { compareLovelace, toLovelace } from '@/shared/utils/lovelace';
+import { toLovelace } from '@/shared/utils/lovelace';
+import {
+  ariaSortFor,
+  DEFAULT_SORT,
+  nextSort,
+  sortDirectory,
+  type SortDir,
+  type SortKey,
+} from '@/modules/governance/views/drepDirectory.sort';
 import { formatInt } from '@/shared/utils/format';
 import filters from '@/shared/utils/filters';
 import networks from '@/utils/networks';
@@ -285,18 +330,30 @@ import { useDRepDelegation, type PredefinedDRep } from '@/modules/governance/com
  * every column is a fact off `/api/dreps` run through `drepStats` — never an
  * opinion. Three neutrality rules shape the code:
  *
- *  - The default order is PARTICIPATION. Voting power is one option among five
- *    and is only ever applied because the user clicked it.
+ *  - The default order is PARTICIPATION, descending. Voting power is one
+ *    sortable column among five and is only ever applied because the user
+ *    clicked its header.
  *  - Ordering is applied to the loaded page, client side, with a BigInt
  *    comparator for power. Ties break on the DRep credential, never on power, so
  *    a tie can never quietly become a power ranking.
- *  - A statistic the data cannot support renders as "pending", not as 0. The
- *    focus-area column disappears entirely when governance actions are not
- *    loaded rather than showing an empty category.
+ *  - A statistic the data cannot support renders as "pending", not as 0, and
+ *    sorts LAST in both directions — unknown is not "worst". The focus-area
+ *    column disappears entirely when governance actions are not loaded rather
+ *    than showing an empty category.
+ *
+ * Sorting lives on the column headers rather than in a pill row above them: one
+ * control instead of two, and the direction is visible where the figures are.
  */
 
-const SORT_OPTIONS = ['participation', 'power', 'rationale', 'delegators', 'recent'] as const;
-type SortKey = (typeof SORT_OPTIONS)[number];
+interface Column {
+  key: string;
+  /** i18n key for the header label. */
+  label: string;
+  /** null for a column that carries no orderable figure. */
+  sort: SortKey | null;
+  /** Must match the class on the matching row cell — one grid, two elements. */
+  cls: string;
+}
 
 const PREDEFINED = [
   {
@@ -333,7 +390,8 @@ const page = ref(1);
 const totalItems = ref<number | null>(null);
 const totalPages = ref(1);
 const search = ref('');
-const sortKey = ref<SortKey>('participation');
+const sortKey = ref<SortKey>(DEFAULT_SORT.key);
+const sortDir = ref<SortDir>(DEFAULT_SORT.dir);
 const matchOpen = ref(false);
 
 const actionsState = governanceActionsStore.state;
@@ -420,6 +478,8 @@ interface DirectoryRow {
   focus: { type: string; label: string }[];
   power: string;
   inflow: string | null;
+  /** Short local date of the newest vote, or null when there is none. */
+  lastVote: string | null;
 }
 
 function typeLabel(type: string): string {
@@ -431,6 +491,16 @@ function typeLabel(type: string): string {
 function ada(value: bigint): string {
   const wallet = walletStore.loggedWallet;
   return toCurrency(value.toString(), false, 2, networks.resolveCurrencySymbol(wallet?.chain, wallet?.network), '', true);
+}
+
+/**
+ * `block_time` is unix SECONDS upstream (useDelegationHealth compares it against
+ * `nowSec` directly). Rendered short and locale-aware; the column sorts on the
+ * raw timestamp, never on this string.
+ */
+function lastVoteLabel(blockTime: number | null): string | null {
+  if (blockTime === null || !Number.isFinite(blockTime)) return null;
+  return new Date(blockTime * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 const enriched = computed<DirectoryRow[]>(() =>
@@ -464,56 +534,43 @@ const enriched = computed<DirectoryRow[]>(() =>
           .map(area => ({ type: area.type, label: typeLabel(area.type) })),
         power: ada(stats.votingPower),
         inflow: inflow !== null && inflow > 0n ? `+${ada(inflow)}` : null,
+        lastVote: lastVoteLabel(stats.lastVoteBlockTime),
       } as DirectoryRow;
     })
     .filter((row): row is DirectoryRow => row !== null),
 );
 
+const rows = computed<DirectoryRow[]>(() =>
+  sortDirectory(enriched.value, { key: sortKey.value, dir: sortDir.value }),
+);
+
 /**
- * Descending by a nullable number, with unknowns LAST and a neutral tie-break.
- * "Pending" is not "worst" — it is unknown, so it never displaces a real figure,
- * and equal figures fall back to the credential rather than to voting power.
+ * Header order. The focus column only exists when action types are loaded, and
+ * the grid track list is switched by the same condition, so the two cannot
+ * drift. Voting power is a column like any other: never the arriving order.
  */
-function byValueDesc(rows: DirectoryRow[], value: (row: DirectoryRow) => number | null): DirectoryRow[] {
-  return [...rows].sort((a, b) => {
-    const av = value(a);
-    const bv = value(b);
-    if (av === null && bv === null) return a.key.localeCompare(b.key);
-    if (av === null) return 1;
-    if (bv === null) return -1;
-    if (av === bv) return a.key.localeCompare(b.key);
-    return bv - av;
-  });
+const columns = computed<Column[]>(() => [
+  { key: 'participation', label: 'governance.colParticipation', sort: 'participation', cls: 'drep-directory__col-stat' },
+  { key: 'rationale', label: 'governance.colRationale', sort: 'rationale', cls: 'drep-directory__col-stat' },
+  { key: 'pattern', label: 'governance.colVotePattern', sort: null, cls: 'drep-directory__col-pattern' },
+  ...(focusAvailable.value
+    ? [{ key: 'focus', label: 'governance.colFocusAreas', sort: null, cls: 'drep-directory__col-focus' } as Column]
+    : []),
+  { key: 'delegators', label: 'governance.delegators', sort: 'delegators', cls: 'drep-directory__col-num' },
+  { key: 'lastVote', label: 'governance.lastVote', sort: 'lastVote', cls: 'drep-directory__col-num' },
+  { key: 'power', label: 'governance.votingPower', sort: 'power', cls: 'drep-directory__col-power' },
+]);
+
+/** `aria-sort` for one column: only the active one carries a direction. */
+function ariaSort(key: SortKey): 'ascending' | 'descending' | 'none' {
+  return ariaSortFor({ key: sortKey.value, dir: sortDir.value }, key);
 }
 
-const rows = computed<DirectoryRow[]>(() => {
-  const list = enriched.value;
-  switch (sortKey.value) {
-    case 'power':
-      // BigInt comparator: Number() on lovelace is lossy above 2^53.
-      return [...list].sort(
-        (a, b) => compareLovelace(b.stats.votingPower, a.stats.votingPower) || a.key.localeCompare(b.key),
-      );
-    case 'rationale':
-      return byValueDesc(list, row => row.stats.rationaleRate.pct);
-    case 'delegators':
-      return byValueDesc(list, row => row.stats.delegatorCount);
-    case 'recent':
-      return byValueDesc(list, row => row.stats.lastVoteBlockTime);
-    case 'participation':
-    default:
-      return byValueDesc(list, row => row.stats.participation.pct);
-  }
-});
-
-function sortLabel(option: SortKey): string {
-  return String(t(`governance.sort.${option}`));
-}
-
-function onSort(next: SortKey | undefined): void {
-  // v-chip-group clears its value when the active chip is clicked again; the
-  // list must always have an order, so fall back to the neutral default.
-  sortKey.value = next ?? 'participation';
+/** Clicking a header. The whole rule lives in `nextSort` — see drepDirectory.sort.ts. */
+function toggleSort(key: SortKey): void {
+  const next = nextSort({ key: sortKey.value, dir: sortDir.value }, key);
+  sortKey.value = next.key;
+  sortDir.value = next.dir;
 }
 
 // ---------------------------------------------------------------------------
@@ -780,22 +837,29 @@ onUnmounted(() => {
   margin: 0;
   max-width: 62ch;
 }
-.drep-directory__header-side {
-  display: flex;
-  align-items: center;
-  gap: var(--g-s-2);
-}
 .drep-directory__search {
-  width: 260px;
+  width: 300px;
+  flex: none;
 }
-.drep-directory__sort {
+/* The match CTA gets its own line and its own prompt. Beside the search field it
+   read as the field's submit button, which is the one thing it must not be. */
+.drep-directory__match {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--g-s-3);
   flex-wrap: wrap;
+  padding-bottom: var(--g-s-2);
+  border-bottom: 1px solid var(--g-hairline-1);
 }
-.drep-directory__sort-label {
-  flex-shrink: 0;
+.drep-directory__match-prompt {
+  color: var(--g-text-2);
+}
+.drep-directory__table {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-s-2);
+  min-width: 0;
 }
 .drep-directory__columns {
   display: grid;
@@ -803,6 +867,38 @@ onUnmounted(() => {
   align-items: center;
   gap: var(--g-s-3);
   padding: 0 var(--g-s-4);
+}
+/* Sortable header. A real button, so the baseline focus ring applies and no
+   outline is cleared anywhere in this file. */
+.drep-directory__sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--g-s-1);
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  text-align: inherit;
+}
+.drep-directory__sort:hover:not(.drep-directory__sort--active) {
+  color: var(--g-text-2);
+}
+.drep-directory__sort--active {
+  color: var(--g-accent);
+}
+.drep-directory__sort-glyph {
+  line-height: 1;
+}
+/* Right-aligned headers sit over right-aligned figures. */
+.drep-directory__col-num,
+.drep-directory__col-power {
+  text-align: right;
+}
+.drep-directory__col-num .drep-directory__sort,
+.drep-directory__col-power .drep-directory__sort {
+  justify-content: flex-end;
+  width: 100%;
 }
 .drep-directory__rows {
   display: flex;
@@ -818,20 +914,43 @@ onUnmounted(() => {
   border-radius: var(--g-r-card);
 }
 /* One column definition for the header and the rows, so they cannot drift.
-   The focus column only exists when governance action types are loaded, so the
-   track list is switched by a class rather than inferred from the DOM. */
+   Every track is fixed or fractional (never `auto`): the header and the rows are
+   two separate grids, so an auto track would size differently in each and the
+   columns would no longer line up. The focus column only exists when governance
+   action types are loaded, so the track list is switched by a class rather than
+   inferred from the DOM. */
 .drep-directory__columns,
 .drep-directory__row {
-  --drep-cols: minmax(0, 2.6fr) 96px 96px 148px minmax(0, 1.4fr);
+  --drep-cols: minmax(0, 2.3fr) 92px 80px 116px 76px 76px minmax(0, 1.1fr) 124px;
 }
 .drep-directory__grid--focus {
-  --drep-cols: minmax(0, 2.2fr) 96px 96px 148px minmax(0, 1fr) minmax(0, 1.4fr);
+  --drep-cols: minmax(0, 2fr) 92px 80px 116px minmax(0, 0.9fr) 76px 76px minmax(0, 1.1fr) 124px;
 }
-@media (max-width: 1100px) {
+@media (max-width: 1180px) {
+  /* The header stops being a grid and becomes the page's sort strip: the
+     sortable headers are the only sort control, so they must survive the
+     collapse even though the columns they label do not. */
   .drep-directory__columns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--g-s-3);
+    padding: 0;
+  }
+  .drep-directory__columns .drep-directory__col-name,
+  .drep-directory__columns .drep-directory__col-pattern,
+  .drep-directory__columns .drep-directory__col-focus,
+  .drep-directory__columns .drep-directory__col-action {
     display: none;
   }
-  .drep-directory__columns,
+  .drep-directory__columns .drep-directory__col-num,
+  .drep-directory__columns .drep-directory__col-power {
+    text-align: left;
+    align-items: flex-start;
+  }
+  .drep-directory__columns .drep-directory__sort {
+    width: auto;
+    justify-content: flex-start;
+  }
   .drep-directory__row,
   .drep-directory__grid--focus {
     --drep-cols: minmax(0, 1fr);
@@ -951,16 +1070,23 @@ onUnmounted(() => {
   border: 1px solid var(--g-hairline-1);
   color: var(--g-text-2);
 }
-.drep-directory__power {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--g-s-3);
-}
-.drep-directory__power-figures {
+.drep-directory__col-num,
+.drep-directory__col-power {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  gap: var(--g-s-1);
+  min-width: 0;
+}
+/* The action zone. A hairline and its own padding put the delegate control
+   visually outside the data columns while keeping it on the row. */
+.drep-directory__row .drep-directory__col-action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  align-self: stretch;
+  padding-left: var(--g-s-4);
+  border-left: 1px solid var(--g-hairline-1);
 }
 .drep-directory__predefined {
   display: grid;
