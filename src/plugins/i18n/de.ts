@@ -3913,6 +3913,7 @@ export default {
   'search.nftCollections': 'NFT-Sammlungen',
   'search.contacts': 'Kontakte',
   'search.settings': 'Einstellungen',
+  'search.pages': 'Seiten',
   'search.noResults': 'Keine Ergebnisse gefunden',
   'search.searching': 'Suche läuft...',
   'search.pressEsc': 'Drücke Esc zum Schließen',
