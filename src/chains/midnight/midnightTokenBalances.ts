@@ -18,22 +18,23 @@ import type { MidnightUnshieldedUtxo } from './midnightTypes';
  * check is deliberately loose: it accepts an all-zero string of ANY length,
  * not just the canonical 64 hex chars.
  *
- * This is the LOOSE predicate, and only two call sites import and use it
- * directly: `midnight-sync.service.ts`'s CATCH_UP snapshot re-sum (~line 460)
- * and `midnightStore.ts`'s `applyUtxoDeltas` `isNight` closure (~line 957).
+ * This is the LOOSE predicate. Three call sites import and use it directly:
+ * `midnight-sync.service.ts`'s CATCH_UP snapshot re-sum (~line 460),
+ * `midnightStore.ts`'s `applyUtxoDeltas` `isNight` closure (~line 957), and
+ * `background.ts`'s DApp-facing `getUnshieldedBalances` handler (~line 5311)
+ * — the latter switched from its own strict inline copy so that its NIGHT
+ * sum and its `midnightTokenBalances()` call partition the UTxO set with no
+ * gap (an all-zero color of non-canonical length used to satisfy neither).
  *
- * Three OTHER call sites still keep their own STRICT inline copy —
+ * Two OTHER call sites still keep their own STRICT inline copy —
  * `tt === '' || tt === NIGHT_TOKEN_TYPE_NULL` (exactly 64 zeros) — and do
  * NOT import this function:
  *   - `midnight-sync.service.ts`'s counterparty selection (~line 533)
  *   - `midnight-sync.service.ts`'s `sumOutputsForOwner` (~line 590), which
  *     feeds tx amount + send/receive classification
- *   - `background.ts`'s DApp-facing `getUnshieldedBalances` handler
- *     (~line 5308) — load-bearing there since `midnightStore.utxos` now
- *     holds every color, not just NIGHT
  *
- * This loose/strict split across five copies is PRE-EXISTING and NOT
- * resolved by this module. Unifying the three strict sites onto
+ * This loose/strict split across four copies is PRE-EXISTING and NOT
+ * resolved by this module. Unifying the two remaining strict sites onto
  * `isNativeNight` is a separate change with its own blast radius (it would
  * also start accepting non-canonical-length all-zero strings at those
  * sites, which hasn't been evaluated) — do not assume they agree, and do

@@ -45,7 +45,7 @@
         </div>
         <div v-if="item.breakdownText" class="breakdown-row">
           <span class="t-caption g-num">{{ item.breakdownText }}</span>
-          <v-tooltip v-if="convertEnabled" top content-class="custom-tooltip" max-width="220">
+          <v-tooltip v-if="convertEnabled && item.canConvert" top content-class="custom-tooltip" max-width="220">
             <template v-slot:activator="{ on, attrs }">
               <button
                 type="button"
@@ -182,6 +182,13 @@ interface MidnightHoldingRow {
   iconColor: string;
   /** Brand logo (takes precedence over the mdi icon when set). */
   image?: string;
+  /**
+   * Whether this row may show the shield/convert CTA. `convertEnabled` is
+   * row-independent (a feature flag), so without this every row with a
+   * non-empty `breakdownText` — including "Unknown token" rows — would show
+   * a NIGHT-only Convert action. Only the NIGHT row sets this true.
+   */
+  canConvert?: boolean;
 }
 
 // `nightRegistered` is a SUBSET of `nightUnshielded` (the portion registered
@@ -250,6 +257,7 @@ const rows = computed<MidnightHoldingRow[]>(() => [
     name: 'Midnight Native Token',
     balanceFormatted: `${formatBigDecimal(totalNight.value, NIGHT_DIVISOR, 2)} ${nightCurrency.value}`,
     breakdownText: breakdownText.value,
+    canConvert: true,
     price: hasNightPrice.value && nightFiat.usd.value ? formatPrice(nightFiat.usd.value) : '—',
     value: hasNightPrice.value ? formatUsd(nightValueUsd.value) : '—',
     change24h: hasNightPrice.value && nightFiat.change24h.value !== null

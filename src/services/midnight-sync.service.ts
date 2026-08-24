@@ -420,7 +420,13 @@ class MidnightSyncService {
           // enqueue a removal without an intentHash, that entry could never
           // be targeted for removal again.
           const intentHash = o.intentHash ?? o.intent_hash ?? '';
-          if (!intentHash) continue;
+          if (!intentHash) {
+            // Unproven premise: no in-repo fixture confirms `intent_hash` is
+            // always present in the wire payload. Log so a real drop is
+            // observable instead of silent — owner truncated, no key material.
+            debugLog(`🌙 Midnight delta: created output missing intentHash, skipped — owner=${o.owner.slice(0, 12)}… tokenType=${o.tokenType ?? o.token_type ?? ''}`);
+            continue;
+          }
           // Admit every token color, matching the CATCH_UP snapshot path
           // (parseUtxos applies no token filter). Without this the delta path
           // removed spent token UTxOs but never re-added received ones, so

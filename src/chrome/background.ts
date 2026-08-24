@@ -5299,21 +5299,27 @@ app.add(MIDNIGHT_METHOD.getUnshieldedBalances, async (request, sendResponse) => 
   }
   // midnightStore.utxos now carries every token color the wallet holds — the
   // sync layer (midnight-sync.service.ts's CATCH_UP snapshot and per-tx delta
-  // paths) no longer filters non-native tokenTypes out. The strict native
-  // check below is therefore load-bearing: without it a dapp's "NIGHT"
-  // balance would pick up USDM or any other token the wallet holds. Do not
-  // remove it as redundant. It also normalizes an empty tokenType (Gero's
-  // internal "native NIGHT" convention) to the canonical 32-byte-zero hex a
-  // dapp checking nativeToken().raw would expect.
+  // paths) no longer filters non-native tokenTypes out. The check below is
+  // deliberately the LOOSE native-NIGHT predicate (any all-zero tokenType,
+  // not just the canonical 64-hex-zero string) — the same one
+  // `midnightTokenBalances()` uses below to decide what counts as a token —
+  // so NIGHT and the token map partition the UTxO set with no gap: an
+  // all-zero color of non-canonical length (e.g. 63 zeros, or `'0'`) would
+  // otherwise satisfy neither predicate and vanish from a dapp's view
+  // entirely. It still normalizes to the canonical 32-byte-zero hex a dapp
+  // checking nativeToken().raw would expect.
+  const { midnightTokenBalances, isNativeNight } = await import('@/chains/midnight/midnightTokenBalances');
   let night = 0n;
   for (const u of midnightStore.utxos) {
     const tt = u.tokenType ?? '';
-    if (tt === '' || tt === NIGHT_TOKEN_TYPE_NULL) night += u.value;
+    if (isNativeNight(tt)) night += u.value;
   }
   // Every non-native color the wallet holds, alongside NIGHT. Keys are the raw
   // 32-byte token colors; NIGHT is reported under the canonical zero key above.
-  const { midnightTokenBalances } = await import('@/chains/midnight/midnightTokenBalances');
-  const data: Record<string, string> = {};
+  // Null-prototype (not `{}`): mirrors the map `midnightTokenBalances()`
+  // returns, so a token color equal to `'__proto__'` can't hit
+  // Object.prototype's setter and get silently dropped from the response.
+  const data: Record<string, string> = Object.create(null);
   if (night > 0n) data[NIGHT_TOKEN_TYPE_NULL] = night.toString();
   for (const [color, amount] of Object.entries(midnightTokenBalances(midnightStore.utxos))) {
     data[color] = amount.toString();

@@ -937,10 +937,13 @@ export const midnightActions = {
    * `(intentHash, outputIndex)` — re-deliveries of the same tx during history
    * replay are no-ops on both the set and the derived balance.
    *
-   * Performance: O(|added| + |removed|), independent of the steady-state
-   * UTxO set size. A wallet with 50k lifetime txs replays in N×k ops, not
-   * N×|set| ops — the previous full re-sum would have been ~25M ops at
-   * |set|=500 vs ~50k here.
+   * Performance: O(|set| + |added| + |removed|) per call, NOT independent of
+   * the steady-state UTxO set size — `byKey` below is rebuilt from the
+   * ENTIRE current `midnightStore.utxos` on every invocation (and written
+   * back in full at the end), so every transaction applied pays a
+   * map-rebuild proportional to |set| on top of the delta work itself.
+   * Deltas are applied per-transaction (see midnight-sync.service.ts), so a
+   * batch of N txs against a |set|=500 wallet costs N×500+ ops, not N×k.
    */
   applyUtxoDeltas(deltas: {
     added: MidnightUnshieldedUtxo[];
