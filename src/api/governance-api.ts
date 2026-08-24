@@ -2,6 +2,7 @@ import axios from 'axios';
 import { parseHttpError } from '@/shared/utils/parser';
 import { bigJsonTransform } from '@/api/bigJson';
 import { parseGovActionId } from '@/shared/utils/govActionId';
+import { normalizeProposal, normalizeVote } from '@/api/govVocabulary';
 import type {
   Committee,
   Constitution,
@@ -75,7 +76,9 @@ export default {
 
     try {
       const { data, status } = await governanceAxiosInstance.get('/api/governance/proposals', { params: query });
-      if (status === 200) return data;
+      // Vocabulary is normalised HERE, at the boundary, so no component, store
+      // or spec has to know which projection answered. See govVocabulary.
+      if (status === 200) return { ...data, items: (data?.items ?? []).map(normalizeProposal) };
       throw parseHttpError(data);
     } catch (error) {
       throw parseHttpError(error);
@@ -88,7 +91,7 @@ export default {
       const { data, status } = await governanceAxiosInstance.get(`/api/governance/proposals/${txHash}/${index}`, {
         params: { network: toNexusNetwork(network) },
       });
-      if (status === 200) return data;
+      if (status === 200) return normalizeProposal(data);
       throw parseHttpError(data);
     } catch (error) {
       if (isNotFound(error)) return null;
@@ -108,7 +111,7 @@ export default {
         `/api/governance/proposals/${txHash}/${index}/votes`,
         { params: { network: toNexusNetwork(network), page, pageSize } }
       );
-      if (status === 200) return data;
+      if (status === 200) return { ...data, items: (data?.items ?? []).map(normalizeVote) };
       throw parseHttpError(data);
     } catch (error) {
       throw parseHttpError(error);
