@@ -243,74 +243,115 @@
                   </div>
                 </div>
 
-                <!-- Hosting: the wallet builds and hashes, the user hosts. -->
+                <!-- Hosting.
+                     Presented as an ordered list because it IS one, and because
+                     ONE OF THE STEPS HAPPENS OUTSIDE THIS APP. Laid out flat,
+                     the four controls read as unrelated widgets, and the largest
+                     thing on screen was the metadata hash — the one item with
+                     nothing to do attached to it. The hash is now a footnote to
+                     step 1, which is what it is: the fingerprint of the bytes
+                     that button hands over. -->
                 <div class="become-drep__hosting">
                   <div class="become-drep__panel-head">
                     <h3 class="t-body-lg">{{ $t('governance.drepHostingStep') }}</h3>
                     <p class="t-body-sm">{{ $t('governance.drepHostingStepHint') }}</p>
                   </div>
 
-                  <div class="become-drep__hosting-row">
-                    <GButton tier="secondary" compact @click="downloadDocument()">
-                      <v-icon left size="16">mdi-download</v-icon>
-                      {{ $t('governance.drepDownloadFile') }}
-                    </GButton>
-                    <CopyButton small :value="anchor.text" />
-                    <span class="t-caption">{{ $t('governance.metadataDocument') }}</span>
-                  </div>
+                  <ol class="become-drep__host-steps">
+                    <!-- 1. Get the bytes -->
+                    <li class="become-drep__host-step">
+                      <span class="become-drep__host-num" aria-hidden="true">1</span>
+                      <div class="become-drep__host-body">
+                        <span class="t-body-sm become-drep__host-title">{{ $t('governance.drepHostStepDownload') }}</span>
+                        <div class="become-drep__hosting-row">
+                          <GButton tier="secondary" compact @click="downloadDocument()">
+                            <v-icon left size="16">mdi-download</v-icon>
+                            {{ $t('governance.drepDownloadFile') }}
+                          </GButton>
+                          <CopyButton small :value="anchor.text" />
+                          <span class="t-caption">{{ $t('governance.drepHostStepDownloadCopy') }}</span>
+                        </div>
+                        <!-- Demoted to a detail: it is a cross-check value, not
+                             a task. Open it to compare against gov.tools later. -->
+                        <details class="become-drep__fingerprint">
+                          <summary class="t-caption become-drep__fingerprint-summary">
+                            {{ $t('governance.drepFingerprintLabel') }}
+                            <span class="g-mono">{{ shortHash }}</span>
+                          </summary>
+                          <span class="t-caption g-mono become-drep__hash-value">
+                            {{ anchor.hash }}<CopyButton x-small :value="anchor.hash" />
+                          </span>
+                          <span class="t-caption">{{ $t('governance.drepFingerprintHint') }}</span>
+                        </details>
+                      </div>
+                    </li>
 
-                  <div class="become-drep__hash">
-                    <span class="t-label">{{ $t('governance.drepAnchorHash') }}</span>
-                    <span class="t-caption g-mono become-drep__hash-value">
-                      {{ anchor.hash }}<CopyButton x-small :value="anchor.hash" />
-                    </span>
-                  </div>
+                    <!-- 2. The step that is not in this app -->
+                    <li class="become-drep__host-step">
+                      <span class="become-drep__host-num" aria-hidden="true">2</span>
+                      <div class="become-drep__host-body">
+                        <span class="t-body-sm become-drep__host-title">
+                          {{ $t('governance.drepHostStepHost') }}
+                          <span class="t-caption become-drep__host-away">{{ $t('governance.drepHostStepAway') }}</span>
+                        </span>
+                        <p class="t-caption become-drep__host-note">{{ $t('governance.drepHostStepHostHint') }}</p>
+                      </div>
+                    </li>
 
-                  <v-text-field
-                    v-model="anchorUrl"
-                    outlined
-                    dense
-                    :label="$t('governance.drepAnchorUrl')"
-                    :hint="$t('governance.drepAnchorUrlHint')"
-                    :error-messages="anchorUrlError"
-                    persistent-hint
-                    @blur="touch('anchorUrl')"
-                  />
+                    <!-- 3. The link that goes on chain -->
+                    <li class="become-drep__host-step">
+                      <span class="become-drep__host-num" aria-hidden="true">3</span>
+                      <div class="become-drep__host-body">
+                        <span class="t-body-sm become-drep__host-title">{{ $t('governance.drepHostStepLink') }}</span>
+                        <v-text-field
+                          v-model="anchorUrl"
+                          outlined
+                          dense
+                          :label="$t('governance.drepAnchorUrl')"
+                          :hint="$t('governance.drepAnchorUrlHint')"
+                          :error-messages="anchorUrlError"
+                          persistent-hint
+                          @blur="touch('anchorUrl')"
+                        />
+                      </div>
+                    </li>
 
-                  <div class="become-drep__verify">
-                    <div class="become-drep__verify-head">
-                      <span class="t-label">{{ $t('governance.drepVerifyFile') }}</span>
-                      <v-tooltip bottom max-width="320">
-                        <template #activator="{ on, attrs }">
-                          <v-icon size="14" v-bind="attrs" v-on="on">mdi-information-outline</v-icon>
-                        </template>
-                        <span class="t-caption">{{ $t('governance.drepVerifyNoFetch') }}</span>
-                      </v-tooltip>
-                    </div>
-                    <p class="t-body-sm">{{ $t('governance.drepVerifyHint') }}</p>
-                    <div class="become-drep__hosting-row">
-                      <GButton tier="secondary" compact @click="pickFile()">
-                        <v-icon left size="16">mdi-file-upload-outline</v-icon>
-                        {{ $t('governance.drepVerifyUpload') }}
-                      </GButton>
-                      <span v-if="anchorVerified" class="t-body-sm become-drep__ok">
-                        <v-icon size="14" color="success">mdi-shield-check-outline</v-icon>
-                        {{ $t('governance.drepVerifyMatch') }}
-                      </span>
-                      <span v-else-if="verification" class="t-body-sm become-drep__bad">
-                        <v-icon size="14" color="error">mdi-alert-circle-outline</v-icon>
-                        {{ $t('governance.drepVerifyMismatch', { hash: verification.hash }) }}
-                      </span>
-                      <span v-else class="t-caption">{{ $t('governance.drepVerifyPending') }}</span>
-                    </div>
-                    <input
-                      ref="fileInput"
-                      type="file"
-                      accept=".json,.jsonld,application/json"
-                      class="become-drep__file-input"
-                      @change="onFileChosen"
-                    />
-                  </div>
+                    <!-- 4. Prove the hosted bytes still match -->
+                    <li class="become-drep__host-step">
+                      <span class="become-drep__host-num" aria-hidden="true">4</span>
+                      <div class="become-drep__host-body become-drep__verify">
+                        <span class="t-body-sm become-drep__host-title">{{ $t('governance.drepVerifyFile') }}</span>
+                        <p class="t-body-sm">{{ $t('governance.drepVerifyHint') }}</p>
+                        <!-- Out of the tooltip it was hiding in: "why does it not
+                             just open my link" is the first question this step
+                             raises, and the answer is the reason for the upload. -->
+                        <p class="t-caption become-drep__host-note">{{ $t('governance.drepVerifyNoFetch') }}</p>
+                        <p class="t-caption become-drep__host-note">{{ $t('governance.drepVerifyStakes') }}</p>
+                        <div class="become-drep__hosting-row">
+                          <GButton tier="secondary" compact @click="pickFile()">
+                            <v-icon left size="16">mdi-file-upload-outline</v-icon>
+                            {{ $t('governance.drepVerifyUpload') }}
+                          </GButton>
+                          <span v-if="anchorVerified" class="t-body-sm become-drep__ok">
+                            <v-icon size="14" color="success">mdi-shield-check-outline</v-icon>
+                            {{ $t('governance.drepVerifyMatch') }}
+                          </span>
+                          <span v-else-if="verification" class="t-body-sm become-drep__bad">
+                            <v-icon size="14" color="error">mdi-alert-circle-outline</v-icon>
+                            {{ $t('governance.drepVerifyMismatch', { hash: verification.hash }) }}
+                          </span>
+                          <span v-else class="t-caption">{{ $t('governance.drepVerifyPending') }}</span>
+                        </div>
+                        <input
+                          ref="fileInput"
+                          type="file"
+                          accept=".json,.jsonld,application/json"
+                          class="become-drep__file-input"
+                          @change="onFileChosen"
+                        />
+                      </div>
+                    </li>
+                  </ol>
                 </div>
 
                 <!-- Acknowledgements -->
@@ -586,6 +627,12 @@ const profileValid = computed(() => issues.value.length === 0);
 
 /** The document, its bytes and its hash, rebuilt on every keystroke. */
 const anchor = computed(() => buildCip119Anchor(profile));
+
+/** Enough of the hash to recognise it, for the collapsed summary line. */
+const shortHash = computed(() => {
+  const hash = anchor.value.hash;
+  return hash.length > 14 ? `${hash.slice(0, 6)}…${hash.slice(-4)}` : hash;
+});
 
 const touched = reactive<Record<string, boolean>>({});
 const showErrors = ref(false);
@@ -1269,6 +1316,74 @@ onMounted(loadRegistration);
   align-items: center;
   gap: var(--g-s-2);
   flex-wrap: wrap;
+}
+
+/* The sequence. A real <ol>, so the order is in the markup and not only in the
+   visual rhythm — assistive tech gets "list, 4 items" rather than four headings
+   that happen to sit near each other. */
+.become-drep__host-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-s-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.become-drep__host-step {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: var(--g-s-3);
+  align-items: start;
+}
+.become-drep__host-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--g-r-pill);
+  border: 1px solid var(--g-hairline-2);
+  background: var(--g-raised);
+  color: var(--g-text-2);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.become-drep__host-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-s-2);
+  min-width: 0;
+}
+.become-drep__host-title {
+  color: var(--g-text-1);
+  font-weight: 550;
+}
+/* The one step that is not in this app. Marked, not styled as an action, so it
+   is not mistaken for something to click. */
+.become-drep__host-away {
+  margin-left: var(--g-s-2);
+  padding: 2px var(--g-s-2);
+  border-radius: var(--g-r-pill);
+  border: 1px dashed var(--g-hairline-3);
+  color: var(--g-text-3);
+  white-space: nowrap;
+}
+.become-drep__host-note {
+  margin: 0;
+}
+/* Collapsed by default: a value to cross-check, never a task. */
+.become-drep__fingerprint {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-s-1);
+}
+.become-drep__fingerprint-summary {
+  cursor: pointer;
+  color: var(--g-text-3);
+}
+.become-drep__fingerprint-summary:hover {
+  color: var(--g-text-2);
 }
 
 .become-drep__hash {
