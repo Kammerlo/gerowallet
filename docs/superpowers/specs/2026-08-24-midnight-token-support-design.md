@@ -58,8 +58,15 @@ and the correction matters:
 - The **per-transaction delta path** then drops non-native creations while still processing
   non-native *removals* (the removal loop has no token filter, by design — `:393-401`).
 
-Net effect: token balances are seeded by a snapshot and then **decay monotonically toward zero over a
-live session** — spends are subtracted, receives are never added back until the next full snapshot.
+Net effect: the stored UTxO set is seeded by a snapshot and then **decays monotonically toward zero
+over a live session** — spends are subtracted, receives are never added back until the next full
+snapshot.
+
+Precision, so this is not overstated: today that decay is **not user-visible**, because nothing
+renders a non-NIGHT color — no `.vue` reads `tokenType`, and `midnightTokenBalances()` has no
+production caller yet. The corruption is real but latent. It matters because the UTxO set is the
+source of truth the display layer (Task 3) is about to start reading, so it must be correct *before*
+anything depends on it, not after.
 
 Two consequences for planning:
 

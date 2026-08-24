@@ -183,28 +183,32 @@ This makes the delta path agree with the snapshot path (which already admits eve
 - Modify: `src/stores/midnightStore.ts` (`isNight` local copy, ~`:956-959`)
 - Test: `src/chains/midnight/midnightTokenBalances.spec.ts` (extend)
 
-- [ ] **Step 1: Write the failing regression test**
+- [ ] **Step 1: Write the invariant test — it MUST drive the real store**
 
-Append to `src/chains/midnight/midnightTokenBalances.spec.ts`:
+> **Corrected 2026-08-24 after review.** The first version of this step asserted the invariant by
+> re-implementing the filter inside the test body (`set.filter(isNativeNight).reduce(...)`) and never
+> imported production code. It could not fail: deleting both real guards left it green. A test that
+> restates the implementation proves nothing. The replacement below drives
+> `midnightActions.applyUtxoDeltas` and asserts against the real store field.
 
-```ts
-describe('NIGHT balance isolation', () => {
-  it('a non-native color contributes nothing to a native-NIGHT sum', () => {
-    // Mirrors the filter both balance paths apply (delta path in
-    // midnightStore.applyUtxoDeltas, snapshot path in midnight-sync.service).
-    // If either drops its filter, USDM would inflate nightUnshielded.
-    const set = [utxo(NIGHT_ZERO, 100n, 0), utxo(USDM, 5000000n, 1), utxo('', 25n, 2)];
-    const night = set.filter(u => isNativeNight(u.tokenType)).reduce((s, u) => s + u.value, 0n);
-    expect(night).toBe(125n);
-    expect(midnightTokenBalances(set)).toEqual({ [USDM]: 5000000n });
-  });
-});
-```
+Feasibility is confirmed: `broadcastFromBackground` returns early when `context !== 'background'`
+(`midnightStore.ts:646`), vitest runs happy-dom so `getContextType()` returns `'content'`, and
+`src/stores/featureFlagsStore.spec.ts` is the in-repo precedent for importing a store directly.
 
-- [ ] **Step 2: Run it to confirm the invariant holds before the change**
+Write a test that:
+- imports `midnightStore` and `midnightActions` from `@/stores/midnightStore`,
+- resets store state first so it does not depend on execution order,
+- calls `applyUtxoDeltas` with an `added` array mixing a native-NIGHT UTxO and a USDM UTxO,
+- asserts `midnightStore.balances.nightUnshielded` equals **only** the NIGHT value.
 
-Run: `npx vitest run src/chains/midnight/midnightTokenBalances.spec.ts`
-Expected: PASS — 8 tests. (This test guards the invariant; it passes before and after, and fails if someone later widens a balance filter.)
+- [ ] **Step 2: Prove the test is not theatre**
+
+Temporarily delete the `if (isNight(u))` guard at `midnightStore.ts:983`. Run
+`npx vitest run src/chains/midnight/midnightTokenBalances.spec.ts` and confirm the new test goes
+**RED**. Restore the guard and confirm **GREEN**. Record both observations.
+
+A test guarding a twice-regressed money field is worth only as much as its demonstrated ability to
+fail. If it stays green with the guard removed, it is still theatre — iterate until it fails.
 
 - [ ] **Step 3: Remove the ingest gate**
 
