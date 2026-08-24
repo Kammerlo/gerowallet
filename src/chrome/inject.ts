@@ -33,6 +33,7 @@ import {
 import { Cardano, CollateralParams, Extensions, Paginate } from '@/models/types';
 import { Cardano as CardanoCore } from '@cardano-sdk/core';
 import { GERO_CARDANO_ICON } from './injectIcon';
+import { CHROME_WEB_STORE_URL } from '@/config/storeLinks';
 // Installs window.midnight[uuid] as a side effect of import (see file).
 import './injectMidnight';
 
@@ -50,63 +51,75 @@ declare global {
 const BITCOIN_DAPP_ENABLED = false;
 
 // CIP-30
-window.cardano = {
-  ...(window.cardano||{}),
-  gerowallet: {
-    async enable(extensions: Extensions): Promise<any> {
-      const enabled = await enable();
-      if (enabled) {
-        const cip30 = {
-          getCollateral: (params?: CollateralParams) => getCollateral(params),
-          getBalance: () => getBalance(),
-          getChangeAddress: () => getAddress(),
-          getExtensions: () => [{ cip: 30 },{ cip: 95 }, { cip: 104 }],
-          getNetworkId: () => getNetworkId(),
-          getRewardAddresses: () => getRewardAddresses(),
-          getUnusedAddresses: () => getUnusedAddresses(),
-          getUsedAddresses: (paginate?: Paginate) => getUsedAddresses(paginate),
-          getUtxos: (amount?: string, paginate?: Paginate) => getUtxos(amount, paginate),
-          signData: (address: CardanoCore.PaymentAddress | CardanoCore.RewardAccount | string, payload: string) => signData(address, payload),
-          signTx: (tx: string, partialSign: boolean) => signTx(tx, partialSign),
-          submitTx: (tx: string) => submitTx(tx),
-        }
-        if (extensions?.extensions?.find(e => e.cip == 95)) {
-          cip30['cip95'] = {
-            getPubDRepKey: () => getPubDRepKey(),
-            getRegisteredPubStakeKeys: () => getRegisteredPubStakeKeys(),
-            getUnregisteredPubStakeKeys: () => getUnregisteredPubStakeKeys(),
-            signTx: (tx: string, partialSign: boolean) => signTx(tx, partialSign),
-            signData: (address: CardanoCore.PaymentAddress | CardanoCore.RewardAccount | string, payload: string) => signData(address, payload),
-          }
-        }
-        if (extensions?.extensions?.find(e => e.cip == 104)) {
-          cip30['cip104'] = {
-            getAccountPub: () => getAccountPub()
-          }
-        }
-        if (extensions?.extensions?.find(e => e.cip == 142)) {
-          cip30['cip142'] = {
-            getNetworkMagic: () => getNetworkMagic()
-          }
-        }
-        return cip30
+// Brave Wallet defines `window.cardano` as a read-only, non-configurable
+// window property for its built-in Cardano provider, so reassigning the
+// binding throws in strict mode (which killed this entire script and left
+// Gero missing from window.cardano on Brave). The provider object itself is
+// extensible, so register in place and only assign the binding when absent.
+const geroCardanoProvider = {
+  async enable(extensions: Extensions): Promise<any> {
+    const enabled = await enable();
+    if (enabled) {
+      const cip30 = {
+        getCollateral: (params?: CollateralParams) => getCollateral(params),
+        getBalance: () => getBalance(),
+        getChangeAddress: () => getAddress(),
+        getExtensions: () => [{ cip: 30 },{ cip: 95 }, { cip: 104 }],
+        getNetworkId: () => getNetworkId(),
+        getRewardAddresses: () => getRewardAddresses(),
+        getUnusedAddresses: () => getUnusedAddresses(),
+        getUsedAddresses: (paginate?: Paginate) => getUsedAddresses(paginate),
+        getUtxos: (amount?: string, paginate?: Paginate) => getUtxos(amount, paginate),
+        signData: (address: CardanoCore.PaymentAddress | CardanoCore.RewardAccount | string, payload: string) => signData(address, payload),
+        signTx: (tx: string, partialSign: boolean) => signTx(tx, partialSign),
+        submitTx: (tx: string) => submitTx(tx),
       }
-      return null;
-    },
-    async isEnabled(): Promise<boolean> {
-      return isEnabled()
-    },
-    apiVersion: '2.0.0',
-    name: 'GeroWallet',
-    supportedExtensions: [
-      { cip: 30 },
-      { cip: 95 },
-      { cip: 104 },
-      { cip: 142 }
-    ],
-    icon: GERO_CARDANO_ICON,
+      if (extensions?.extensions?.find(e => e.cip == 95)) {
+        cip30['cip95'] = {
+          getPubDRepKey: () => getPubDRepKey(),
+          getRegisteredPubStakeKeys: () => getRegisteredPubStakeKeys(),
+          getUnregisteredPubStakeKeys: () => getUnregisteredPubStakeKeys(),
+          signTx: (tx: string, partialSign: boolean) => signTx(tx, partialSign),
+          signData: (address: CardanoCore.PaymentAddress | CardanoCore.RewardAccount | string, payload: string) => signData(address, payload),
+        }
+      }
+      if (extensions?.extensions?.find(e => e.cip == 104)) {
+        cip30['cip104'] = {
+          getAccountPub: () => getAccountPub()
+        }
+      }
+      if (extensions?.extensions?.find(e => e.cip == 142)) {
+        cip30['cip142'] = {
+          getNetworkMagic: () => getNetworkMagic()
+        }
+      }
+      return cip30
+    }
+    return null;
   },
+  async isEnabled(): Promise<boolean> {
+    return isEnabled()
+  },
+  apiVersion: '2.0.0',
+  name: 'GeroWallet',
+  supportedExtensions: [
+    { cip: 30 },
+    { cip: 95 },
+    { cip: 104 },
+    { cip: 142 }
+  ],
+  icon: GERO_CARDANO_ICON,
 };
+
+try {
+  const cardano = window.cardano ?? ({} as Cardano);
+  cardano.gerowallet = geroCardanoProvider;
+  if (window.cardano !== cardano) {
+    window.cardano = cardano;
+  }
+} catch (e) {
+  console.warn('[Gero] failed to register window.cardano.gerowallet:', e);
+}
 
 // ====== Bitcoin Event System ======
 const _btcEventListeners: Record<string, Set<Function>> = {};
@@ -349,7 +362,7 @@ if (BITCOIN_DAPP_ENABLED) (function _registerBtcProvider() {
     name: 'Gero Wallet',
     icon: _geroWalletStandard.icon,
     webUrl: 'https://gerowallet.io',
-    chromeWebStoreUrl: 'https://chromewebstore.google.com/detail/gero-dashboard/iifeegfcfhlhhnilnggaopkpegobafdn',
+    chromeWebStoreUrl: CHROME_WEB_STORE_URL,
     mozillaAddOnsUrl: null,
   };
   if (!Array.isArray((window as any).btc_providers)) {

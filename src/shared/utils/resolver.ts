@@ -5,7 +5,7 @@ import { isNotNil } from '@cardano-sdk/util';
 import { Hash28ByteBase16, Bip32PrivateKey } from '@cardano-sdk/crypto';
 import TokenMetadataStore from '@/stores/tokenMetadataStore';
 import NetworkStore from '@/stores/networkStore';
-import { CID } from 'multiformats/cid';
+import { resolveIconUrl, type IconPlaceholders } from '@/shared/utils/iconResolver';
 import * as bip39 from 'bip39';
 import { Buffer } from 'buffer';
 import { HARDENED, ChainDerivations, Keys } from '@/models/types';
@@ -14,85 +14,22 @@ import assetsModule from '@/utils/assets';
 
 // Service worker compatible icon resolution
 const isServiceWorker = typeof document === 'undefined';
-const baseUrl = import.meta.env['VITE_BACKEND_URL'];
 
 // Import assets from a centralized location (static import)
 // In service worker context, these will be empty strings and the bundler will tree-shake the unused module
-const greenSvg = isServiceWorker ? '' : assetsModule.greenSvg;
-const purpleSvg = isServiceWorker ? '' : assetsModule.purpleSvg;
-const pinkSvg = isServiceWorker ? '' : assetsModule.pinkSvg;
-const orangeSvg = isServiceWorker ? '' : assetsModule.orangeSvg;
-const yellowSvg = isServiceWorker ? '' : assetsModule.yellowSvg;
-const blueSvg = isServiceWorker ? '' : assetsModule.blueSvg;
-const greySvg = isServiceWorker ? '' : assetsModule.greySvg;
-const errorImage = isServiceWorker ? '' : assetsModule.errorImage;
-
-function detectCIDVersion(cidStr: string) {
-  try {
-    const cid = CID.parse(cidStr);
-    return cid.version; // 0, 1, or 2
-  } catch (e) {
-    return null; // Not a valid CID
-  }
-}
+const placeholders: IconPlaceholders = {
+  greenSvg: isServiceWorker ? '' : assetsModule.greenSvg,
+  purpleSvg: isServiceWorker ? '' : assetsModule.purpleSvg,
+  pinkSvg: isServiceWorker ? '' : assetsModule.pinkSvg,
+  orangeSvg: isServiceWorker ? '' : assetsModule.orangeSvg,
+  yellowSvg: isServiceWorker ? '' : assetsModule.yellowSvg,
+  blueSvg: isServiceWorker ? '' : assetsModule.blueSvg,
+  greySvg: isServiceWorker ? '' : assetsModule.greySvg,
+  errorImage: isServiceWorker ? '' : assetsModule.errorImage,
+};
 
 export function resolveIcon(icon: string): string {
-  if (!icon) {
-    return errorImage;
-  }
-
-  if (icon.startsWith('http') || icon.startsWith('data:')) {
-    return icon;
-  } else if (icon.startsWith('ar://') || icon.startsWith('ar/')) {
-    return `${baseUrl}/api/ar/${icon.replace('ar://', '').replace('ar/', '')}`
-  } else if (icon.startsWith('ipfs://') || icon.startsWith('ipfs/')) {
-    return `${baseUrl}/api/ipfs?path=${icon.replace('ipfs://', '').replace('ipfs/', '')}`
-  } else if (detectCIDVersion(icon) != null) {
-    return `${baseUrl}/api/ipfs?path=${icon}`
-  }
-
-  switch (icon) {
-    case 'green':
-    case 'teal':
-      return greenSvg;
-    case 'yellow':
-      return yellowSvg;
-    case 'purple':
-    case 'deep-purple':
-      return purpleSvg;
-    case 'pink':
-      return pinkSvg;
-    case 'orange':
-    case 'chocolate':
-      return orangeSvg;
-    case 'blue':
-    case 'cyan':
-      return blueSvg;
-    case 'grey':
-      return greySvg;
-  }
-
-  const firstChar = icon.charAt(0);
-  let mimeType: string | null = null;
-
-  switch (firstChar) {
-    case '/':
-      mimeType = 'image/jpeg';
-      break;
-    case 'i':
-      mimeType = 'image/png';
-      break;
-    case 'R':
-      mimeType = 'image/gif';
-      break;
-    case 'U':
-      mimeType = 'image/webp';
-      break;
-    default:
-      return errorImage;
-  }
-
-  return `data:${mimeType};base64,${icon}`;
+  return resolveIconUrl(icon, placeholders);
 }
 
 /** CIP-67 label prefix (100 reference, 222 NFT, 333 FT, 444 RFT), or null. */
@@ -179,15 +116,16 @@ const tryConvertPlutusDataToUtf8String = (data: Cardano.PlutusData): Cardano.Plu
 
 const tryConvertPlutusDataToUtf8List = (data: Cardano.PlutusData): Cardano.PlutusData | string => {
   if (!Cardano.util.isPlutusList(data)) return data;
+  // A chunked string is only valid when EVERY item decodes as UTF-8 bounded bytes.
+  // String-coercing a stray int/map into the concatenation would fabricate a garbage
+  // value that then passes downstream `typeof x === 'string'` checks unwarned.
   let list: string = "";
-  try {
-    data.items.forEach(item => {
-      list += tryConvertPlutusDataToUtf8String(item);
-    })
-    return list;
-  } catch {
-    return data;
+  for (const item of data.items) {
+    const chunk = tryConvertPlutusDataToUtf8String(item);
+    if (typeof chunk !== 'string') return data;
+    list += chunk;
   }
+  return list;
 }
 
 const tryConvertPlutusMapToUtf8Record = (map: Cardano.PlutusMap): Partial<Record<string, string | Cardano.PlutusData>> => {
@@ -314,11 +252,14 @@ export const fromPlutusData = (
     return null;
   }
 
+  // `image` is the CIP-68 *NFT* (222) field; fungible tokens (333) carry `logo`
+  // instead and legitimately have no `image` at all. Only an image that is present
+  // but undecodable is a real defect — warning on every absent one buried the log.
   let imageAsUri: Asset.Uri = undefined
-  if (typeof image !== 'string') {
-    debugLog('Invalid PlutusData: "image" must be UTF-8 bounded bytes');
-  } else {
+  if (typeof image === 'string') {
     imageAsUri = tryCoerce(image, Asset.Uri);
+  } else if (typeof image !== 'undefined') {
+    debugLog('Invalid PlutusData: "image" must be UTF-8 bounded bytes');
   }
 
   // Extract decimals from PlutusData - it's stored as a map with "int" key
@@ -863,7 +804,7 @@ export function parseDerivationPath(pathString: string): number[] {
     .replace('m/', '')
     .split('/')
     .map(segment => {
-      const num = parseInt(segment.replace("'", ""));
+      const num = parseInt(segment.replace(/'/g, ""));
       return segment.includes("'") ? num + HARDENED : num;
     })
     .slice(3); // Remove the first 3 elements (purpose, coin_type, account) as they're handled at account level

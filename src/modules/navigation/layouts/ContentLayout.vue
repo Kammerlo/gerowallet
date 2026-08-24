@@ -38,7 +38,7 @@
                     {{ $t('navigation.betaVersionNoticePrefix') }} <strong>{{ $t('navigation.betaVersionNoticeBold') }}</strong>{{ $t('navigation.betaVersionNoticeSuffix') }}
                     <a
                       style="color: black; font-weight: 700"
-                      href="https://chromewebstore.google.com/detail/gero-dashboard/bgpipimickeadkjlklgciifhnalhdjhe?hl=en-US&utm_source=ext_sidebar"
+                      :href="CHROME_WEB_STORE_URL_SIDEBAR"
                       target="_blank"
                       >{{ $t('navigation.geroDashboard') }}</a
                     >
@@ -297,6 +297,7 @@ import BackupWalletDialog from '@/modules/navigation/dialogs/BackupWalletDialog.
 import { Blockchain } from '@/models/types';
 import assets from '@/utils/assets';
 import { chainAccents, chainKeyFor } from '@/config/themes';
+import { CHROME_WEB_STORE_URL_SIDEBAR } from '@/config/storeLinks';
 import { loadingState } from '@/stores/loading';
 import changeLogPlugin from '@/plugins/changeLog';
 import { walletStore } from '@/stores/walletStore';

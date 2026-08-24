@@ -57,6 +57,15 @@ export interface NetworkInfo {
   // re-bootstrap changes the hash while existing holdings stay at the old script.
   // Empty means CIP-113 is unavailable on this network, and it fails closed.
   programmableLogicBaseScriptHashes?: string[];
+  /**
+   * RealFi Earn (USDr / sUSDr yield) availability for this network.
+   *
+   * Optional and resolved with `?? false`, so a network that predates the feature
+   * stays off without touching its entry — only the networks that opt in carry it.
+   * Cardano PREPROD only while the integration is validated against RealFi's
+   * testnet; mainnet flips on when their mainnet ships and we have signed off.
+   */
+  realFiSupport?: boolean;
   networkParams: {
     networkMagic: number;
   }
@@ -171,6 +180,9 @@ export default {
       mempoolSupport: false,
       lightningSupport: false,
       programmableLogicBaseScriptHashes: CIP113_BASE_PREPROD,
+      // RealFi runs its public testnet on Cardano preprod; this is the only
+      // network the Earn surface is reachable from today.
+      realFiSupport: true,
       networkParams: {
         networkMagic: 1
       }
@@ -630,6 +642,20 @@ export default {
       return false
     }
     return this.resolveNetwork(chain, network)?.geroCardSupport
+  },
+  /**
+   * RealFi Earn availability for a wallet's chain + network.
+   *
+   * Answers only "can this wallet reach RealFi at all" — it is deliberately
+   * independent of `featureFlagsStore.isRealFiEnabled()`, which answers "is the
+   * feature live". Both must pass; the router and the nav item AND them together,
+   * the same way Pool Operator combines staking support with its own flag.
+   */
+  resolveRealFiSupport(chain: string, network: string): boolean {
+    if (!chain || !network) {
+      return false
+    }
+    return this.resolveNetwork(chain, network)?.realFiSupport ?? false
   },
   resolveGoMiningSupport(chain: string, network: string): boolean {
     if (!chain || !network) {

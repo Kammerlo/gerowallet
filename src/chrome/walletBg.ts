@@ -125,6 +125,10 @@ export class WalletBg {
   prfSpendingPassword?: string;
   /** Wallet record creation time (ISO). Lower bound for Midnight dust-registration age. */
   createdAt?: string;
+  /** Watch wallets only: the watched base address (no keys on the record). */
+  watchAddress?: string;
+  /** Watch wallets only: payment creds absorbed from server-reported addresses. */
+  private watchCredentials = new Set<string>();
 
   constructor(
     // Wallet DB record; the intersection covers UI/store fields not part of
@@ -184,6 +188,22 @@ export class WalletBg {
         this.baseAddress = '';
       }
       this.stakeAddress = '';
+    } else if (wallet.type === WalletType.Watch) {
+      // Dev-only watch wallet: read-only, no keys. The watched base address is
+      // stored on the record; the stake address is derived from it, and
+      // gero-sync discovers the wallet's sibling addresses by stake key during
+      // catch-up (absorbed via expandCredentialsIfNeeded / syncKeys).
+      this.watchAddress = wallet.watchAddress ?? '';
+      this.baseAddress = this.watchAddress;
+      try {
+        this.stakeAddress = toStakeAddress(
+          this.baseAddress,
+          networks.resolveNetworkId(wallet.chain, wallet.network) as Cardano.NetworkId
+        );
+      } catch {
+        // Enterprise address — no stake part; sync falls back to baseAddress
+        this.stakeAddress = '';
+      }
     } else if (wallet.type === WalletType.Google && this.encryptionMethod !== 'mpc' && googleBaseAddress) {
       // Legacy smart-contract Google wallet: address comes from the
       // contract, not HD derivation. MPC Sign-in-with-Google wallets are also
@@ -956,6 +976,11 @@ export class WalletBg {
             } else if (existingTx.pending !== newTx.pending || existingTx.tx_timestamp !== newTx.tx_timestamp) {
               // Transaction exists but pending status or timestamp changed - update it
               txsToUpdate.push(newTx);
+            } else if (!existingTx.cbor && newTx.cbor) {
+              // Record was stored "thin" (synced while the backend's async
+              // transaction_cbor writer still lagged the tip, so cbor/body were
+              // missing) - upgrade it in place now that the CBOR is available
+              txsToUpdate.push(newTx);
             }
           });
 
@@ -997,6 +1022,34 @@ export class WalletBg {
   }
 
   resolvePathsForMissingAddresses(usedAddresses: string[]): Keys {
+    if (this.type === WalletType.Watch) {
+      // Watch wallets can't derive: build the key set straight from the
+      // watched address plus the server-reported address list. Paths are
+      // placeholders (no HD tree exists); creds are extracted per address so
+      // ownership checks (isInternalTransfer, sent/received math) still work.
+      const seen = new Set<string>();
+      const payment: Key[] = [];
+      for (const addr of [this.baseAddress, ...usedAddresses]) {
+        if (!addr || seen.has(addr)) continue;
+        seen.add(addr);
+        try {
+          const cred = keyHashFromAddress(addr);
+          if (cred) payment.push({ address: addr, path: '', cred, used: true });
+        } catch {
+          continue;
+        }
+      }
+      let stake: Key[] = [];
+      if (this.stakeAddress) {
+        try {
+          const stakeCred = keyHashFromAddress(this.stakeAddress);
+          if (stakeCred) stake = [{ address: this.stakeAddress, path: '', cred: stakeCred }];
+        } catch {
+          stake = [];
+        }
+      }
+      return { stake, payment, change: [], ccCold: [], ccHot: [], drep129: [], drep105: [], script: [] };
+    }
     const resolvedAddresses: Key[] = [];
     let addressIndex: number = 0; // Start from the first address index
     let consecutiveUnused: number = 0; // Track consecutive unused addresses
@@ -1117,6 +1170,18 @@ export class WalletBg {
    * Derive payment credential hashes (blake2b-224) for external and internal chains.
    */
   derivePaymentCredentials(): string[] {
+    if (this.type === WalletType.Watch) {
+      // No xpub to derive from — credentials are the watched address's payment
+      // key hash plus any creds absorbed from server-reported addresses
+      const credentials = new Set<string>(this.watchCredentials);
+      try {
+        const own = keyHashFromAddress(this.baseAddress);
+        if (own) credentials.add(own);
+      } catch {
+        // unparseable address — leave only absorbed creds
+      }
+      return Array.from(credentials);
+    }
     const credentials: string[] = [];
     for (let i = 0; i < this.credentialRange; i++) {
       credentials.push(getPaymentKeyExternal(this.publicKey, i).hash().hex());
@@ -1133,6 +1198,26 @@ export class WalletBg {
    */
   expandCredentialsIfNeeded(serverAddresses: string[]): string[] | null {
     if (!serverAddresses || serverAddresses.length === 0) return null;
+
+    if (this.type === WalletType.Watch) {
+      // Watch wallets can't derive sibling addresses — absorb every
+      // server-reported address's payment cred instead. Converges: the
+      // resubscribe triggered by a non-null return replays the same address
+      // set, which then adds nothing and returns null.
+      let added = false;
+      for (const addr of serverAddresses) {
+        try {
+          const cred = keyHashFromAddress(addr) as unknown as string;
+          if (cred && !this.watchCredentials.has(cred)) {
+            this.watchCredentials.add(cred);
+            added = true;
+          }
+        } catch {
+          continue;
+        }
+      }
+      return added ? this.derivePaymentCredentials() : null;
+    }
 
     const currentCreds = new Set(this.derivePaymentCredentials());
     let needsExpansion = false;
