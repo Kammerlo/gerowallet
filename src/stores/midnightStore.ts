@@ -36,6 +36,7 @@ import storeMessaging from '@/services/storeMessaging.service';
 import backgroundStoreMessaging from '@/chrome/storeMessagingBg';
 import { debugLog } from '@/utils/debug';
 import { getMidnightEndpoints } from '@/chains/midnight/midnightConfig';
+import { isNativeNight } from '@/chains/midnight/midnightTokenBalances';
 import { Network } from '@/models/types';
 import type {
   MidnightBalances,
@@ -953,10 +954,7 @@ export const midnightActions = {
     }
 
     let balanceDelta = 0n;
-    const isNight = (u: MidnightUnshieldedUtxo) => {
-      const tt = u.tokenType ?? '';
-      return tt === '' || /^0+$/.test(tt);
-    };
+    const isNight = (u: MidnightUnshieldedUtxo) => isNativeNight(u.tokenType);
 
     // ORDER MATTERS: removals BEFORE additions, and callers apply deltas
     // PER TRANSACTION. DUST registration flags a UTxO in place — the tx

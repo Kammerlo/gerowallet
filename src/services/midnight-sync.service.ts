@@ -34,11 +34,14 @@ import { midnightActions, midnightStore } from '@/stores/midnightStore';
 import { debugLog } from '@/utils/debug';
 import { Network } from '@/models/types';
 import { getMidnightApi } from '@/api/midnight-api';
+import { isNativeNight } from '@/chains/midnight/midnightTokenBalances';
 import type {
   MidnightAddresses,
   MidnightBalances,
   MidnightTransaction,
   MidnightUnshieldedUtxo,
+  DustGenerationStatus,
+  DustRegistrationStatus,
 } from '@/chains/midnight/midnightTypes';
 
 /**
@@ -81,6 +84,29 @@ interface WsMidnightOutput {
   intent_hash?: string;
   outputIndex?: number;
   output_index?: number;
+  registeredForDustGeneration?: boolean;
+  registered_for_dust_generation?: boolean;
+}
+
+/**
+ * Raw entry shape for the CATCH_UP snapshot's `utxos` array — like
+ * {@link WsMidnightOutput} but also carries `ctime` / `initialNonce`, which
+ * the per-tx created/spent payloads don't. Fields are optional because the
+ * payload is unvalidated JSON off the wire; {@link MidnightSyncService.parseUtxos}
+ * defends against missing/malformed entries at runtime regardless of this type.
+ */
+interface WsMidnightUtxoSnapshot {
+  owner?: string;
+  value?: string | number;
+  tokenType?: string;
+  token_type?: string;
+  intentHash?: string;
+  intent_hash?: string;
+  outputIndex?: number;
+  output_index?: number;
+  ctime?: number;
+  initialNonce?: string;
+  initial_nonce?: string;
   registeredForDustGeneration?: boolean;
   registered_for_dust_generation?: boolean;
 }
@@ -142,7 +168,7 @@ interface WsSyncMessage {
   block?: WsSyncBlock;
   transactions?: WsSyncTx[];
   account?: WsAccountInfo;
-  utxos?: any[];
+  utxos?: WsMidnightUtxoSnapshot[];
   addresses?: string[];
   [key: string]: unknown;
 }
@@ -387,13 +413,21 @@ class MidnightSyncService {
         const removed: Array<{ intentHash: string; outputIndex: number }> = [];
         for (const o of this.readOutputs(rawTx, 'created')) {
           if (o.owner !== myUnshielded) continue;
-          if (!this.isNightOutput(o)) continue;
+          // Admit every token color, matching the CATCH_UP snapshot path
+          // (parseUtxos applies no token filter). Without this the delta path
+          // removed spent token UTxOs but never re-added received ones, so
+          // token balances decayed toward zero over a live session.
+          //
+          // `nightUnshielded` stays native-only: the delta path filters via
+          // isNight() before touching balanceDelta, and the snapshot re-sum
+          // below applies its own native check.
           added.push(this.outputToUtxo(o));
         }
         for (const o of this.readOutputs(rawTx, 'spent')) {
           if (o.owner !== myUnshielded) continue;
-          // tokenType filter not needed for removal — if the wallet had it,
-          // the matching add went through the NIGHT filter; if it didn't,
+          // tokenType filter not needed for removal — the created loop above
+          // now admits every color too, so any owned UTxO we could spend has
+          // a matching key to remove; if we somehow never saw it created,
           // the remove is a no-op against an absent key.
           const intentHash = o.intentHash ?? o.intent_hash ?? '';
           const outputIndex = o.outputIndex ?? o.output_index ?? 0;
@@ -423,7 +457,7 @@ class MidnightSyncService {
       let night = 0n;
       for (const u of parsed) {
         const tt = u.tokenType ?? '';
-        if (tt === '' || /^0+$/.test(tt)) night += u.value;
+        if (isNativeNight(tt)) night += u.value;
       }
       midnightActions.updateBalances({ nightUnshielded: night });
     }
@@ -522,12 +556,6 @@ class MidnightSyncService {
     };
   }
 
-  /** Empty token type or 32-byte-zero token type both mean native NIGHT. */
-  private isNightOutput(o: WsMidnightOutput): boolean {
-    const tt = o.tokenType ?? o.token_type ?? '';
-    return tt === '' || tt === NIGHT_TOKEN_TYPE_NULL;
-  }
-
   /** Map a gero-sync WS output payload to the wallet's UTxO record. */
   private outputToUtxo(o: WsMidnightOutput): MidnightUnshieldedUtxo {
     return {
@@ -565,7 +593,7 @@ class MidnightSyncService {
     return sum;
   }
 
-  private parseUtxos(raw: any[]): MidnightUnshieldedUtxo[] {
+  private parseUtxos(raw: WsMidnightUtxoSnapshot[]): MidnightUnshieldedUtxo[] {
     return raw
       .map((u): MidnightUnshieldedUtxo | null => {
         if (!u || typeof u !== 'object') return null;
@@ -615,12 +643,12 @@ class MidnightSyncService {
     const dustRegStatus = account.dust_registration_status;
     if (dustGenStatus || dustRegStatus) {
       midnightActions.setDustState({
-        status: (dustGenStatus as any) ?? 'empty',
+        status: (dustGenStatus as DustGenerationStatus) ?? 'empty',
         current: this.toBig(account.dust_balance),
         cap: this.toBig(account.dust_cap),
         generationRate: this.toBig(account.dust_generating),
         timeRemainingSeconds: account.dust_time_remaining_seconds ?? null,
-        registrationStatus: (dustRegStatus as any) ?? 'Unregistered',
+        registrationStatus: (dustRegStatus as DustRegistrationStatus) ?? 'Unregistered',
       });
     }
   }

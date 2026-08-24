@@ -74,3 +74,15 @@ describe('midnightTokenBalances', () => {
     expect(Object.entries(result)).toHaveLength(2);
   });
 });
+
+describe('NIGHT balance isolation', () => {
+  it('a non-native color contributes nothing to a native-NIGHT sum', () => {
+    // Mirrors the filter both balance paths apply (delta path in
+    // midnightStore.applyUtxoDeltas, snapshot path in midnight-sync.service).
+    // If either drops its filter, USDM would inflate nightUnshielded.
+    const set = [utxo(NIGHT_ZERO, 100n, 0), utxo(USDM, 5000000n, 1), utxo('', 25n, 2)];
+    const night = set.filter(u => isNativeNight(u.tokenType)).reduce((s, u) => s + u.value, 0n);
+    expect(night).toBe(125n);
+    expect(midnightTokenBalances(set)).toEqual({ [USDM]: 5000000n });
+  });
+});

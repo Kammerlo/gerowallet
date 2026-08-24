@@ -16,13 +16,12 @@ import type { MidnightUnshieldedUtxo } from './midnightTypes';
  * Native NIGHT is the 32-byte-zero token type. gero-sync sometimes emits an
  * empty string instead (older indexer schemas), so both mean "native". The
  * check is deliberately loose: it accepts an all-zero string of ANY length,
- * not just the canonical 64 hex chars, matching the existing loose copies at
- * `midnight-sync.service.ts:425` and `midnightStore.ts:956-959`.
+ * not just the canonical 64 hex chars.
  *
- * A strict counterpart exists — `isNightOutput` in `midnight-sync.service.ts`
- * (~line 526) compares against the exported `NIGHT_TOKEN_TYPE_NULL`
- * constant. This module deliberately does not import it, to stay
- * dependency-free for unit testing; do not "tidy" the two into agreement.
+ * This is now the single canonical predicate — both `midnight-sync.service.ts`
+ * (the CATCH_UP snapshot re-sum and the former `isNightOutput` helper) and
+ * `midnightStore.ts` (`applyUtxoDeltas`'s `isNight` closure) import and call
+ * this function directly rather than keeping their own copies.
  */
 export function isNativeNight(tokenType: string | undefined | null): boolean {
   const tt = tokenType ?? '';
