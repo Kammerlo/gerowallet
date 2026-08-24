@@ -35,6 +35,7 @@ function row(over: Partial<PositionRow> = {}): PositionRow {
     id: `drep1${'q'.repeat(50)}`,
     credentialHex: 'aa'.repeat(28),
     committeeHex: null,
+    committeeColdHex: null,
     drepId: `drep1${'q'.repeat(50)}`,
     vote: 'Yes',
     votedAt: 1787463005,

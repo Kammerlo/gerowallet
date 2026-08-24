@@ -197,6 +197,48 @@ describe('committeeNameIndex', () => {
     expect(committeeNameOf(row, null)).toBeNull();
   });
 
+  it('names the member when the projection resolved the cold credential', () => {
+    // Gero-Labs/nexus#898: the vote row now carries the member's COLD hash
+    // alongside the hot one it was signed with. That is the only value the
+    // committee endpoint lists, so it is the only thing this index can match.
+    const index = committeeNameIndex([member({ displayName: 'Tingvard' })]);
+    const [row] = toPositionRows([committeeVote({ committeeColdHash: CC_COLD })]);
+
+    expect(row.committeeColdHex).toBe(CC_COLD);
+    // The hot hash is kept: it is what signed the vote, and a reader may have
+    // copied it from another explorer.
+    expect(row.committeeHex).toBe(CC_HOT);
+    expect(committeeNameOf(row, index)).toBe('Tingvard');
+  });
+
+  it('still names nothing when the projection could not resolve one', () => {
+    // A hot key with no authorization certificate, a vote predating every known
+    // authorization, or an ambiguous tie: nexus omits the field rather than
+    // guessing, and the row falls back to its hash exactly as before.
+    const index = committeeNameIndex([member({ displayName: 'Tingvard' })]);
+    const [row] = toPositionRows([committeeVote()]);
+
+    expect(row.committeeColdHex).toBeNull();
+    expect(committeeNameOf(row, index)).toBeNull();
+  });
+
+  it('ignores a cold hash that is not a credential', () => {
+    const index = committeeNameIndex([member({ displayName: 'Tingvard' })]);
+    for (const bad of ['not-hex', 'ab', '', null]) {
+      const [row] = toPositionRows([committeeVote({ committeeColdHash: bad as string | null })]);
+      expect(row.committeeColdHex, String(bad)).toBeNull();
+      expect(committeeNameOf(row, index), String(bad)).toBeNull();
+    }
+  });
+
+  it('carries a cold hash only for committee rows', () => {
+    // A DRep row that happened to carry the field must not gain a committee
+    // identity from it.
+    const [drep] = toPositionRows([vote({ drepId: DREP_A, committeeColdHash: CC_COLD })]);
+    expect(drep.committeeColdHex).toBeNull();
+    expect(drep.committeeHex).toBeNull();
+  });
+
   it('never names a row of another body', () => {
     // Same 28 bytes, different body: an SPO or a DRep whose hash equals a
     // member's must not inherit that member's name.

@@ -113,6 +113,24 @@ export interface GovVote {
    * shows bech32, on the same list.
    */
   voterId?: string | null;
+  /**
+   * For a CONSTITUTIONAL COMMITTEE row: the member's COLD credential, which is
+   * the value `CommitteeMember.hash` carries.
+   *
+   * The join key, and the only one there is. `voterHash` on these rows is the
+   * HOT credential the member signed with, and CIP-1694 keeps the two apart by
+   * design — the cold key holds the mandate and authorises a hot key that can be
+   * rotated without touching it. Measured on mainnet: 288 committee vote rows
+   * across 75 actions, ZERO of them matching any `members[].hash`. So a
+   * committee row cannot be named from its own hash, however it is transformed.
+   *
+   * OPTIONAL because the projection resolves it server-side (Gero-Labs/nexus#898)
+   * and omits it when it cannot: a hot key with no authorization certificate, a
+   * vote predating every known authorization of it, or two cold credentials
+   * tying as most-recent authorizer. Absent is not an empty name — it means this
+   * row falls back to its hash, which is the honest render.
+   */
+  committeeColdHash?: string | null;
 }
 
 /**
