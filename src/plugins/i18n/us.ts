@@ -3591,6 +3591,7 @@ export default {
   'search.nftCollections': 'NFT Collections',
   'search.contacts': 'Contacts',
   'search.settings': 'Settings',
+  'search.pages': 'Pages',
   'search.noResults': 'No results found',
   'search.searching': 'Searching...',
   'search.pressEsc': 'Press Esc to close',
