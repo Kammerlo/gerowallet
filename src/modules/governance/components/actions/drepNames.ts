@@ -12,7 +12,7 @@
  * register twice: 10.74 MB gzipped and 1,682 DReps per walk, measured on mainnet
  * 2026-08-24. Whichever surface asks first now pays, and the other is free while
  * the register is cached. The register retains every field this index reads
- * (`drep_id`, and the metadata blob `drepDisplayName` and `imageSourceOf` look
+ * (`drep_id`, and the metadata blob `drepDisplayName` and `drepImageSource` look
  * inside), so sharing costs neither a second request nor a second projection.
  *
  * Two things this deliberately does NOT do:
@@ -59,7 +59,7 @@
 import { loadDRepRegister, resetDRepRegister } from '@/modules/governance/views/drepRegister';
 import { parseDRepId } from '@/shared/utils/drepId';
 import { drepDisplayName } from '@/shared/utils/drepView';
-import { toInAppUrl } from '@/modules/governance/utils/govAnchor';
+import { drepImageSource } from '@/modules/governance/utils/govAnchor';
 
 export interface DRepName {
   name: string | null;
@@ -77,32 +77,6 @@ const EMPTY: DRepNameIndex = new Map();
 /** Derived indexes, one per chain/network, for the life of the session. */
 const cache = new Map<string, Promise<DRepNameIndex>>();
 
-/**
- * The avatar URI a DRep published, kept in the form they wrote it.
- *
- * Deliberately NOT `drepImageUrl()` from `drepView`: that runs the value through
- * `safeExternalHref`, which allows http(s) only — so every `ipfs://` avatar was
- * dropped HERE, before `DRepAvatar` could map it onto the backend proxy, and
- * those rows fell back to the generic glyph even though the DRep had published a
- * picture. About half of mainnet's avatars are `ipfs://` (see `govAnchor.ts`).
- *
- * The value is still scheme-checked, by the SAME shared mapping the avatar uses:
- * a URI `toInAppUrl` cannot turn into something loadable is not stored at all.
- * What is stored is the raw URI, so `DRepAvatar` remains the single place that
- * maps one — this adds no second mapping of its own.
- */
-function imageSourceOf(record: unknown): string | undefined {
-  if (!record || typeof record !== 'object') return undefined;
-  const meta = (record as { metadata?: { meta_json?: { body?: Record<string, unknown> | null } | null } | null })
-    .metadata;
-  const image = meta?.meta_json?.body?.['image'];
-  if (!image || typeof image !== 'object') return undefined;
-  const raw = (image as Record<string, unknown>)['contentUrl'];
-  if (typeof raw !== 'string') return undefined;
-  const uri = raw.trim();
-  return uri && toInAppUrl(uri) ? uri : undefined;
-}
-
 /** Build the index from records already in hand. Records with no name are still indexed. */
 export function indexDRepRecords(records: unknown[]): Map<string, DRepName> {
   const index = new Map<string, DRepName>();
@@ -110,7 +84,7 @@ export function indexDRepRecords(records: unknown[]): Map<string, DRepName> {
     const id = (record as { drep_id?: unknown })?.drep_id;
     const credentialHex = parseDRepId(typeof id === 'string' ? id : null)?.credentialHex;
     if (!credentialHex) continue;
-    index.set(credentialHex, { name: drepDisplayName(record), image: imageSourceOf(record) });
+    index.set(credentialHex, { name: drepDisplayName(record), image: drepImageSource(record) });
   }
   return index;
 }

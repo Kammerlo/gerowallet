@@ -73,6 +73,34 @@ export function toInAppUrl(raw: unknown): string | null {
 }
 
 /**
+ * The avatar URI a DRep published, kept in the form they wrote it.
+ *
+ * The single source for every DRep face in the app. It deliberately does NOT
+ * resolve the URI: `DRepAvatar` runs it through `toInAppUrl`, and it must stay
+ * the only place that maps one.
+ *
+ * The bug this replaced: the directory and the profile both read the avatar
+ * through `drepImageUrl()`, which resolved via `safeExternalHref` — http(s)
+ * ONLY. About half of mainnet's avatars are `ipfs://`, so those were discarded
+ * before `DRepAvatar` ever saw them, and a DRep who had published a picture
+ * rendered as one who had not. Nothing errored; the face was simply absent.
+ *
+ * The value is still scheme-checked, by the SAME mapping the avatar will use: a
+ * URI `toInAppUrl` cannot turn into something loadable is not returned at all.
+ */
+export function drepImageSource(record: unknown): string | undefined {
+  if (!record || typeof record !== 'object') return undefined;
+  const meta = (record as { metadata?: { meta_json?: { body?: Record<string, unknown> | null } | null } | null })
+    .metadata;
+  const image = meta?.meta_json?.body?.['image'];
+  if (!image || typeof image !== 'object') return undefined;
+  const raw = (image as Record<string, unknown>)['contentUrl'];
+  if (typeof raw !== 'string') return undefined;
+  const uri = raw.trim();
+  return uri && toInAppUrl(uri) ? uri : undefined;
+}
+
+/**
  * A URL to hand the browser in a new tab, or null. IPFS becomes a public
  * gateway link — the one place that is the right answer, because the tab is not
  * the extension origin and nothing about the wallet is attached to the request.

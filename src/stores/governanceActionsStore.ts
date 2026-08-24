@@ -166,8 +166,31 @@ export interface GovernanceActionsState {
   /** Result of the "has my DRep voted on this yet" join. */
   yourVotes: YourVotesState;
 
+  /**
+   * Which action `currentAction` is about, as `network:govActionId`.
+   *
+   * What lets a re-open of the SAME action keep the page it already has, and a
+   * different one clear it. Without it the store cannot tell those apart, so it
+   * had to assume the worst and blank on every load.
+   */
+  actionKey: string | null;
+
+  /**
+   * When `currentAction` was fetched. Separate from `fetchedAt`, which the LIST
+   * load also writes: sharing one field let a list refresh make a stale action
+   * look freshly loaded.
+   */
+  actionFetchedAt: number | null;
+
   /** When the currently displayed data was fetched — every cached number is stamped. */
   fetchedAt: number | null;
+}
+
+/** How long a loaded action stays fresh. Tallies move per block, not per click. */
+export const ACTION_TTL_MS = 60 * 1000;
+
+function isFresh(fetchedAt: number | null): boolean {
+  return fetchedAt !== null && Date.now() - fetchedAt < ACTION_TTL_MS;
 }
 
 function emptyYourVotes(): YourVotesState {
@@ -205,6 +228,8 @@ const state = Vue.observable<GovernanceActionsState>({
   committee: null,
   filters: { type: null, status: null },
   yourVotes: emptyYourVotes(),
+  actionKey: null,
+  actionFetchedAt: null,
   fetchedAt: null,
 });
 
@@ -299,13 +324,32 @@ const actions = {
    * blanking the page.
    */
   async loadAction(govActionId: string, network: string): Promise<void> {
+    const key = `${network}:${govActionId}`;
+
+    // Re-opening the action already on screen: keep it. Nulling it first meant
+    // going back to an action you had just read blanked the page to a skeleton
+    // and rebuilt it from the network, every time. Inside the window the reader
+    // sees what they left, immediately.
+    if (state.actionKey === key && state.currentAction && isFresh(state.actionFetchedAt)) {
+      state.actionLoading = false;
+      state.actionError = null;
+      // The stamp stays the one the data was actually fetched at, so the "as of"
+      // line keeps telling the truth about a page served from memory.
+      state.fetchedAt = state.actionFetchedAt;
+      return;
+    }
+
+    // A DIFFERENT action, so what is on screen now is about to be wrong.
+    if (state.actionKey !== key) {
+      state.currentAction = null;
+      state.currentSummary = null;
+      // The displayed action is changing, so the previous action's votes —
+      // loaded or still arriving — stop being about anything on screen.
+      resetVotes();
+    }
+    state.actionKey = key;
     state.actionLoading = true;
     state.actionError = null;
-    state.currentAction = null;
-    state.currentSummary = null;
-    // The displayed action is changing, so the previous action's votes — loaded
-    // or still arriving — stop being about anything on screen.
-    resetVotes();
 
     const [detail, summary] = await Promise.allSettled([
       governanceApi.getProposal(govActionId, network),
@@ -322,7 +366,8 @@ const actions = {
     }
 
     state.currentSummary = summary.status === 'fulfilled' ? summary.value : null;
-    state.fetchedAt = Date.now();
+    state.actionFetchedAt = Date.now();
+    state.fetchedAt = state.actionFetchedAt;
     state.actionLoading = false;
   },
 
@@ -469,6 +514,11 @@ const actions = {
     state.filters.type = null;
     state.filters.status = null;
     state.yourVotes = emptyYourVotes();
+    // Both stamps and the action identity go with it: a reset that left
+    // `actionKey` behind would let the next load of that same id serve the
+    // action this reset just cleared.
+    state.actionKey = null;
+    state.actionFetchedAt = null;
     state.fetchedAt = null;
   },
 };

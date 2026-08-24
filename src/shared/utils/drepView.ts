@@ -20,7 +20,6 @@
  */
 
 import { parseGovActionId, toDisplayGovActionId } from '@/shared/utils/govActionId';
-import { safeExternalHref } from '@/shared/utils/externalLink';
 import { pctOf, toLovelace } from '@/shared/utils/lovelace';
 import type { ActionTypeResolver } from '@/shared/utils/drepStats';
 
@@ -100,16 +99,6 @@ export function drepDisplayName(record: unknown): string | null {
 export function drepBio(record: unknown): string | null {
   const fields = body(record);
   return cipValue(fields?.['objectives']) ?? cipValue(fields?.['motivations']) ?? null;
-}
-
-/**
- * The DRep's avatar, normalised through the shared external-link guard so a
- * hostile `contentUrl` cannot become a javascript: or data: sink.
- */
-export function drepImageUrl(record: unknown): string | undefined {
-  const image = body(record)?.['image'];
-  if (!image || typeof image !== 'object') return undefined;
-  return safeExternalHref((image as Record<string, unknown>)['contentUrl']);
 }
 
 /** Classify the DRep's CIP-119 anchor. See `DRepAnchorState`. */

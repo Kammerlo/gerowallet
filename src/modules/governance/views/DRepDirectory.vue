@@ -39,13 +39,40 @@
 
     <ErrorState v-if="error" :message="error" retryable @retry="reload()" />
 
-    <div v-else-if="loading" class="drep-directory__rows">
+    <!-- The waiting state is the table, drawn empty. It is built on the SAME grid
+         as the real rows (`--drep-cols`, and the same focus-column switch), so
+         when the register lands nothing reflows: the ghosts are replaced in
+         place instead of the page re-laying itself out under the reader. A
+         generic stack of two-line cards did neither, and read as a different
+         page that then jumped. -->
+    <div v-else-if="loading" class="drep-directory__loading">
       <!-- Ordering by a figure the server cannot sort means loading every DRep
            first. That is a wait worth naming rather than an unexplained delay. -->
-      <span v-if="loadingRegister" class="t-caption drep-directory__loading-note">
+      <span v-if="loadingRegister" class="t-caption drep-directory__loading-note" role="status">
         {{ $t('governance.orderingRegister') }}
       </span>
-      <v-skeleton-loader v-for="n in 6" :key="n" type="list-item-two-line" />
+      <div class="drep-directory__rows" aria-hidden="true">
+        <div
+          v-for="n in 6"
+          :key="n"
+          class="drep-directory__row drep-directory__row--ghost glass-panel"
+          :class="{ 'drep-directory__grid--focus': focusAvailable }"
+        >
+          <span class="drep-directory__col-name drep-directory__identity">
+            <span class="g-skeleton drep-directory__ghost-avatar"></span>
+            <span class="drep-directory__identity-text">
+              <span class="g-skeleton drep-directory__ghost-line drep-directory__ghost-line--name"></span>
+              <span class="g-skeleton drep-directory__ghost-line drep-directory__ghost-line--id"></span>
+            </span>
+          </span>
+          <span v-for="column in columns" :key="column.key" :class="column.cls">
+            <span class="g-skeleton drep-directory__ghost-line"></span>
+          </span>
+          <span class="drep-directory__col-action">
+            <span class="g-skeleton drep-directory__ghost-action"></span>
+          </span>
+        </div>
+      </div>
     </div>
 
     <EmptyState v-else-if="!rows.length" :message="t('governance.noDRepsFound')" />
@@ -84,8 +111,16 @@
               :title="String($t('governance.sortByColumn', { column: $t(column.label) }))"
               @click="toggleSort(column.sort)"
             >
-              {{ $t(column.label) }}
-              <span v-if="sortKey === column.sort" class="drep-directory__sort-glyph" aria-hidden="true">
+              <span class="drep-directory__sort-text">{{ $t(column.label) }}</span>
+              <!-- Always rendered, so the slot is reserved whether this column is
+                   the sorted one or not: appearing only when active made the
+                   label jump sideways on every sort, and pushed the glyph past
+                   the column's own track into its neighbour's header. -->
+              <span
+                class="drep-directory__sort-glyph"
+                :class="{ 'drep-directory__sort-glyph--idle': sortKey !== column.sort }"
+                aria-hidden="true"
+              >
                 {{ sortDir === 'asc' ? '↑' : '↓' }}
               </span>
             </button>
@@ -301,10 +336,10 @@ import { drepStats, type DRepRecord, type DRepStats, type DRepStatsContext } fro
 import {
   actionTypeResolverFor,
   drepDisplayName,
-  drepImageUrl,
   eligibleActionIdsFor,
   epochInflow,
 } from '@/shared/utils/drepView';
+import { drepImageSource } from '@/modules/governance/utils/govAnchor';
 import { parseDRepId, sameDRep, toCip129 } from '@/shared/utils/drepId';
 import { toLovelace } from '@/shared/utils/lovelace';
 import {
@@ -613,7 +648,7 @@ const rows = computed<DirectoryRow[]>(() =>
       key,
       id,
       name: drepDisplayName(record) ?? truncate(id),
-      image: drepImageUrl(record),
+      image: drepImageSource(record),
       record,
       stats,
       status: statusFor(record),
@@ -816,7 +851,7 @@ async function onDelegate(record: DRepRecord): Promise<void> {
   await delegateToDRep({
     id: String(record?.drep_id ?? ''),
     name: drepDisplayName(record) ?? truncate(String(record?.drep_id ?? '')),
-    image: drepImageUrl(record),
+    image: drepImageSource(record),
     delegators: Array.isArray(record?.delegators) ? record.delegators.length : 0,
     votes: Array.isArray(record?.votes) ? record.votes.length : 0,
     voting_power: drepStats(record)?.votingPower ?? 0n,
@@ -1038,8 +1073,45 @@ onUnmounted(() => {
   gap: var(--g-s-2);
   min-width: 0;
 }
+.drep-directory__loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-s-2);
+}
 .drep-directory__loading-note {
   color: var(--g-text-2);
+}
+/* Ghost rows sit on the real row grid, so the columns are already in the right
+   places when the data replaces them. Slightly recessed, because a placeholder
+   that reads as confidently as a value invites the reader to believe it. */
+.drep-directory__row--ghost {
+  opacity: 0.55;
+}
+.drep-directory__ghost-avatar {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: var(--g-r-pill);
+}
+.drep-directory__ghost-line {
+  display: block;
+  height: 12px;
+  width: 100%;
+  max-width: 120px;
+}
+.drep-directory__ghost-line--name {
+  height: 14px;
+  max-width: 168px;
+}
+.drep-directory__ghost-line--id {
+  height: 10px;
+  max-width: 104px;
+}
+.drep-directory__ghost-action {
+  display: block;
+  height: 32px;
+  width: 100%;
+  border-radius: var(--g-r-control);
 }
 /* The page-local caveat. Warning-toned because it narrows a claim the control
    otherwise makes, but a line rather than a banner: the data is still good. */
@@ -1061,6 +1133,12 @@ onUnmounted(() => {
   gap: var(--g-s-3);
   padding: 0 var(--g-s-4);
 }
+/* A grid item's default `min-width: auto` lets it grow past its track rather
+   than fit it, which is how an over-long header ended up drawn on top of the
+   next column. */
+.drep-directory__columns > * {
+  min-width: 0;
+}
 /* Sortable header. A real button, so the baseline focus ring applies and no
    outline is cleared anywhere in this file. */
 .drep-directory__sort {
@@ -1073,6 +1151,9 @@ onUnmounted(() => {
   color: inherit;
   cursor: pointer;
   text-align: inherit;
+  /* Never wider than the column it labels. */
+  max-width: 100%;
+  min-width: 0;
 }
 .drep-directory__sort:hover:not(.drep-directory__sort--active) {
   color: var(--g-text-2);
@@ -1080,8 +1161,20 @@ onUnmounted(() => {
 .drep-directory__sort--active {
   color: var(--g-accent);
 }
+/* A reserved slot, not an inline character: fixed width so the label sits in the
+   same place sorted or not, and so the arrow can never widen the header past its
+   grid track. */
 .drep-directory__sort-glyph {
   line-height: 1;
+  flex: none;
+  width: 10px;
+  text-align: center;
+}
+.drep-directory__sort-glyph--idle {
+  visibility: hidden;
+}
+.drep-directory__sort-text {
+  min-width: 0;
 }
 /* Right-aligned headers sit over right-aligned figures. */
 .drep-directory__col-num,
@@ -1114,10 +1207,10 @@ onUnmounted(() => {
    inferred from the DOM. */
 .drep-directory__columns,
 .drep-directory__row {
-  --drep-cols: minmax(0, 2.3fr) 92px 80px 116px 76px 76px minmax(0, 1.1fr) 124px;
+  --drep-cols: minmax(0, 2.3fr) 124px 100px 116px 76px 76px minmax(0, 1.1fr) 124px;
 }
 .drep-directory__grid--focus {
-  --drep-cols: minmax(0, 2fr) 92px 80px 116px minmax(0, 0.9fr) 76px 76px minmax(0, 1.1fr) 124px;
+  --drep-cols: minmax(0, 2fr) 124px 100px 116px minmax(0, 0.9fr) 76px 76px minmax(0, 1.1fr) 124px;
 }
 @media (max-width: 1180px) {
   /* The header stops being a grid and becomes the page's sort strip: the

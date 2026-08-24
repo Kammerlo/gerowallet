@@ -5,46 +5,59 @@
     :subtitle="actionTitle || undefined"
     icon="mdi-message-text-outline"
     size="lg"
-    :min-height="320"
-    :height="640"
+    :min-height="RATIONALE_DIALOG_HEIGHT"
+    :height="RATIONALE_DIALOG_HEIGHT"
     @close="$emit('close')"
   >
-    <div class="rationale-dialog">
-      <!-- Looking. The document is on someone else's host, so this can be slow. -->
-      <div v-if="loading" class="rationale-dialog__loading">
-        <v-skeleton-loader type="list-item-three-line" />
-        <span class="t-caption rationale-dialog__note">{{ $t('governance.rationaleFetching') }}</span>
-      </div>
-
-      <template v-else-if="result && result.status === 'verified'">
-        <div class="rationale-dialog__banner rationale-dialog__banner--verified">
-          <v-icon size="16" color="var(--g-success)">mdi-shield-check-outline</v-icon>
-          <span class="t-body-sm rationale-dialog__banner-text">
-            {{ $t('governance.anchorVerified') }}
-            <span class="rationale-dialog__banner-note">{{ $t('governance.rationaleVerifiedNote') }}</span>
-          </span>
+    <!-- One fixed box, whatever is inside it. A rationale arrives from someone
+         else's host, so the skeleton is on screen long enough to be its own
+         layout: sizing the dialog to its content meant opening small, then
+         lurching taller when the document landed. The height is bound inline
+         because Vuetify detaches the card to [data-app], out of reach of a
+         scoped selector. -->
+    <div class="rationale-dialog" :style="{ height: `${RATIONALE_BODY_HEIGHT}px` }">
+      <div class="rationale-dialog__content">
+        <!-- Looking. The document is on someone else's host, so this can be slow. -->
+        <div v-if="loading" class="rationale-dialog__loading">
+          <span class="g-skeleton rationale-dialog__ghost--label"></span>
+          <span class="g-skeleton rationale-dialog__ghost--line"></span>
+          <span class="g-skeleton rationale-dialog__ghost--line rationale-dialog__ghost--short"></span>
+          <span class="g-skeleton rationale-dialog__ghost--line"></span>
+          <span class="t-caption rationale-dialog__note">{{ $t('governance.rationaleFetching') }}</span>
         </div>
 
-        <!-- v-html is safe here and ONLY here: every section goes through
-             renderMarkdown, which HTML-escapes the author's bytes before it
-             applies a single markdown rule. Nothing fetched reaches the DOM as
-             markup. See renderMarkdown's header before changing this. -->
-        <section v-for="(section, i) in result.sections" :key="i" class="rationale-dialog__section">
-          <span v-if="section.labelKey" class="t-label">{{ $t(section.labelKey) }}</span>
-          <div class="g-prose" v-html="rendered[i]"></div>
-        </section>
-      </template>
+        <template v-else-if="result && result.status === 'verified'">
+          <div class="rationale-dialog__banner rationale-dialog__banner--verified">
+            <v-icon size="16" color="var(--g-success)">mdi-shield-check-outline</v-icon>
+            <span class="t-body-sm rationale-dialog__banner-text">
+              {{ $t('governance.anchorVerified') }}
+              <span class="rationale-dialog__banner-note">{{ $t('governance.rationaleVerifiedNote') }}</span>
+            </span>
+          </div>
 
-      <!-- Nothing verified, so nothing rendered. The reader gets the reason and
-           a way to read the document themselves, in their own browser. -->
-      <div v-else class="rationale-dialog__problem" :class="`rationale-dialog__problem--${tone}`">
-        <span class="rationale-dialog__problem-glyph" :class="`rationale-dialog__problem-glyph--${tone}`">
-          <v-icon size="20">{{ glyph }}</v-icon>
-        </span>
-        <span class="t-heading">{{ $t(problemTitleKey) }}</span>
-        <p class="t-body-sm rationale-dialog__problem-body">{{ $t(problemBodyKey) }}</p>
+          <!-- v-html is safe here and ONLY here: every section goes through
+               renderMarkdown, which HTML-escapes the author's bytes before it
+               applies a single markdown rule. Nothing fetched reaches the DOM as
+               markup. See renderMarkdown's header before changing this. -->
+          <section v-for="(section, i) in result.sections" :key="i" class="rationale-dialog__section">
+            <span v-if="section.labelKey" class="t-label">{{ $t(section.labelKey) }}</span>
+            <div class="g-prose" v-html="rendered[i]"></div>
+          </section>
+        </template>
+
+        <!-- Nothing verified, so nothing rendered. The reader gets the reason and
+             a way to read the document themselves, in their own browser. -->
+        <div v-else class="rationale-dialog__problem" :class="`rationale-dialog__problem--${tone}`">
+          <span class="rationale-dialog__problem-glyph" :class="`rationale-dialog__problem-glyph--${tone}`">
+            <v-icon size="20">{{ glyph }}</v-icon>
+          </span>
+          <span class="t-heading">{{ $t(problemTitleKey) }}</span>
+          <p class="t-body-sm rationale-dialog__problem-body">{{ $t(problemBodyKey) }}</p>
+        </div>
       </div>
 
+      <!-- Outside the scroll area: the way out of a document that failed to
+           verify must not be something the reader has to scroll to find. -->
       <div class="rationale-dialog__foot">
         <a
           v-if="externalHref"
@@ -82,6 +95,19 @@ import { useTranslation } from '@/shared/composables/useTranslation';
 import { renderMarkdown } from '@/shared/utils/renderMarkdown';
 import { toExternalHref } from '@/modules/governance/utils/govAnchor';
 import { loadRationale, type RationaleResult } from '@/modules/governance/dialogs/rationaleDoc';
+
+/**
+ * The dialog's one size, in px, whatever state it is in.
+ *
+ * Passed as BOTH `min-height` and `height` so the card cannot grow or shrink:
+ * BaseDialog maps them to the v-card's `min-height` and `max-height`, and giving
+ * them different values is exactly what let the box resize when the document
+ * landed.
+ */
+const RATIONALE_DIALOG_HEIGHT = 640;
+/** Title, close button and the card's own padding, measured. */
+const RATIONALE_DIALOG_CHROME = 152;
+const RATIONALE_BODY_HEIGHT = RATIONALE_DIALOG_HEIGHT - RATIONALE_DIALOG_CHROME;
 
 const props = defineProps({
   isOpen: {
@@ -186,18 +212,43 @@ watch(() => [props.isOpen, props.url, props.hash], () => void load(), { immediat
 .rationale-dialog {
   display: flex;
   flex-direction: column;
-  gap: var(--g-s-4);
+  gap: var(--g-s-3);
   padding: var(--g-s-2) var(--g-s-4) var(--g-s-4);
-  /* Rationales are documents: they routinely outgrow the dialog, and the
-     BaseDialog card does not scroll its slot, so the body scrolls itself. */
-  max-height: min(68vh, 640px);
+  /* Height comes in inline. The box is fixed; only the content inside it moves. */
+  overflow: hidden;
+}
+/* Rationales are documents: they routinely outgrow the dialog, and the
+   BaseDialog card does not scroll its slot, so the content scrolls itself
+   WITHIN the fixed box rather than resizing it. */
+.rationale-dialog__content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-s-4);
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 .rationale-dialog__loading {
   display: flex;
   flex-direction: column;
-  gap: var(--g-s-2);
+  gap: var(--g-s-3);
+}
+/* Shaped like the document that is coming: a section label, then prose. The
+   shimmer itself is `.g-skeleton` from baseline — the one sanctioned loading
+   pulse, so reduced-motion is already handled there and no second animation is
+   introduced. */
+.rationale-dialog__ghost--label {
+  width: 88px;
+  height: 10px;
+  margin-bottom: var(--g-s-1);
+}
+.rationale-dialog__ghost--line {
+  width: 100%;
+  height: 14px;
+}
+.rationale-dialog__ghost--short {
+  width: 62%;
 }
 
 .rationale-dialog__banner {
@@ -266,7 +317,8 @@ watch(() => [props.isOpen, props.url, props.hash], () => void load(), { immediat
   display: flex;
   flex-direction: column;
   gap: var(--g-s-1);
-  margin-top: auto;
+  /* Pinned below the scroll area, never scrolled with it. */
+  flex: none;
   padding-top: var(--g-s-3);
   border-top: 1px solid var(--g-hairline-1);
 }

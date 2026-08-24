@@ -5,7 +5,6 @@ import {
   drepAnchorState,
   drepBio,
   drepDisplayName,
-  drepImageUrl,
   eligibleActionIdsFor,
   epochInflow,
   powerConcentration,
@@ -54,21 +53,6 @@ describe('drepBio', () => {
 
   it('is null when the body carries neither', () => {
     expect(drepBio({ metadata: { meta_json: { body: {} } } })).toBeNull();
-  });
-});
-
-describe('drepImageUrl', () => {
-  it('returns an http(s) contentUrl', () => {
-    expect(
-      drepImageUrl({ metadata: { meta_json: { body: { image: { contentUrl: 'https://example.org/a.png' } } } } }),
-    ).toBe('https://example.org/a.png');
-  });
-
-  it('drops anything that is not a safe external URL', () => {
-    expect(
-      drepImageUrl({ metadata: { meta_json: { body: { image: { contentUrl: 'javascript:alert(1)' } } } } }),
-    ).toBeUndefined();
-    expect(drepImageUrl({})).toBeUndefined();
   });
 });
 

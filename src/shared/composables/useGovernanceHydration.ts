@@ -6,6 +6,7 @@ import blockchainApi from '@/api/blockchain-api';
 import { isCardanoTx } from '@/models/transaction.types';
 import { extractCip149Compensation } from '@/shared/utils/builder';
 import { KEYWORD_DREPS } from '@/shared/utils/drepId';
+import { createTtlCache } from '@/shared/utils/ttlCache';
 import type { DelegatedDRepRecord } from '@/shared/composables/useDelegationHealth';
 import { debugLog } from '@/utils/debug';
 
@@ -71,31 +72,83 @@ export function applyGovernanceHydration(record: DelegatedDRepRecord | null): vo
 }
 
 /**
- * The bootstrap watcher and a mounted governance view react to the same
- * `drep_id` change; sharing the in-flight promise keeps that one lookup, not
- * one per consumer.
+ * How long one DRep's record stays fresh. The same window the register uses:
+ * these figures move once an epoch, not once a second.
  */
-let inflight: { drepId: string; promise: Promise<DelegatedDRepRecord | null> } | null = null;
+export const DREP_RECORD_TTL_MS = 5 * 60 * 1000;
 
 /**
- * Fetch the delegated DRep's record, deduped against a concurrent fetch of the
- * same id. Returns the API's own promise (not a wrapper), so an awaiting view
- * resumes on the very tick the response lands.
+ * Every `getDRepById` lookup in the app, memoised per chain/network/id.
+ *
+ * One cache for all of them on purpose. The profile page and My governance ask
+ * for the same record through different paths, and a wallet that opens its own
+ * DRep's profile was fetching ~240 KB it already had in memory. Now whichever
+ * surface asks first pays, and going back and forth between them is free.
+ *
+ * Bounded at 24 records so browsing the directory cannot retain every profile
+ * ever opened — the payload is large, which is the whole reason this is not a
+ * plain Map.
+ */
+const records = createTtlCache<DelegatedDRepRecord | null>(DREP_RECORD_TTL_MS);
+
+const recordKey = (drepId: string, wallet: { chain: string; network: string }): string =>
+  `${wallet.chain}:${wallet.network}:${drepId}`;
+
+/**
+ * One DRep's record, from cache when it is fresh and from the API otherwise.
+ * Concurrent callers share one request; a failure is not cached, so the next
+ * mount can succeed.
+ */
+export function loadDRepRecord(
+  drepId: string,
+  wallet: { chain: string; network: string },
+): Promise<DelegatedDRepRecord | null> {
+  return records.get(recordKey(drepId, wallet), () =>
+    blockchainApi.getDRepById(drepId, wallet.chain, wallet.network),
+  );
+}
+
+/** Whether a record is in hand right now — lets a view skip its skeleton. */
+export function hasDRepRecord(drepId: string, wallet: { chain: string; network: string }): boolean {
+  return records.has(recordKey(drepId, wallet));
+}
+
+/**
+ * When this record was actually fetched, or null when it was not cached.
+ *
+ * What an "as of" stamp must be built from. Stamping `Date.now()` after a cached
+ * read would date five-minute-old figures to this second.
+ */
+export function drepRecordFetchedAt(
+  drepId: string,
+  wallet: { chain: string; network: string },
+): number | null {
+  return records.at(recordKey(drepId, wallet));
+}
+
+/**
+ * Drop a cached record so the next read refetches. Called after delegating: the
+ * delegator counts on the record the user just joined are now wrong.
+ */
+export function forgetDRepRecord(drepId: string, wallet: { chain: string; network: string }): void {
+  records.forget(recordKey(drepId, wallet));
+}
+
+/** Test seam, and the eviction hook for a wallet or network switch. */
+export function resetDRepRecords(): void {
+  records.clear();
+}
+
+/**
+ * Fetch the delegated DRep's record. The bootstrap watcher and a mounted
+ * governance view react to the same `drep_id` change; both go through the shared
+ * cache above, so that is one lookup rather than one per consumer.
  */
 export function fetchDelegatedDRepRecord(
   drepId: string,
   wallet: { chain: string; network: string },
 ): Promise<DelegatedDRepRecord | null> {
-  if (inflight?.drepId === drepId) return inflight.promise;
-  const promise: Promise<DelegatedDRepRecord | null> = blockchainApi.getDRepById(drepId, wallet.chain, wallet.network);
-  inflight = { drepId, promise };
-  const clear = (): void => {
-    if (inflight?.promise === promise) inflight = null;
-  };
-  // Cleanup rides a side branch: it must not extend any caller's await chain,
-  // and each caller still observes the rejection on its own copy.
-  promise.then(clear, clear);
-  return promise;
+  return loadDRepRecord(drepId, wallet);
 }
 
 /**

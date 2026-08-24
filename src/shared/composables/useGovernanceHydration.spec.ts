@@ -16,6 +16,7 @@ vi.mock('@/api/blockchain-api', () => ({ default: { getDRepById: (...args: unkno
 import {
   useGovernanceHydration,
   hydrateGovernanceStore,
+  resetDRepRecords,
 } from './useGovernanceHydration';
 import { walletStore } from '@/stores/walletStore';
 import { governanceStore } from '@/stores/governanceStore';
@@ -49,6 +50,9 @@ async function settle(): Promise<void> {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  // Records are memoised per chain/network/id for five minutes, so without this
+  // each test would be served the previous test's DRep.
+  resetDRepRecords();
   getDRepById.mockResolvedValue(null);
   walletStore.loggedWallet = null;
   walletStore.account = null;

@@ -172,14 +172,21 @@
           <div v-if="focusAreas.length" class="drep-profile__card glass-panel">
             <span class="t-label">{{ $t('governance.whereTheyVote') }}</span>
             <div class="drep-profile__where">
+              <!-- Label and count share the top line, the bar spans the row
+                   beneath them. Side by side, a fixed label track ellipsised
+                   every action type long enough to matter ("Treasury Wit…",
+                   "New Committ…") — the reader could not tell WHICH type they
+                   were reading, which is the entire point of the block. -->
               <div v-for="area in focusAreas" :key="area.type" class="drep-profile__where-row">
-                <span class="t-body-sm drep-profile__where-label">{{ area.label }}</span>
+                <span class="drep-profile__where-head">
+                  <span class="t-body-sm drep-profile__where-label">{{ area.label }}</span>
+                  <span class="t-caption g-num drep-profile__where-value">{{ area.value }}</span>
+                </span>
                 <!-- A bar needs a denominator. Without eligible counts this is a
                      tally, not a rate, and it is drawn as one. -->
                 <span v-if="area.pct !== null" class="drep-profile__where-track">
                   <span class="drep-profile__where-fill" :style="{ width: `${area.pct}%` }"></span>
                 </span>
-                <span class="t-caption g-num drep-profile__where-value">{{ area.value }}</span>
               </div>
             </div>
             <span class="t-caption">
@@ -224,7 +231,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router/composables';
-import blockchainApi from '@/api/blockchain-api';
 import { walletStore } from '@/stores/walletStore';
 import NetworkStore, { networkStore } from '@/stores/networkStore';
 import governanceActionsStore from '@/stores/governanceActionsStore';
@@ -237,11 +243,16 @@ import {
   drepAnchorState,
   drepBio,
   drepDisplayName,
-  drepImageUrl,
   eligibleActionIdsFor,
   epochInflow,
 } from '@/shared/utils/drepView';
+import { drepImageSource } from '@/modules/governance/utils/govAnchor';
 import { parseDRepId, sameDRep, toCip129 } from '@/shared/utils/drepId';
+import {
+  drepRecordFetchedAt,
+  hasDRepRecord,
+  loadDRepRecord,
+} from '@/shared/composables/useGovernanceHydration';
 import { parseGovActionId, type GovActionId } from '@/shared/utils/govActionId';
 import { safeExternalHref, toSafeLinks } from '@/shared/utils/externalLink';
 import { formatInt } from '@/shared/utils/format';
@@ -300,22 +311,28 @@ async function load(): Promise<void> {
   const raw = routeDRepId.value;
   if (!wallet || !raw) return;
 
-  loading.value = true;
+  // The route accepts any of the three id forms; the endpoint keys on the
+  // CIP-129 string it returns, so canonicalise first and only fall back to the
+  // raw parameter if that lookup finds nothing.
+  const parsed = parseDRepId(raw);
+  const canonical =
+    parsed && parsed.form !== 'keyword' ? toCip129(parsed.credentialHex, parsed.credentialType) : null;
+
+  // A record already in hand is rendered immediately rather than behind a
+  // skeleton. Coming back to a profile you were just looking at should not blank
+  // the page and rebuild it — that read as a page that had lost its place.
+  const cached = canonical && hasDRepRecord(canonical, wallet);
+  loading.value = !cached;
   error.value = null;
   try {
-    // The route accepts any of the three id forms; the endpoint keys on the
-    // CIP-129 string it returns, so canonicalise first and only fall back to the
-    // raw parameter if that lookup finds nothing.
-    const parsed = parseDRepId(raw);
-    const canonical =
-      parsed && parsed.form !== 'keyword' ? toCip129(parsed.credentialHex, parsed.credentialType) : null;
-
-    let found = canonical ? await blockchainApi.getDRepById(canonical, wallet.chain, wallet.network) : null;
+    let found = canonical ? await loadDRepRecord(canonical, wallet) : null;
     if (!found && (!canonical || canonical !== raw)) {
-      found = await blockchainApi.getDRepById(raw, wallet.chain, wallet.network);
+      found = await loadDRepRecord(raw, wallet);
     }
     record.value = (found ?? null) as DRepRecord | null;
-    fetchedAt.value = Date.now();
+    // The stamp comes from the CACHE, not the clock: a record served from memory
+    // can be minutes old, and "as of now" would be a claim the data cannot back.
+    fetchedAt.value = (canonical && drepRecordFetchedAt(canonical, wallet)) || Date.now();
   } catch (err) {
     debugLog('DRepProfile: load failed', err);
     error.value = err instanceof Error ? err.message : String(t('errors.unknownError'));
@@ -379,7 +396,7 @@ const health = computed(() =>
 const drepId = computed(() => String(record.value?.drep_id ?? routeDRepId.value));
 const name = computed(() => drepDisplayName(record.value) ?? truncate(drepId.value));
 const bio = computed(() => drepBio(record.value));
-const image = computed(() => drepImageUrl(record.value));
+const image = computed(() => drepImageSource(record.value));
 const isCurrent = computed(() => sameDRep(drepId.value, walletStore.account?.drep_id));
 const links = computed(() => toSafeLinks(record.value?.metadata?.meta_json?.body?.['references']));
 
@@ -782,18 +799,24 @@ async function onDelegate(): Promise<void> {
 }
 .drep-profile__where-row {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: var(--g-s-1);
+}
+.drep-profile__where-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: var(--g-s-2);
 }
+/* No width cap and no ellipsis: the action type IS the label, and a shortened
+   one names nothing. Long types wrap onto a second line instead. */
 .drep-profile__where-label {
-  width: 96px;
-  flex: none;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  color: var(--g-text-2);
 }
 .drep-profile__where-track {
-  flex: 1;
+  display: block;
+  width: 100%;
   height: 6px;
   border-radius: var(--g-r-pill);
   background: var(--g-raised);
@@ -806,9 +829,8 @@ async function onDelegate(): Promise<void> {
   transition: width var(--g-dur-base) var(--g-ease);
 }
 .drep-profile__where-value {
-  width: 44px;
   flex: none;
-  text-align: right;
+  white-space: nowrap;
 }
 .drep-profile__link {
   color: var(--g-text-2);

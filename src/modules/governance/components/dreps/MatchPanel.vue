@@ -322,7 +322,7 @@ const CONCENTRATION_TOP = 10;
  * criteria column must not stretch to match a long result list either. Both
  * columns scroll inside this frame instead.
  */
-const MATCH_DIALOG_HEIGHT = 640;
+const MATCH_DIALOG_HEIGHT = 680;
 /**
  * What the card's own chrome costs above this panel: BaseDialog's `pa-5` top
  * and bottom plus its title/subtitle block. Subtracted rather than measured so
@@ -679,14 +679,25 @@ function chipsFor(entry: DRepMatchEntry): CriterionChip[] {
   border-radius: var(--g-r-card);
 }
 @media (min-width: 901px) {
-  /* Each column scrolls in its own right, so a long result list never stretches
-     the criteria column (or the dialog) to match it. `min-height: 0` lets a
-     grid child shrink below its content; without it both would grow instead. */
+  /* `min-height: 0` lets a grid child shrink below its content; without it both
+     columns would grow and stretch the frame. */
   .match__criteria,
   .match__results {
     min-height: 0;
+  }
+  /* The criteria column scrolls: it is a settings list, and its length is fixed
+     and knowable. */
+  .match__criteria {
     overflow-y: auto;
     overscroll-behavior: contain;
+  }
+  /* The results column does NOT. At most four cards can appear here — three
+     matches plus one near miss — and the frame is sized so all four fit. A
+     scrollbar on results reads as "there is more below", which was never true:
+     the count line already says how many there are, so scrolling only ever hid
+     the last card the reader had asked to see. */
+  .match__results {
+    overflow: hidden;
   }
 }
 .match__criteria-head {
@@ -767,6 +778,10 @@ function chipsFor(entry: DRepMatchEntry): CriterionChip[] {
   display: flex;
   flex-direction: column;
   gap: var(--g-s-2);
+  /* Stacked from the top and never stretched: with one match, the single card
+     keeps its own height instead of growing to fill the column. */
+  flex: none;
+  min-height: 0;
 }
 .match__card {
   display: grid;

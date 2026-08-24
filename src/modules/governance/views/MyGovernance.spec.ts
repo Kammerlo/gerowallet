@@ -49,6 +49,7 @@ import { walletStore } from '@/stores/walletStore';
 import { governanceStore } from '@/stores/governanceStore';
 import { networkStore } from '@/stores/networkStore';
 import governanceActionsStore from '@/stores/governanceActionsStore';
+import { resetDRepRecords } from '@/shared/composables/useGovernanceHydration';
 import governanceAlertsStore from '@/stores/governanceAlertsStore';
 
 /**
@@ -129,6 +130,9 @@ let wrapper: Wrapper<Vue> | null = null;
 beforeEach(() => {
   vi.clearAllMocks();
   withdrawalBlocked.value = false;
+  // Records are memoised per chain/network/id for five minutes, so without this
+  // each test would be served the previous test's DRep.
+  resetDRepRecords();
   getDRepById.mockResolvedValue(null);
   listProposals.mockResolvedValue({ items: [], page: 1, pageSize: 50, total: 0 });
   walletStore.loggedWallet = { chain: 'Cardano', network: 'Mainnet', stakeAddress: 'stake1uexample' };
