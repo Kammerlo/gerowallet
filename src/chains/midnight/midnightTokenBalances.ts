@@ -14,7 +14,15 @@ import type { MidnightUnshieldedUtxo } from './midnightTypes';
 
 /**
  * Native NIGHT is the 32-byte-zero token type. gero-sync sometimes emits an
- * empty string instead (older indexer schemas), so both mean "native".
+ * empty string instead (older indexer schemas), so both mean "native". The
+ * check is deliberately loose: it accepts an all-zero string of ANY length,
+ * not just the canonical 64 hex chars, matching the existing loose copies at
+ * `midnight-sync.service.ts:425` and `midnightStore.ts:956-959`.
+ *
+ * A strict counterpart exists — `isNightOutput` in `midnight-sync.service.ts`
+ * (~line 526) compares against the exported `NIGHT_TOKEN_TYPE_NULL`
+ * constant. This module deliberately does not import it, to stay
+ * dependency-free for unit testing; do not "tidy" the two into agreement.
  */
 export function isNativeNight(tokenType: string | undefined | null): boolean {
   const tt = tokenType ?? '';
@@ -31,7 +39,12 @@ export function isNativeNight(tokenType: string | undefined | null): boolean {
 export function midnightTokenBalances(
   utxos: ReadonlyArray<MidnightUnshieldedUtxo>,
 ): Record<string, bigint> {
-  const balances: Record<string, bigint> = {};
+  // tokenType comes straight from an unvalidated third-party indexer, so a
+  // color equal to "constructor"/"__proto__"/etc. must not collide with
+  // Object.prototype — a null-prototype object avoids both the inherited-value
+  // read (which would silently produce a string instead of a bigint) and the
+  // silent-no-op write on `__proto__` (which would drop that color entirely).
+  const balances: Record<string, bigint> = Object.create(null);
   for (const u of utxos) {
     const tokenType = u.tokenType ?? '';
     if (isNativeNight(tokenType)) continue;

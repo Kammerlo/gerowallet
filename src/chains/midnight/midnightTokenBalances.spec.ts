@@ -27,6 +27,13 @@ describe('isNativeNight', () => {
   it('treats a real token color as non-native', () => {
     expect(isNativeNight(USDM)).toBe(false);
   });
+
+  it('accepts all-zero strings of any length, and null', () => {
+    expect(isNativeNight('0')).toBe(true);
+    expect(isNativeNight('00')).toBe(true);
+    expect(isNativeNight(null)).toBe(true);
+    expect(isNativeNight('0'.repeat(63))).toBe(true);
+  });
 });
 
 describe('midnightTokenBalances', () => {
@@ -55,5 +62,15 @@ describe('midnightTokenBalances', () => {
 
   it('returns an empty map for an empty UTxO set', () => {
     expect(midnightTokenBalances([])).toEqual({});
+  });
+
+  it('handles token colors that collide with Object.prototype keys', () => {
+    const result = midnightTokenBalances([
+      utxo('__proto__', 7n, 0),
+      utxo('constructor', 9n, 1),
+    ]);
+    expect(result['__proto__']).toBe(7n);
+    expect(result['constructor']).toBe(9n);
+    expect(Object.entries(result)).toHaveLength(2);
   });
 });
