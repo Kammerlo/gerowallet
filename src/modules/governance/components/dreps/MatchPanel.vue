@@ -2,13 +2,14 @@
   <BaseDialog
     :isOpen="isOpen"
     size="xl"
-    :min-height="620"
+    :min-height="MATCH_DIALOG_HEIGHT"
+    :height="MATCH_DIALOG_HEIGHT"
     icon="mdi-account-search-outline"
     :title="t('governance.matchTitle')"
     :subtitle="t('governance.matchSubtitle')"
     @close="$emit('close')"
   >
-    <div class="match">
+    <div class="match" :style="{ height: `${matchBodyHeight}px` }">
       <!-- Your priorities -->
       <section class="match__criteria">
         <div class="match__criteria-head">
@@ -314,6 +315,22 @@ const TOP_N = 100;
 /** How many of the largest DReps the concentration fact talks about. */
 const CONCENTRATION_TOP = 10;
 /** How many DReps the pool is drawn from. One page, so one request. */
+/**
+ * The dialog is a FIXED height, passed as both the card's min and max, so it
+ * never resizes with its contents. Reshuffling swaps three cards for three
+ * others and the frame must not move underneath the button that did it; the
+ * criteria column must not stretch to match a long result list either. Both
+ * columns scroll inside this frame instead.
+ */
+const MATCH_DIALOG_HEIGHT = 640;
+/**
+ * What the card's own chrome costs above this panel: BaseDialog's `pa-5` top
+ * and bottom plus its title/subtitle block. Subtracted rather than measured so
+ * the body height is known before first paint and never reflows.
+ */
+const MATCH_DIALOG_CHROME = 148;
+const matchBodyHeight = MATCH_DIALOG_HEIGHT - MATCH_DIALOG_CHROME;
+
 const POOL_SIZE = 100;
 /** How many full matches are drawn from the pool at a time. */
 const SHOWN = 3;
@@ -638,10 +655,10 @@ function chipsFor(entry: DRepMatchEntry): CriterionChip[] {
   grid-template-columns: 340px minmax(0, 1fr);
   gap: var(--g-s-4);
   padding: 0 var(--g-s-4) var(--g-s-4);
-  /* The dialog card does not scroll its slot, so a long result list used to
-     stretch the whole dialog past the viewport (and the criteria column with
-     it). Bound the panel and let each column scroll independently instead. */
-  max-height: min(72vh, 760px);
+  /* Height is bound inline from MATCH_DIALOG_HEIGHT, not inherited: Vuetify
+     detaches the dialog card to [data-app], so a scoped deep selector cannot
+     reliably reach it to make it a flex parent. An explicit height is the one
+     thing that holds regardless of where the card lives in the DOM. */
   min-height: 0;
 }
 @media (max-width: 900px) {
@@ -662,12 +679,14 @@ function chipsFor(entry: DRepMatchEntry): CriterionChip[] {
   border-radius: var(--g-r-card);
 }
 @media (min-width: 901px) {
+  /* Each column scrolls in its own right, so a long result list never stretches
+     the criteria column (or the dialog) to match it. `min-height: 0` lets a
+     grid child shrink below its content; without it both would grow instead. */
   .match__criteria,
   .match__results {
-    max-height: inherit;
+    min-height: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
-    align-self: start;
   }
 }
 .match__criteria-head {

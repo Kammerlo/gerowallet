@@ -24,8 +24,12 @@
  * optional `[n]` reference markers the caller opts into.
  *
  * Deliberately NOT supported:
- *  - italics: single-underscore/asterisk false-positives on token names and
- *    pool ids.
+ *  - italics BY DEFAULT: single-underscore/asterisk false-positives on token
+ *    names and pool ids. Callers rendering prose written for humans rather than
+ *    chat about tokens can opt in with `emphasis: true`, which applies the
+ *    word-boundary guard described on `EMPHASIS_UNDERSCORE` so `SNEK_ADA` and
+ *    `some_field_name` still come through untouched. Governance metadata is
+ *    ordinary prose and uses `_word_` freely, so it opts in.
  *  - images: a remote `<img>` in wallet chrome is a tracking pixel and a CSP
  *    question, so `![alt](url)` degrades to its literal text — the whole
  *    `![alt](url)` string, visible and escaped. It is lifted out BEFORE the
@@ -98,7 +102,26 @@ export interface RenderMarkdownOptions {
    * clickable either.
    */
   hasReference?: (index: number) => boolean;
+  /**
+   * Render `_text_` and `*text*` as emphasis. Off by default: in chat about
+   * tokens and pools, an underscore is far more often part of a name than a
+   * formatting mark. See `EMPHASIS_UNDERSCORE` for the guard that keeps
+   * intra-word underscores literal even when this is on.
+   */
+  emphasis?: boolean;
 }
+
+/**
+ * `_text_` only at word boundaries: the opening mark may not follow a word
+ * character and the closing mark may not precede one, so `SNEK_ADA` and
+ * `some_field_name` keep their underscores while `_NOTE on this:_` becomes
+ * emphasis. The inner run is bounded and cannot span a newline, so a stray
+ * underscore costs a bounded scan rather than the quadratic backtracking an
+ * unbounded run would invite (see the LINK/IMAGE bounds for the same reason).
+ */
+const EMPHASIS_UNDERSCORE = /(^|[^\w`])_(?!\s)([^_\n]{1,300}?)(?<!\s)_(?!\w)/g;
+/** The asterisk spelling. Bold has already been lifted, so any `*` left is single. */
+const EMPHASIS_ASTERISK = /(^|[^\w*`])\*(?!\s)([^*\n]{1,300}?)(?<!\s)\*(?!\w)/g;
 
 function escapeHtml(s: string): string {
   return s
@@ -304,6 +327,14 @@ function renderInline(escaped: string, options: RenderMarkdownOptions): string {
 
   // bold **text**
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+  // Emphasis, opt-in. After bold, so `**x**` is already gone and every
+  // remaining asterisk is a single one; before links, so a marked-up run
+  // inside link text still resolves.
+  if (options.emphasis) {
+    s = s.replace(EMPHASIS_UNDERSCORE, '$1<em>$2</em>');
+    s = s.replace(EMPHASIS_ASTERISK, '$1<em>$2</em>');
+  }
 
   // images stay literal — see the module header for why. Held verbatim so the
   // link rule below never sees them.

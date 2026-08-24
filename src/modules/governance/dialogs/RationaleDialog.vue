@@ -116,7 +116,11 @@ const result = ref<RationaleResult | null>(null);
 const externalHref = computed(() => toExternalHref(props.url));
 
 const rendered = computed(() =>
-  result.value?.status === 'verified' ? result.value.sections.map(section => renderMarkdown(section.text)) : [],
+  // `emphasis: true` — a rationale is prose, and authors use `_word_` freely.
+  // See renderMarkdown's word-boundary guard for why this stays safe.
+  result.value?.status === 'verified'
+    ? result.value.sections.map(section => renderMarkdown(section.text, { emphasis: true }))
+    : [],
 );
 
 /**

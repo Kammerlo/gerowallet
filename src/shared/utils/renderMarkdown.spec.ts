@@ -638,6 +638,71 @@ describe('renderMarkdown, a malformed body cannot blow up the cost', () => {
 // submit one. These cases pin the escape-first contract for every construct the
 // governance surface added, because a table cell or a quote must not become an
 // injection vector the way a paragraph never was.
+// Governance rationales are prose and use `_word_` freely: a real Cardano
+// Foundation rationale rendered a literal `_NOTE on 'Internal Voting':_` in the
+// wallet. Emphasis is opt-in so chat about tokens keeps its underscores.
+describe('renderMarkdown, opt-in emphasis', () => {
+  it('leaves underscores and asterisks literal by default', () => {
+    const out = renderMarkdown("_NOTE on 'Internal Voting':_ and *aside*");
+    expect(out).not.toMatch(/<em>/);
+    expect(out).toContain('_NOTE');
+    expect(out).toContain('*aside*');
+  });
+
+  it('renders both spellings as emphasis when the caller opts in', () => {
+    const out = renderMarkdown('_constitutional_ and *unconstitutional*', { emphasis: true });
+    expect(out).toContain('<em>constitutional</em>');
+    expect(out).toContain('<em>unconstitutional</em>');
+  });
+
+  it('keeps intra-word underscores literal even with emphasis on', () => {
+    // The whole reason emphasis was excluded: these must never become markup.
+    const out = renderMarkdown('SNEK_ADA pairs with some_field_name and pool_id_hex', {
+      emphasis: true,
+    });
+    expect(out).not.toMatch(/<em>/);
+    expect(out).toContain('SNEK_ADA');
+    expect(out).toContain('some_field_name');
+  });
+
+  it('does not treat a lone or unclosed mark as emphasis', () => {
+    const out = renderMarkdown('a _lone underscore and 3 * 4 = 12', { emphasis: true });
+    expect(out).not.toMatch(/<em>/);
+  });
+
+  it('leaves bold intact and does not double-wrap it', () => {
+    const out = renderMarkdown('**bold** then _em_', { emphasis: true });
+    expect(out).toContain('<strong>bold</strong>');
+    expect(out).toContain('<em>em</em>');
+    expect(out).not.toMatch(/<em>\s*<\/em>/);
+  });
+
+  it('still escapes author content inside emphasis', () => {
+    const out = renderMarkdown('_<script>steal()</script>_', { emphasis: true });
+    expect(out).not.toMatch(/<script/i);
+    expect(out).toContain('&lt;script&gt;');
+  });
+
+  it('does not format inside a code span', () => {
+    const out = renderMarkdown('`_not_ emphasis`', { emphasis: true });
+    expect(out).toContain('<code>_not_ emphasis</code>');
+  });
+
+  it('stays linear on a body full of stray underscores', () => {
+    const unit = 'a _b '.repeat(1);
+    const small = unit.repeat(4000);
+    const large = unit.repeat(16000);
+    const t1 = performance.now();
+    renderMarkdown(small, { emphasis: true });
+    const smallMs = performance.now() - t1;
+    const t2 = performance.now();
+    renderMarkdown(large, { emphasis: true });
+    const largeMs = performance.now() - t2;
+    // 4x the input: linear predicts ~4x, quadratic ~16x.
+    expect(largeMs / Math.max(smallMs, 0.5)).toBeLessThan(8);
+  });
+});
+
 describe('renderMarkdown, untrusted-author safety', () => {
   it('renders an embedded script, an onerror attribute and a javascript: url inert', () => {
     const out = renderMarkdown(
