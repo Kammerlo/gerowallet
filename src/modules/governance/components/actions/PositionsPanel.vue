@@ -152,6 +152,7 @@
             :key="row.key"
             :row="row"
             :name="nameOf(row)"
+            :image-url="imageOf(row)"
             :is-yours="isYourRow(row, identity)"
             :route="routeFor(row)"
             @open="openVoter"
@@ -270,6 +271,10 @@ const summary = computed(() => summarizePositions(rows.value));
 
 function nameOf(row: PositionRow): string | null {
   return row.credentialHex ? (names.value.get(row.credentialHex)?.name ?? null) : null;
+}
+
+function imageOf(row: PositionRow): string | null {
+  return row.credentialHex ? (names.value.get(row.credentialHex)?.image ?? null) : null;
 }
 
 const filtered = computed(() =>

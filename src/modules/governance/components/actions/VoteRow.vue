@@ -1,7 +1,6 @@
 <template>
   <div class="vote-row" :class="{ 'vote-row--yours': isYours }">
-    <!-- AVATAR-SLOT: replace with DRepAvatar after merge -->
-    <span class="vote-row__avatar" aria-hidden="true"></span>
+    <DRepAvatar class="vote-row__avatar" :image-url="imageUrl" :name="name" :size="24" />
 
     <span class="t-caption vote-row__role">{{ roleLabel }}</span>
 
@@ -70,6 +69,7 @@ import type { PropType } from 'vue';
 import { useTranslation } from '@/shared/composables/useTranslation';
 import filters from '@/shared/utils/filters';
 import type { PositionRow } from '@/modules/governance/components/actions/positions';
+import DRepAvatar from '@/modules/governance/components/dreps/DRepAvatar.vue';
 
 // Runtime declarations with PropType casts: a type-only `X | null` union
 // compiles to a validator containing null and warns on every render.
@@ -77,6 +77,8 @@ const props = defineProps({
   row: { type: Object as PropType<PositionRow>, required: true },
   /** The voter's published name, or null when they have not published one. */
   name: { type: String as PropType<string | null>, default: null },
+  /** The voter's published avatar, resolved by the name index; null renders the initial. */
+  imageUrl: { type: String as PropType<string | null>, default: null },
   isYours: { type: Boolean, default: false },
   /** Route to this voter's profile, or null when none resolves. */
   route: { type: Object as PropType<Record<string, unknown> | null>, default: null },
