@@ -5,6 +5,8 @@
 // matched by display string so the same credential in another encoding misses.
 import { describe, it, expect } from 'vitest';
 import {
+  committeeNameIndex,
+  committeeNameOf,
   filterPositions,
   isYourRow,
   orderNoteKey,
@@ -15,7 +17,7 @@ import {
 } from './positions';
 import type { PositionFilters } from './positions';
 import { toCip129 } from '@/shared/utils/drepId';
-import type { GovVote } from '@/api/governance.types';
+import type { CommitteeMember, GovVote } from '@/api/governance.types';
 
 const CRED_A = 'aa'.repeat(28);
 const CRED_B = 'bb'.repeat(28);
@@ -29,6 +31,23 @@ function vote(over: Partial<GovVote> = {}): GovVote {
     drepId: DREP_A,
     vote: 'Yes',
     txHash: null,
+    ...over,
+  };
+}
+
+/** Real mainnet credentials: the HOT one a committee vote carries... */
+const CC_HOT = '2ea7a78eb914d988b9d368ed88906f3bc9fc5421667dea6a366710ec';
+/** ...and the COLD one the committee endpoint lists for a member. Different keys. */
+const CC_COLD = '1980dbf1ad624b0cb5410359b5ab14d008561994a6c2b6c53fabec00';
+
+function committeeVote(over: Partial<GovVote> = {}): GovVote {
+  return {
+    voterRole: 'ConstitutionalCommittee',
+    voterHash: CC_HOT,
+    drepId: null,
+    vote: 'Yes',
+    txHash: null,
+    voterId: 'cc_hot1qvh20fuwhy2dnz9e6d5wmzysduaunlz5y9n8m6n2xen3pmqqvyw8v',
     ...over,
   };
 }
@@ -108,6 +127,82 @@ describe('toPositionRows', () => {
     const hex = toPositionRows([vote({ drepId: CRED_A })])[0];
     expect(bech32.credentialHex).toBe(CRED_A);
     expect(hex.credentialHex).toBe(CRED_A);
+  });
+
+  it('keys a committee row separately from a DRep one', () => {
+    const [committee, drep, spo] = toPositionRows([
+      committeeVote(),
+      vote(),
+      vote({ voterRole: 'SPO', drepId: null, voterHash: 'ff'.repeat(28) }),
+    ]);
+    expect(committee.committeeHex).toBe(CC_HOT);
+    // The two indexes never share a key: a committee hash must not be able to
+    // borrow the name of a DRep whose credential happens to equal it.
+    expect(committee.credentialHex).toBeNull();
+    expect(drep.committeeHex).toBeNull();
+    expect(spo.committeeHex).toBeNull();
+  });
+
+  it('refuses a committee hash that is not a credential', () => {
+    // `voterHash` is whatever upstream sent. A short, empty or non-hex value is
+    // not a key — it must not become one that could collide with a real member.
+    expect(toPositionRows([committeeVote({ voterHash: 'not-hex' })])[0].committeeHex).toBeNull();
+    expect(toPositionRows([committeeVote({ voterHash: 'ab' })])[0].committeeHex).toBeNull();
+    expect(toPositionRows([committeeVote({ voterHash: null })])[0].committeeHex).toBeNull();
+  });
+});
+
+// Committee members are named from the committee endpoint, and mostly are NOT:
+// the endpoint lists cold credentials while a vote carries the hot one, and the
+// projection in front of the wallet today sends no `displayName` at all. Every
+// case here is about the same rule — a name is rendered when it is known, and
+// the hash stands in every other time. Nothing infers one.
+describe('committeeNameIndex', () => {
+  function member(over: Partial<CommitteeMember> = {}): CommitteeMember {
+    return { hash: CC_COLD, credType: 'SCRIPTHASH', startEpoch: 581, expiredEpoch: 726, ...over };
+  }
+
+  it('indexes a member that published a name', () => {
+    const index = committeeNameIndex([member({ displayName: 'Tingvard' })]);
+    expect(index.get(CC_COLD)).toBe('Tingvard');
+  });
+
+  it('leaves out a member with no published name', () => {
+    // The live projection sends exactly this shape. An indexed empty string
+    // would render as a blank name where the hash belongs.
+    const index = committeeNameIndex([member(), member({ hash: CC_HOT, displayName: '  ' })]);
+    expect(index.size).toBe(0);
+  });
+
+  it('resolves a row only against a member that is actually in the committee', () => {
+    const index = committeeNameIndex([member({ displayName: 'Tingvard' })]);
+    // A committee vote carries the HOT credential, and the committee lists the
+    // COLD one — verified on mainnet, where the eight members and the committee
+    // rows on a live action overlap on zero hashes. An expired member who voted
+    // is legitimately absent from the current set too. Either way the answer is
+    // "not known", never the name of whichever member happened to be first.
+    const [row] = toPositionRows([committeeVote()]);
+    expect(committeeNameOf(row, index)).toBeNull();
+  });
+
+  it('matches whatever case either side wrote the hash in', () => {
+    const index = committeeNameIndex([member({ hash: CC_HOT.toUpperCase(), displayName: 'Tingvard' })]);
+    const [row] = toPositionRows([committeeVote({ voterHash: CC_HOT.toUpperCase() })]);
+    expect(committeeNameOf(row, index)).toBe('Tingvard');
+  });
+
+  it('names nothing from an absent committee', () => {
+    const [row] = toPositionRows([committeeVote()]);
+    expect(committeeNameOf(row, committeeNameIndex(null))).toBeNull();
+    expect(committeeNameOf(row, null)).toBeNull();
+  });
+
+  it('never names a row of another body', () => {
+    // Same 28 bytes, different body: an SPO or a DRep whose hash equals a
+    // member's must not inherit that member's name.
+    const index = committeeNameIndex([{ hash: CRED_A, credType: null, startEpoch: null, expiredEpoch: null, displayName: 'Tingvard' }]);
+    const [drep] = toPositionRows([vote({ drepId: DREP_A, voterHash: CRED_A })]);
+    expect(committeeNameOf(drep, index)).toBeNull();
   });
 });
 

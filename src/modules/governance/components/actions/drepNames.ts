@@ -25,10 +25,15 @@
 
 import blockchainApi from '@/api/blockchain-api';
 import { parseDRepId } from '@/shared/utils/drepId';
-import { drepDisplayName, drepImageUrl } from '@/shared/utils/drepView';
+import { drepDisplayName } from '@/shared/utils/drepView';
+import { toInAppUrl } from '@/modules/governance/utils/govAnchor';
 
 export interface DRepName {
   name: string | null;
+  /**
+   * The avatar URI exactly as the DRep published it, `ipfs://` included.
+   * `DRepAvatar` is what turns it into something the page can load.
+   */
   image?: string;
 }
 
@@ -64,6 +69,32 @@ const EMPTY: DRepNameIndex = new Map();
 
 const inFlight = new Map<string, Promise<DRepNameIndex>>();
 
+/**
+ * The avatar URI a DRep published, kept in the form they wrote it.
+ *
+ * Deliberately NOT `drepImageUrl()` from `drepView`: that runs the value through
+ * `safeExternalHref`, which allows http(s) only — so every `ipfs://` avatar was
+ * dropped HERE, before `DRepAvatar` could map it onto the backend proxy, and
+ * those rows fell back to the generic glyph even though the DRep had published a
+ * picture. About half of mainnet's avatars are `ipfs://` (see `govAnchor.ts`).
+ *
+ * The value is still scheme-checked, by the SAME shared mapping the avatar uses:
+ * a URI `toInAppUrl` cannot turn into something loadable is not stored at all.
+ * What is stored is the raw URI, so `DRepAvatar` remains the single place that
+ * maps one — this adds no second mapping of its own.
+ */
+function imageSourceOf(record: unknown): string | undefined {
+  if (!record || typeof record !== 'object') return undefined;
+  const meta = (record as { metadata?: { meta_json?: { body?: Record<string, unknown> | null } | null } | null })
+    .metadata;
+  const image = meta?.meta_json?.body?.['image'];
+  if (!image || typeof image !== 'object') return undefined;
+  const raw = (image as Record<string, unknown>)['contentUrl'];
+  if (typeof raw !== 'string') return undefined;
+  const uri = raw.trim();
+  return uri && toInAppUrl(uri) ? uri : undefined;
+}
+
 /** Build the index from records already in hand. Records with no name are still indexed. */
 export function indexDRepRecords(records: unknown[]): Map<string, DRepName> {
   const index = new Map<string, DRepName>();
@@ -71,7 +102,7 @@ export function indexDRepRecords(records: unknown[]): Map<string, DRepName> {
     const id = (record as { drep_id?: unknown })?.drep_id;
     const credentialHex = parseDRepId(typeof id === 'string' ? id : null)?.credentialHex;
     if (!credentialHex) continue;
-    index.set(credentialHex, { name: drepDisplayName(record), image: drepImageUrl(record) });
+    index.set(credentialHex, { name: drepDisplayName(record), image: imageSourceOf(record) });
   }
   return index;
 }

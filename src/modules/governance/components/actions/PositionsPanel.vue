@@ -208,6 +208,7 @@ import type { DRepNameIndex } from '@/modules/governance/components/actions/drep
 import {
   ROLE_ORDER,
   VOTE_CHOICES,
+  committeeNameOf,
   filterPositions,
   isYourRow,
   orderNoteKey,
@@ -239,6 +240,16 @@ const props = defineProps({
   error: { type: String as PropType<string | null>, default: null },
   /** True when the page cap stopped the fetch short of `total`. */
   truncated: { type: Boolean, default: false },
+  /**
+   * Committee credential -> published name, built from the network's committee
+   * by `committeeNameIndex`. Empty by default: a caller that has not loaded the
+   * committee leaves every committee row on its hash, which is the honest
+   * render — it never turns into a placeholder identity.
+   */
+  committeeNames: {
+    type: Map as PropType<ReadonlyMap<string, string>>,
+    default: () => new Map<string, string>(),
+  },
   identity: { type: Object as PropType<PositionIdentity | null>, default: null },
   /**
    * True while the wallet's own delegation is still unread. A null `identity`
@@ -283,10 +294,24 @@ const names = shallowRef<DRepNameIndex>(new Map());
 const rows = computed(() => toPositionRows(props.votes));
 const summary = computed(() => summarizePositions(rows.value));
 
+/**
+ * The voter's published name, from whichever register knows them.
+ *
+ * Two registers, never crossed: DReps resolve through the directory index keyed
+ * on the DRep credential, committee members through the committee index keyed on
+ * theirs. A row that neither knows resolves to null and renders its id — no
+ * register is consulted on the other's behalf.
+ */
 function nameOf(row: PositionRow): string | null {
+  if (row.committeeHex) return committeeNameOf(row, props.committeeNames);
   return row.credentialHex ? (names.value.get(row.credentialHex)?.name ?? null) : null;
 }
 
+/**
+ * The voter's published avatar. DReps only: the committee endpoint carries no
+ * image for a member, so a committee row falls to the initial of its resolved
+ * name (or the generic glyph) rather than borrowing a picture from anywhere.
+ */
 function imageOf(row: PositionRow): string | null {
   return row.credentialHex ? (names.value.get(row.credentialHex)?.image ?? null) : null;
 }

@@ -1,7 +1,7 @@
 <template>
   <div class="body-card glass-panel">
     <div class="body-card__head">
-      <span class="t-heading">{{ bodyLabel }}</span>
+      <span class="t-heading body-card__title">{{ bodyLabel }}</span>
       <span v-if="result.met" class="body-card__verdict body-card__verdict--met t-caption">
         <v-icon x-small color="var(--g-success)" class="mr-1">mdi-check-circle-outline</v-icon>
         {{ $t('governance.thresholdMet') }}
@@ -89,25 +89,31 @@ function fmt(pct: number | null): string {
 <style scoped>
 /* Surface, border and radius come from `glass-panel` (liquid-glass.css): this
    is a top-level card on the detail page, per the ActionDetail artboard.
-   `height: 100%` so a card in a grid track fills it: the bodies sit side by
-   side and must not stair-step because one threshold note wrapped to two
-   lines. */
+   `min-width: 0` because the card's home is a 300px rail: without it the
+   longest unbroken run inside (a body name, a percentage) would set the card's
+   width and push the whole stack past its track. */
 .body-card {
   display: flex;
   flex-direction: column;
   gap: var(--g-s-2);
   padding: var(--g-s-4);
-  height: 100%;
+  min-width: 0;
 }
-/* Wraps rather than squeezing the verdict: a narrow track (side panel, or three
-   bodies on a mid-width window) would otherwise clip the words that ARE the
-   non-colour cue. */
+/* Wraps rather than squeezing the verdict: a narrow rail would otherwise clip
+   the words that ARE the non-colour cue. */
 .body-card__head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: var(--g-s-2);
+  gap: var(--g-s-1) var(--g-s-2);
+}
+/* "Constitutional Committee" is the longest of the three and the rail is the
+   narrowest place it appears: it wraps onto a second line rather than
+   overflowing the card. */
+.body-card__title {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .body-card__verdict {
   display: inline-flex;
@@ -117,15 +123,16 @@ function fmt(pct: number | null): string {
 .body-card__verdict--met {
   color: var(--g-success);
 }
+/* Three figures on one line where they fit, and a tight row gap where they
+   wrap — in the rail they usually take two lines. */
 .body-card__stats {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--g-s-3);
+  gap: var(--g-s-1) var(--g-s-3);
   color: var(--g-text-2);
 }
-/* Pinned to the foot of the card so the counts line up across the row. */
+/* The counts close the card, under whatever the stats line wrapped to. */
 .body-card__counts {
-  margin-top: auto;
   color: var(--g-text-3);
 }
 </style>

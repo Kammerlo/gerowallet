@@ -34,6 +34,7 @@ function row(over: Partial<PositionRow> = {}): PositionRow {
     role: 'DRep',
     id: `drep1${'q'.repeat(50)}`,
     credentialHex: 'aa'.repeat(28),
+    committeeHex: null,
     drepId: `drep1${'q'.repeat(50)}`,
     vote: 'Yes',
     votedAt: 1787463005,
@@ -43,6 +44,25 @@ function row(over: Partial<PositionRow> = {}): PositionRow {
     isDRep: true,
     ...over,
   };
+}
+
+/** A real mainnet committee hot credential, and a real CID for the avatar mapping. */
+const CC_HOT = '2ea7a78eb914d988b9d368ed88906f3bc9fc5421667dea6a366710ec';
+const CID_V1 = 'bafybeickzy3mupolsvukd2pt7huyba7a3wkln7vcfr47wnjkna7no6g72u';
+
+/** A committee row: no DRep credential, no profile route, its hot hash for an id. */
+function committeeRow(over: Partial<PositionRow> = {}): PositionRow {
+  return row({
+    role: 'ConstitutionalCommittee',
+    id: CC_HOT,
+    credentialHex: null,
+    committeeHex: CC_HOT,
+    drepId: null,
+    isDRep: false,
+    hasRationale: false,
+    rationaleHref: undefined,
+    ...over,
+  });
 }
 
 /** A row carrying both of its controls: a named, routable voter with a rationale. */
@@ -176,6 +196,47 @@ describe('VoteRow layout', () => {
 
     expect(wrapper.classes()).toContain('vote-row--yours');
     expect(wrapper.find('.vote-row__chip--yours').text()).toBe('governance.yours');
+    wrapper.destroy();
+  });
+
+  // Every row carries a picture slot, whichever body the voter sits in. What
+  // fills it is the one thing that must not be invented: a published image, the
+  // initial of a published name, or the anonymous glyph.
+  it('routes a published ipfs avatar through the proxy rather than dropping it', () => {
+    // The index stores the URI as the DRep wrote it; DRepAvatar is the single
+    // place that maps one. Before that, an ipfs:// avatar was filtered out one
+    // layer up and the row showed the glyph despite having a picture.
+    const wrapper = mountRow({ imageUrl: `ipfs://${CID_V1}` });
+    const img = wrapper.find('.vote-row__avatar img');
+
+    expect(img.exists()).toBe(true);
+    expect(img.attributes('src')).toContain(`/api/ipfs?path=${CID_V1}`);
+    wrapper.destroy();
+  });
+
+  it('gives a named committee member the same initial fallback as a DRep', () => {
+    // The committee endpoint publishes no image, so a named member's avatar is
+    // their initial — the same treatment a DRep with no picture gets, not a
+    // second-class glyph.
+    const wrapper = mountRow({
+      row: committeeRow(),
+      name: 'Tingvard',
+      imageUrl: null,
+      route: null,
+    });
+
+    expect(wrapper.find('.vote-row__avatar .drep-avatar__initial').text()).toBe('T');
+    expect(wrapper.find('.vote-row__name').text()).toBe('Tingvard');
+    wrapper.destroy();
+  });
+
+  it('leaves an unnamed committee member anonymous rather than inventing one', () => {
+    const wrapper = mountRow({ row: committeeRow(), name: null, imageUrl: null, route: null });
+
+    expect(wrapper.find('img').exists()).toBe(false);
+    expect(wrapper.find('.drep-avatar__initial').exists()).toBe(false);
+    // The hash is what stands in, and it is the row's own.
+    expect(wrapper.find('.vote-row__name').text()).toContain(CC_HOT.slice(0, 6));
     wrapper.destroy();
   });
 
