@@ -330,7 +330,7 @@
  * DRep with no votes has no rationale rate, and printing 0% would accuse them
  * of withholding rationales nobody asked for.
  */
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router/composables';
 import { walletStore } from '@/stores/walletStore';
 import NetworkStore, { networkStore } from '@/stores/networkStore';
@@ -793,11 +793,25 @@ async function loadDRep(): Promise<void> {
 watch(
   () => walletStore.account?.drep_id,
   (next, previous) => {
-    debugLog(`MyGovernance: drep_id watcher fired — previous=${String(previous)} next=${String(next)}`);
+    debugLog(`[MYGOV] drep_id changed: previous=${String(previous)} next=${String(next)}`);
     void loadDRep();
   },
   { immediate: true },
 );
+
+// Temporary instrumentation for a reported "the page reloads every few seconds".
+// The two candidate causes look identical on screen and need different fixes, so
+// these separate them:
+//
+//   [MYGOV] drep_id changed ... next=undefined   -> the account row really is
+//       losing the field, and the cause is still upstream of this view.
+//   [MYGOV] mounted (repeatedly, without a drep_id line)
+//       -> the view is being torn down and rebuilt; the watcher is innocent and
+//       the cause is routing or a keyed parent.
+//
+// Filter the console on "[MYGOV]". Remove all three logs once the cause is known.
+onMounted(() => debugLog('[MYGOV] mounted'));
+onUnmounted(() => debugLog('[MYGOV] unmounted'));
 </script>
 
 <style scoped>
