@@ -32,6 +32,7 @@ vi.mock('@/api/blockchain-api', () => ({ default: { getDRepById: mockGetDRepById
 
 import store, {
   ALERT_CHECK_FAILED_KEY,
+  alertWatchKey,
   ALERT_SETTINGS_KEY,
   ALERT_SNOOZES_KEY,
   DEFAULT_DISMISS_EPOCHS,
@@ -671,5 +672,50 @@ describe('store.refresh', () => {
     mockWalletStore['loggedWallet'] = { id: 2, chain: 'Bitcoin', network: 'mainnet' };
     await store.refresh();
     expect(mockGetDRepById).not.toHaveBeenCalled();
+  });
+});
+
+describe('alertWatchKey', () => {
+  // The bug this pins. The watcher's source used to be a getter returning a new
+  // ARRAY; `watch` compares with Object.is, so two arrays carrying the same four
+  // values compared as CHANGED and the callback ran on every reactive read.
+  // `currentEpoch()` reads the tip, which gero-sync replaces roughly every 20
+  // seconds, so the watchdog re-fetched a ~240 KB DRep record and raised its
+  // loading flag once per block. On screen that read as the page reloading every
+  // few seconds.
+  //
+  // Asserted on the KEY rather than by driving the watcher, because the store
+  // mocks here cannot: Vue 2 cannot observe a property added to an object after
+  // `reactive()` saw it, and `tip` is assigned in `beforeEach`. Verified — a
+  // watcher on the mocked tip never fires at all.
+  it('is unchanged by a new tip object inside the same epoch', () => {
+    setTip(EPOCH);
+    const before = alertWatchKey();
+
+    // A new block: a different object, the same epoch.
+    setTip(EPOCH);
+
+    expect(alertWatchKey()).toBe(before);
+  });
+
+  it('changes on an epoch rollover', () => {
+    setTip(EPOCH);
+    const before = alertWatchKey();
+
+    setTip(EPOCH + 1);
+
+    expect(alertWatchKey()).not.toBe(before);
+  });
+
+  it('changes when the delegation or the lock state changes', () => {
+    setTip(EPOCH);
+    const before = alertWatchKey();
+
+    mockWalletStore['account'] = withAccount({ drep_id: 'drep1yfrsomeoneelse' });
+    const afterDelegation = alertWatchKey();
+    expect(afterDelegation).not.toBe(before);
+
+    mockWalletStore['isLocked'] = true;
+    expect(alertWatchKey()).not.toBe(afterDelegation);
   });
 });

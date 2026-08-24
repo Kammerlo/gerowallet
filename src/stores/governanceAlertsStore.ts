@@ -569,9 +569,19 @@ const actions = {
       return;
     }
 
-    state.loading = true;
+    // Only raise `loading` when there is nothing on screen yet. A re-evaluation
+    // with alerts already computed must not turn the panel back into a skeleton
+    // — that reflows the page around it, which is what a reader sees as "it
+    // reloaded". Same rule as MyGovernance's own loading flag.
+    state.loading = state.evaluatedAt === null;
     state.errorKey = null;
     try {
+      // Deliberately the client directly, NOT the shared record cache. The
+      // watchdog has to be able to see a lookup fail: served a cached record it
+      // would report a clean bill of health from data it did not just check, and
+      // `errorKey` would never light during an outage inside the TTL. The
+      // duplicate fetch this costs is now at most one per epoch — see the
+      // watcher above, which no longer fires per block.
       const { default: blockchainApi } = await import('@/api/blockchain-api');
       const record = await blockchainApi.getDRepById(drepId, wallet.chain, wallet.network);
       this.evaluate(account, record as DelegatedDRepRecord | null, currentEpoch());
@@ -617,15 +627,30 @@ const actions = {
  * has to light without the user having opened the governance page first, and
  * because the panel's parent view belongs to another surface.
  */
+/**
+ * The four values a re-check depends on, as ONE STRING.
+ *
+ * A string because `watch` compares a getter's result with `Object.is`. This was
+ * an array literal, rebuilt on every evaluation, so two arrays holding the same
+ * four values were never the same object and the callback fired on every
+ * reactive READ of its dependencies rather than on every change. `currentEpoch()`
+ * reads the tip, and gero-sync replaces the tip about every 20 seconds, so the
+ * watchdog pulled a ~240 KB DRep record and raised its loading flag once per
+ * BLOCK — which is precisely what the comment on `startAlertWatcher` says it
+ * must not do. Joined to a primitive, the comparison is by value again.
+ */
+export function alertWatchKey(): string {
+  return [
+    walletStore.loggedWallet?.id ?? '',
+    walletStore.account?.drep_id ?? '',
+    walletStore.isLocked,
+    currentEpoch() ?? '',
+  ].join('|');
+}
+
 export function startAlertWatcher(): () => void {
   const stopEvaluation = watch(
-    () =>
-      [
-        walletStore.loggedWallet?.id ?? null,
-        walletStore.account?.drep_id ?? null,
-        walletStore.isLocked,
-        currentEpoch(),
-      ] as const,
+    alertWatchKey,
     () => {
       void actions.refresh();
     },
