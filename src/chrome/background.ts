@@ -5310,12 +5310,15 @@ app.add(MIDNIGHT_METHOD.getUnshieldedBalances, async (request, sendResponse) => 
     const tt = u.tokenType ?? '';
     if (tt === '' || tt === NIGHT_TOKEN_TYPE_NULL) night += u.value;
   }
-  sendResponse({
-    id: request.id,
-    data: night > 0n ? { [NIGHT_TOKEN_TYPE_NULL]: night.toString() } : {},
-    target: TARGET,
-    sender: SENDER.extension,
-  });
+  // Every non-native color the wallet holds, alongside NIGHT. Keys are the raw
+  // 32-byte token colors; NIGHT is reported under the canonical zero key above.
+  const { midnightTokenBalances } = await import('@/chains/midnight/midnightTokenBalances');
+  const data: Record<string, string> = {};
+  if (night > 0n) data[NIGHT_TOKEN_TYPE_NULL] = night.toString();
+  for (const [color, amount] of Object.entries(midnightTokenBalances(midnightStore.utxos))) {
+    data[color] = amount.toString();
+  }
+  sendResponse({ id: request.id, data, target: TARGET, sender: SENDER.extension });
 });
 
 app.add(MIDNIGHT_METHOD.getShieldedBalances, async (request, sendResponse) => {
