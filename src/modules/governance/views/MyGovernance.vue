@@ -226,7 +226,15 @@
         </div>
 
         <!-- Become a DRep. Hidden when the wallet already is one. -->
-        <div v-if="status.status !== 'selfDRep'" class="my-governance__promo glass-panel">
+        <!-- Registration rides the voting sub-flag, because it posts a deposit
+             and a certificate on chain. Offering the card without it produced a
+             button that bounced off the router's own gate straight back to the
+             dashboard: every OTHER way in (nav drawer, global search, the vote
+             CTAs) already checked the flag, and only this one did not. -->
+        <div
+          v-if="status.status !== 'selfDRep' && registrationAvailable"
+          class="my-governance__promo glass-panel"
+        >
           <span class="my-governance__choice-icon">
             <v-icon size="20" color="var(--g-accent)">mdi-shield-check-outline</v-icon>
           </span>
@@ -279,6 +287,7 @@ import { useRouter } from 'vue-router/composables';
 import { walletStore } from '@/stores/walletStore';
 import NetworkStore, { networkStore } from '@/stores/networkStore';
 import governanceActionsStore from '@/stores/governanceActionsStore';
+import { featureFlagsStore } from '@/stores/featureFlagsStore';
 import {
   applyGovernanceHydration,
   fetchDelegatedDRepRecord,
@@ -556,7 +565,11 @@ const heroCta = computed<{ labelKey: string; run: () => void } | null>(() => {
     case 'drepInactiveSoon':
       return { labelKey: 'governance.findAReplacement', run: () => goToDReps() };
     case 'selfDRep':
-      return { labelKey: 'governance.manageRegistration', run: () => goToRegister() };
+      // Managing a registration lands on the same gated route as creating one,
+      // so with voting off there is no CTA to offer rather than one that bounces.
+      return registrationAvailable.value
+        ? { labelKey: 'governance.manageRegistration', run: () => goToRegister() }
+        : null;
     case 'notInGovernance':
       return { labelKey: 'governance.goToStaking', run: () => router.push({ name: 'staking' }) };
     default:
@@ -612,8 +625,25 @@ function goToActions(): void {
   router.push({ name: 'governanceActions' });
 }
 
+/**
+ * Whether the registration route can actually be reached.
+ *
+ * The router gates `governanceRegister` on the voting sub-flag as well as the
+ * master one, because registering posts a deposit and a certificate on chain.
+ * Read here so the affordances match the gate instead of leading into a
+ * redirect.
+ */
+const registrationAvailable = computed(
+  () => featureFlagsStore.isGovernanceEnabled() && featureFlagsStore.isGovernanceVotingEnabled(),
+);
+
 function goToRegister(): void {
-  router.push({ name: 'governanceRegister' });
+  // A guard redirect REJECTS the push promise (vue-router 3.4+), and
+  // `router.onError` does not see it — that is the "Redirected when going from
+  // ... via a navigation guard" left unhandled in the console. The flag can also
+  // flip between render and click, so this stays defensive even now that the
+  // affordances are gated.
+  void Promise.resolve(router.push({ name: 'governanceRegister' })).catch(() => undefined);
 }
 
 /**

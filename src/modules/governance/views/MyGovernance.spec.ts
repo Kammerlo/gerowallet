@@ -50,6 +50,7 @@ import { governanceStore } from '@/stores/governanceStore';
 import { networkStore } from '@/stores/networkStore';
 import governanceActionsStore from '@/stores/governanceActionsStore';
 import { resetDRepRecords } from '@/shared/composables/useGovernanceHydration';
+import { featureFlagsStore } from '@/stores/featureFlagsStore';
 import governanceAlertsStore from '@/stores/governanceAlertsStore';
 
 /**
@@ -141,6 +142,12 @@ beforeEach(() => {
   governanceStore.currentDRep = null;
   governanceStore.currentCompensationBps = null;
   governanceActionsStore.reset();
+  // Both governance flags are pinned rather than read from the ambient store, so
+  // these cases do not depend on what the flag service happens to answer. ON is
+  // the baseline: it is the page with every affordance reachable. The gate that
+  // turns the registration CTA off has its own cases below.
+  vi.spyOn(featureFlagsStore, 'isGovernanceEnabled').mockReturnValue(true);
+  vi.spyOn(featureFlagsStore, 'isGovernanceVotingEnabled').mockReturnValue(true);
 });
 
 afterEach(() => {
@@ -726,5 +733,52 @@ describe('MyGovernance', () => {
     expect(html).toContain('governance.drepLookupFailed');
     // The state surfaces are gone; only the error is offered, with its retry.
     expect(html).not.toContain('governance.howYourStakeWasCast');
+  });
+  describe('the registration gate', () => {
+    // Registering posts a deposit and a certificate on chain, so the router
+    // gates `governanceRegister` on the VOTING sub-flag as well as the master
+    // one. Every other way in already honoured that; this page did not, so the
+    // "Become a DRep" card was a button that bounced off the guard straight back
+    // to the dashboard, leaving an unhandled navigation rejection behind it.
+    it('offers no registration card while voting is off', async () => {
+      vi.spyOn(featureFlagsStore, 'isGovernanceVotingEnabled').mockReturnValue(false);
+      represented();
+      getDRepById.mockResolvedValue({ registered: true, votes: [] });
+
+      wrapper = mountPage();
+      await settle();
+
+      expect(wrapper.find('.my-governance__promo').exists()).toBe(false);
+      expect(wrapper.html()).not.toContain('navigation.becomeDRep');
+    });
+
+    it('offers it once voting is on', async () => {
+      represented();
+      getDRepById.mockResolvedValue({ registered: true, votes: [] });
+
+      wrapper = mountPage();
+      await settle();
+
+      expect(wrapper.find('.my-governance__promo').exists()).toBe(true);
+      expect(wrapper.html()).toContain('navigation.becomeDRep');
+    });
+
+    it('raises no manage-registration CTA for a self-DRep while voting is off', async () => {
+      // The same gated route by another door: managing a registration lands on
+      // `governanceRegister` too, so with voting off there is nothing to offer.
+      vi.spyOn(featureFlagsStore, 'isGovernanceVotingEnabled').mockReturnValue(false);
+      walletStore.account = {
+        active: true,
+        drep_id: 'drep1yfrexample',
+        controlled_amount: '23718000000',
+        withdrawable_amount: '0',
+      } as unknown as typeof walletStore.account;
+      getDRepById.mockResolvedValue({ registered: true, votes: [] });
+
+      wrapper = mountPage();
+      await settle();
+
+      expect(wrapper.html()).not.toContain('governance.manageRegistration');
+    });
   });
 });
