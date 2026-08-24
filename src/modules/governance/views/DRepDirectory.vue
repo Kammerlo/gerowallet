@@ -247,31 +247,12 @@
         </div>
       </div>
 
-      <!-- The two predefined options. Not DReps, so they never enter the list or
-           the match pool — they are a separate, explicitly labelled choice. -->
-      <div ref="predefinedEl" class="drep-directory__predefined">
-        <div
-          v-for="option in PREDEFINED"
-          :key="option.kind"
-          :data-choice="option.kind"
-          class="drep-directory__predefined-card"
-          :class="{ 'drep-directory__predefined-card--highlight': highlightedChoice === option.kind }"
-        >
-          <v-icon size="18" color="var(--g-text-3)">{{ option.icon }}</v-icon>
-          <span class="drep-directory__predefined-text">
-            <span class="t-body-lg">{{ $t(option.title) }}</span>
-            <span class="t-caption">{{ $t(option.description) }}</span>
-          </span>
-          <GButton
-            tier="secondary"
-            compact
-            :loading="building === option.id"
-            @click="onDelegatePredefined(option.kind)"
-          >
-            {{ $t('governance.choose') }}
-          </GButton>
-        </div>
-      </div>
+      <!-- Always Abstain and Always No Confidence used to sit here, below 1,682
+           rows. They are not DReps and they are not a browsing decision: they
+           are how you change YOUR OWN delegation, so they live on My governance
+           where that is the subject. The side panel still hands its parked
+           choice to this page through `pendingIntent` below — that path has no
+           cards and never did. -->
 
       <!-- Footer -->
       <div class="drep-directory__footer">
@@ -324,7 +305,7 @@
 
 <script setup lang="ts">
 import '@/shared/styles/compact-pagination.css';
-import { computed, nextTick, onMounted, onUnmounted, ref, watch, getCurrentInstance } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch, getCurrentInstance } from 'vue';
 import { useRouter } from 'vue-router/composables';
 import blockchainApi from '@/api/blockchain-api';
 import { walletStore } from '@/stores/walletStore';
@@ -420,23 +401,6 @@ interface Column {
   /** Must match the class on the matching row cell — one grid, two elements. */
   cls: string;
 }
-
-const PREDEFINED = [
-  {
-    kind: 'abstain' as const,
-    id: 'drep_always_abstain',
-    icon: 'mdi-minus-circle-outline',
-    title: 'governance.alwaysAbstain',
-    description: 'governance.alwaysAbstainDesc',
-  },
-  {
-    kind: 'noConfidence' as const,
-    id: 'drep_always_no_confidence',
-    icon: 'mdi-close-circle-outline',
-    title: 'governance.alwaysNoConfidence',
-    description: 'governance.noConfidenceDesc',
-  },
-];
 
 const PER_PAGE = 15;
 
@@ -861,10 +825,6 @@ async function onDelegate(record: DRepRecord): Promise<void> {
   });
 }
 
-async function onDelegatePredefined(kind: PredefinedDRep): Promise<void> {
-  await delegateToPredefined(kind);
-}
-
 // ---------------------------------------------------------------------------
 // Deferred delegation intents
 // ---------------------------------------------------------------------------
@@ -873,11 +833,12 @@ async function onDelegatePredefined(kind: PredefinedDRep): Promise<void> {
  * Two surfaces hand a delegation to this page rather than building it
  * themselves, and both land in the same queue:
  *
- *  - MyGovernance's locked-rewards hero routes its abstain / no-confidence cards
- *    here as `?choice=`.
  *  - The side panel has no signing surface for certificates (hardware, PassKey
  *    and Keystone all live in DRepDelegateDialog), so it parks the choice via
  *    `setPendingDRepDelegation` and opens this route.
+ *  - A `?choice=` deep link, still honoured for any older surface or bookmark
+ *    that carries one. My governance no longer needs it: it signs its own
+ *    abstain / no-confidence certificates in place.
  *
  * Neither fires on mount. A tab opened straight from either surface mounts well
  * before its wallet data lands, and building then would hit a null `epochParams`
@@ -890,8 +851,6 @@ type PendingIntent =
   | { kind: 'drep'; drep: PendingDRep };
 
 const pendingIntent = ref<PendingIntent | null>(null);
-const highlightedChoice = ref<PredefinedDRep | null>(null);
-const predefinedEl = ref<HTMLElement | null>(null);
 
 function asChoice(value: unknown): PredefinedDRep | null {
   return value === 'abstain' || value === 'noConfidence' ? value : null;
@@ -956,22 +915,6 @@ watch(delegationInputsReady, () => {
   void runPendingIntent();
 });
 
-/** Bring the named card into view once the list it sits under has rendered. */
-function revealChoice(): void {
-  const choice = highlightedChoice.value;
-  if (!choice) return;
-  void nextTick(() => {
-    const card = predefinedEl.value?.querySelector(`[data-choice="${choice}"]`);
-    if (!(card instanceof HTMLElement)) return;
-    const reducedMotion =
-      typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    card.scrollIntoView({ block: 'nearest', behavior: reducedMotion ? 'auto' : 'smooth' });
-  });
-}
-
-// The cards only exist once rows have rendered, so the scroll waits for data.
-watch(rows, () => revealChoice());
-
 onMounted(async () => {
   // A `?drep=` deep link from global search pre-fills the search box, exactly
   // as the pre-split surface did.
@@ -989,7 +932,6 @@ onMounted(async () => {
   const choice = asChoice(instance?.proxy?.$route?.query?.['choice']);
   if (choice) {
     pendingIntent.value = { kind: choice };
-    highlightedChoice.value = choice;
     // Strip the query once claimed. Leaving it would re-open a signing dialog
     // on every refresh or back-navigation to this URL, which the user never
     // asked for a second time.
@@ -1001,7 +943,6 @@ onMounted(async () => {
     const parked = await takePendingDRepDelegation();
     if (parked) {
       pendingIntent.value = asIntent(parked);
-      highlightedChoice.value = asChoice(parked.kind);
     }
   }
   void runPendingIntent();
@@ -1373,29 +1314,6 @@ onUnmounted(() => {
   align-self: stretch;
   padding-left: var(--g-s-4);
   border-left: 1px solid var(--g-hairline-1);
-}
-.drep-directory__predefined {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: var(--g-s-2);
-}
-.drep-directory__predefined-card {
-  display: flex;
-  align-items: center;
-  gap: var(--g-s-3);
-  padding: var(--g-s-3) var(--g-s-4);
-  border: 1px dashed var(--g-hairline-3);
-  border-radius: var(--g-r-card);
-}
-.drep-directory__predefined-card--highlight {
-  border-style: solid;
-  border-color: var(--g-accent);
-}
-.drep-directory__predefined-text {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
 }
 .drep-directory__footer {
   display: flex;

@@ -123,7 +123,7 @@
               <span class="t-heading">{{ $t('governance.alwaysAbstain') }}</span>
               <p class="t-body-sm my-governance__choice-copy">{{ $t('governance.abstainChoiceDesc') }}</p>
               <p class="t-caption my-governance__choice-note">{{ $t('governance.abstainChoiceNote') }}</p>
-              <GButton tier="secondary" block class="my-governance__choice-cta" @click="goToDReps('abstain')">
+              <GButton tier="secondary" block class="my-governance__choice-cta" @click="delegateToPredefined('abstain')">
                 {{ $t('governance.chooseAbstain') }}
               </GButton>
             </div>
@@ -138,7 +138,7 @@
               <span class="t-heading">{{ $t('governance.alwaysNoConfidence') }}</span>
               <p class="t-body-sm my-governance__choice-copy">{{ $t('governance.noConfidenceChoiceDesc') }}</p>
               <p class="t-caption my-governance__choice-note">{{ $t('governance.noConfidenceChoiceNote') }}</p>
-              <GButton tier="secondary" block class="my-governance__choice-cta" @click="goToDReps('noConfidence')">
+              <GButton tier="secondary" block class="my-governance__choice-cta" @click="delegateToPredefined('noConfidence')">
                 {{ $t('governance.chooseNoConfidence') }}
               </GButton>
             </div>
@@ -200,6 +200,48 @@
 
           <p class="t-caption my-governance__record-note">{{ $t('governance.onlyCastVotesCount') }}</p>
         </div>
+
+        <!-- ── Already delegated: the ways to change it ──────────────────── -->
+        <!-- There is no "undelegate" in CIP-1694. Once a stake key carries a
+             vote delegation the only certificate that removes it is one that
+             REPLACES it, so stepping back from a DRep means choosing Abstain.
+             Offering a button labelled "undelegate" would promise a state the
+             ledger does not have; these are the three that exist. -->
+        <section v-if="canChangeDelegation" class="my-governance__change glass-panel">
+          <div class="my-governance__panel-head">
+            <span class="t-label">{{ $t('governance.changeDelegationTitle') }}</span>
+            <p class="t-body-sm">{{ $t('governance.changeDelegationHint') }}</p>
+          </div>
+
+          <div class="my-governance__change-row">
+            <GButton tier="secondary" compact @click="goToDReps()">
+              <v-icon left size="16">mdi-account-search-outline</v-icon>
+              {{ $t('governance.changeToAnotherDRep') }}
+            </GButton>
+            <GButton
+              tier="secondary"
+              compact
+              :disabled="isAbstaining"
+              :loading="building === 'drep_always_abstain'"
+              @click="delegateToPredefined('abstain')"
+            >
+              <v-icon left size="16">mdi-minus-circle-outline</v-icon>
+              {{ isAbstaining ? $t('governance.alreadyAbstaining') : $t('governance.stepBackToAbstain') }}
+            </GButton>
+            <GButton
+              tier="secondary"
+              compact
+              :disabled="isNoConfidence"
+              :loading="building === 'drep_always_no_confidence'"
+              @click="delegateToPredefined('noConfidence')"
+            >
+              <v-icon left size="16">mdi-close-circle-outline</v-icon>
+              {{ isNoConfidence ? $t('governance.alreadyNoConfidence') : $t('governance.chooseNoConfidence') }}
+            </GButton>
+          </div>
+
+          <p class="t-caption my-governance__change-note">{{ $t('governance.changeDelegationNote') }}</p>
+        </section>
       </div>
 
       <aside class="my-governance__side">
@@ -255,6 +297,12 @@
     </div>
 
     <WithdrawGateDialog :is-open="withdrawalBlocked" @close="closeWithdrawalDialog()" />
+
+    <!-- The certificate is signed HERE now. Hardware, PassKey and Keystone all
+         live inside this dialog, which is why the choice used to be routed to
+         the directory to be made; there is no reason the reader has to travel
+         to change their own delegation. -->
+    <DRepDelegateDialog :isOpen="isDialogOpen" :drep="selectedDRep" :tx="tx" @close="closeDialog()" />
     <!-- Mounted only while open: opening it is what sends the request, and a
          request to an author's host must follow a click, never a render. -->
     <RationaleDialog
@@ -307,6 +355,8 @@ import { canonicalActionKey } from '@/shared/utils/drepView';
 import { parseGovActionId, type GovActionId } from '@/shared/utils/govActionId';
 import AsOf from '@/modules/governance/components/actions/AsOf.vue';
 import WithdrawGateDialog from '@/modules/governance/dialogs/WithdrawGateDialog.vue';
+import DRepDelegateDialog from '@/modules/governance/dialogs/DRepDelegateDialog.vue';
+import { useDRepDelegation } from '@/modules/governance/composables/useDRepDelegation';
 import RationaleDialog from '@/modules/governance/dialogs/RationaleDialog.vue';
 import GButton from '@/shared/components/GButton/GButton.vue';
 import EmptyState from '@/shared/components/feedback/EmptyState.vue';
@@ -617,6 +667,23 @@ function openAction(id: GovActionId): void {
   router.push({ name: 'governanceAction', params: { txHash: id.txHash, index: String(id.index) } });
 }
 
+/**
+ * Delegation, driven from this page. The same composable the directory uses, so
+ * the certificate, the fee and the signing surface are identical wherever the
+ * choice is made.
+ */
+const { selectedDRep, tx, isDialogOpen, building, delegateToPredefined, closeDialog } = useDRepDelegation();
+
+const isAbstaining = computed(() => walletStore.account?.drep_id === 'drep_always_abstain');
+const isNoConfidence = computed(() => walletStore.account?.drep_id === 'drep_always_no_confidence');
+
+/**
+ * Whether there is a delegation to change. False for a stake key with none —
+ * that case is the `registeredNoDRep` block above, which is a different
+ * conversation (it is blocking withdrawals) and already offers all three.
+ */
+const canChangeDelegation = computed(() => !!walletStore.account?.drep_id);
+
 function goToDReps(choice?: string): void {
   router.push({ name: 'governanceDReps', query: choice ? { choice } : undefined });
 }
@@ -690,7 +757,12 @@ async function loadDRep(): Promise<void> {
     return;
   }
 
-  loading.value = true;
+  // Only blank the page when there is nothing on it yet. A REFRESH keeps what
+  // is already rendered and swaps the new record in underneath it: this view
+  // re-reads whenever the delegation changes, and turning the whole page into
+  // skeletons for the duration threw the layout — the alerts panel jumped every
+  // time. Correct regardless of what triggers the re-read.
+  loading.value = record.value === null;
   try {
     record.value = await fetchDelegatedDRepRecord(drepId, wallet);
     fetchedAt.value = Date.now();
@@ -711,7 +783,21 @@ async function loadDRep(): Promise<void> {
 // Re-reads whenever the delegation itself changes, so delegating from another
 // surface (or a confirmation landing via Gero Sync) refreshes this page instead
 // of stranding it on the previous DRep until a reload.
-watch(() => walletStore.account?.drep_id, () => void loadDRep(), { immediate: true });
+//
+// The log is temporary instrumentation. This page was reported reloading every
+// few seconds, and the first fix (stopping a partial gero-sync account push from
+// erasing `drep_id` — see walletBg.setAccountInfo) did not end it. Rather than
+// guess again: this prints WHICH values the watcher saw change, which separates
+// "drep_id really is flapping" from "something else is re-mounting the view".
+// Remove once the cause is confirmed.
+watch(
+  () => walletStore.account?.drep_id,
+  (next, previous) => {
+    debugLog(`MyGovernance: drep_id watcher fired — previous=${String(previous)} next=${String(next)}`);
+    void loadDRep();
+  },
+  { immediate: true },
+);
 </script>
 
 <style scoped>
@@ -955,6 +1041,21 @@ watch(() => walletStore.account?.drep_id, () => void loadDRep(), { immediate: tr
 /* ---- Honesty strip ---- */
 /* Solid on purpose: glass means "this floats above content", and a one-line
    footnote under three cards is the most static thing on the page. */
+.my-governance__change {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-s-3);
+  padding: var(--g-s-4);
+}
+.my-governance__change-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--g-s-2);
+}
+.my-governance__change-note {
+  margin: 0;
+}
+
 .my-governance__honesty {
   display: flex;
   align-items: center;
@@ -996,6 +1097,7 @@ watch(() => walletStore.account?.drep_id, () => void loadDRep(), { immediate: tr
 .my-governance__row {
   display: flex;
   align-items: center;
+  padding: var(--g-s-2) 0;
   gap: var(--g-s-3);
   min-height: var(--g-row-h-panel);
   border-bottom: 1px solid var(--g-hairline-1);
@@ -1004,13 +1106,14 @@ watch(() => walletStore.account?.drep_id, () => void loadDRep(), { immediate: tr
 .my-governance__row:last-child {
   border-bottom: none;
 }
+/* No ellipsis. The action TYPE is the whole label, and "Treasury With…" names
+   nothing — the reader cannot tell a withdrawal from a parameter change. It
+   wraps inside a fixed track instead, so the titles beside it stay aligned. */
 .my-governance__row-type {
-  width: 120px;
+  width: 132px;
   flex: none;
   color: var(--g-text-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.35;
 }
 .my-governance__row-title {
   flex: 1;

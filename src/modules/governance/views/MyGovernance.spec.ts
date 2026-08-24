@@ -40,6 +40,14 @@ vi.mock('@/modules/governance/dialogs/RationaleDialog.vue', () => ({
   default: { name: 'RationaleDialog', props: ['isOpen', 'url', 'hash', 'actionTitle'], render: () => null },
 }));
 
+// Same reason DRepDirectory.spec mocks it: the real dialog pulls the hardware
+// signing chain (Ledger/Trezor/Keystone) into the module graph, which does not
+// resolve under vitest. This page is asserted on WHICH delegation it offers, not
+// on what the dialog does with the certificate afterwards.
+vi.mock('@/modules/governance/dialogs/DRepDelegateDialog.vue', () => ({
+  default: { name: 'DRepDelegateDialog', props: ['isOpen', 'drep', 'tx'], render: () => null },
+}));
+
 const push = vi.fn();
 vi.mock('vue-router/composables', () => ({ useRouter: () => ({ push: (...args: unknown[]) => push(...args) }) }));
 
@@ -779,6 +787,59 @@ describe('MyGovernance', () => {
       await settle();
 
       expect(wrapper.html()).not.toContain('governance.manageRegistration');
+    });
+  });
+  describe('changing an existing delegation', () => {
+    // Raised in testing: the only place to pick Always Abstain / Always No
+    // Confidence was the bottom of a 1,682-row directory, and a delegated wallet
+    // had no way to step back from its DRep at all.
+    it('offers the ways to change it once a DRep is delegated', async () => {
+      represented();
+      getDRepById.mockResolvedValue({ registered: true, votes: [] });
+
+      wrapper = mountPage();
+      await settle();
+
+      const change = wrapper.find('.my-governance__change');
+      expect(change.exists()).toBe(true);
+      expect(change.text()).toContain('governance.changeToAnotherDRep');
+      expect(change.text()).toContain('governance.stepBackToAbstain');
+      expect(change.text()).toContain('governance.chooseNoConfidence');
+      // States the ledger rule rather than offering an "undelegate" that CIP-1694
+      // has no certificate for.
+      expect(change.text()).toContain('governance.changeDelegationNote');
+    });
+
+    it('does not offer to change a delegation that does not exist', async () => {
+      // No drep_id: that is the registeredNoDRep conversation above, which is
+      // about unblocking withdrawals and already offers all three.
+      walletStore.account = {
+        active: true,
+        controlled_amount: '23718000000',
+        withdrawable_amount: '0',
+      } as unknown as typeof walletStore.account;
+
+      wrapper = mountPage();
+      await settle();
+
+      expect(wrapper.find('.my-governance__change').exists()).toBe(false);
+    });
+
+    it('marks the choice already in force rather than offering it again', async () => {
+      walletStore.account = {
+        active: true,
+        drep_id: 'drep_always_abstain',
+        controlled_amount: '23718000000',
+        withdrawable_amount: '0',
+      } as unknown as typeof walletStore.account;
+
+      wrapper = mountPage();
+      await settle();
+
+      const change = wrapper.find('.my-governance__change');
+      expect(change.exists()).toBe(true);
+      expect(change.text()).toContain('governance.alreadyAbstaining');
+      expect(change.text()).not.toContain('governance.stepBackToAbstain');
     });
   });
 });
