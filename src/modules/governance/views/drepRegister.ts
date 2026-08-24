@@ -33,9 +33,11 @@
  * THE CHOICE
  * ----------
  * 10.74 MB and ~2 s, once per chain/network, behind a visible loading state, is a
- * real cost but not an impractical one — `drepNames.ts` already spends the same
- * budget on the same endpoint merely to label rows on the positions tab, and this
- * buys the page's primary ordering. So the directory loads the whole register for
+ * real cost but not an impractical one, and it buys the page's primary ordering.
+ * It is also no longer this page's cost alone: `drepNames.ts` used to walk the
+ * same endpoint on the same budget merely to label rows on the positions tab, and
+ * now derives its index from this register instead, so a session that opens both
+ * surfaces pays once rather than twice. So the directory loads the whole register for
  * client-computed sorts (which includes the DEFAULT, participation) and pages it
  * in memory. Paging then costs nothing: page 3 is rows 31–45 of the global order,
  * not a fresh query against an unordered server page.
@@ -52,7 +54,7 @@
  *    page-local rather than imply a register-wide one.
  *  - That the ask was honoured. Page count prefers the server's own
  *    `meta.total_pages`, and otherwise divides by the rows page 1 ACTUALLY
- *    returned — the same rule, and for the same reason, as `drepNames.ts`.
+ *    returned, never by the size requested — see `pageCount`.
  */
 
 import blockchainApi from '@/api/blockchain-api';
@@ -64,13 +66,22 @@ export const REGISTER_PAGE_SIZE = 500;
 /**
  * Requests one walk may cost.
  *
- * Four pages covers mainnet's 1,682 DReps at the size above; six leaves ~78%
- * headroom. Tighter than `drepNames.ts`'s eight because that walk is a background
- * courtesy and this one is on the critical path of a page the user is waiting on.
- * Past the cap the register is INCOMPLETE and says so, so growth degrades the
- * label rather than quietly downloading tens of megabytes more.
+ * Four pages covers mainnet's 1,682 DReps at the size above, so eight leaves
+ * ~2.4x headroom. Past the cap the register is INCOMPLETE and says so, so growth
+ * degrades the label rather than quietly downloading tens of megabytes more.
+ *
+ * It was six while `drepNames.ts` ran its own eight-page walk. Now that both
+ * surfaces share this one, six would have quietly cost the name index two pages'
+ * worth of rows — so the budget is the HIGHER of the two, never the tighter.
+ *
+ * Six was chosen to keep a page the user waits on short, and that reasoning does
+ * not survive the merge: what governs latency is the pages actually FETCHED
+ * (four, at the observed page size), not the cap, which only binds when the
+ * register turns out far larger than measured or the server clamps its page
+ * size. In that case the register is incomplete either way, and being two pages
+ * closer to whole is worth two requests.
  */
-export const MAX_REGISTER_PAGES = 6;
+export const MAX_REGISTER_PAGES = 8;
 
 /** How long a loaded register stays fresh. DRep figures move per epoch, not per second. */
 export const REGISTER_TTL_MS = 5 * 60 * 1000;
@@ -172,8 +183,16 @@ function totalOf(meta: unknown): number | null {
  *
  * Page 1 goes first alone, because it is the only thing that reveals how wide a
  * page is and how many there are. The remainder go together: measured, that takes
- * the walk from 3.1 s to 1.9 s, and unlike `drepNames.ts` — a background courtesy
- * that must not burst — this runs in front of a person watching a skeleton.
+ * the walk from 3.1 s to 1.9 s, and this runs in front of a person watching a
+ * skeleton.
+ *
+ * The name index rides the same concurrency, which is a change of character for
+ * it: its own walk was strictly sequential precisely because it is a background
+ * courtesy that should not burst. A shared walk cannot be two shapes at once, and
+ * the parallel one is the right pick — in the common case the register is already
+ * loaded and the courtesy costs no requests at all, and where it does pay, three
+ * concurrent requests land the names sooner on a tab that is showing a
+ * placeholder for them.
  *
  * `allSettled`, not `all`: one failed page must cost that page and the
  * completeness claim, not the whole register.
