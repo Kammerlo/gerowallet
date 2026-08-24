@@ -110,6 +110,7 @@ import { midnightStore } from '@/stores/midnightStore';
 import { walletStore } from '@/stores/walletStore';
 import { Network } from '@/models/types';
 import { MIDNIGHT_DECIMALS } from '@/chains/midnight/midnightTypes';
+import { midnightTokenBalances } from '@/chains/midnight/midnightTokenBalances';
 import { useTranslation } from '@/shared/composables/useTranslation';
 import { useMidnightLoading } from '@/shared/composables/useMidnightLoading';
 import { useNightFiat } from '@/shared/composables/useNightFiat';
@@ -212,6 +213,33 @@ const nightValueUsd = computed<number>(() => {
   return Number(totalNight.value) / Number(NIGHT_DIVISOR) * nightFiat.usd.value;
 });
 
+/**
+ * One row per non-NIGHT color the wallet holds.
+ *
+ * Decimals are unknown until token metadata lands, so the RAW base-unit amount
+ * is shown and explicitly labelled as raw. Scaling by a guessed exponent would
+ * repeat the Cardano mis-scaling bug fixed in commit e0af42bc — a wrong
+ * balance is worse than an obviously-unscaled one.
+ */
+const tokenRows = computed<MidnightHoldingRow[]>(() =>
+  Object.entries(midnightTokenBalances(midnightStore.utxos)).map(([color, amount]) => ({
+    ticker: `${color.slice(0, 8)}…`,
+    name: t('midnight.unknownToken') as string,
+    balanceFormatted: amount.toString(),
+    breakdownText: t('midnight.rawBalanceNotice') as string,
+    price: '—',
+    value: '—',
+    change24h: '—',
+    change24hRaw: null,
+    mcap: '—',
+    avgCost: '—',
+    pnl: '—',
+    icon: 'mdi-help-circle-outline',
+    iconBg: 'grey darken-4',
+    iconColor: 'grey',
+  })),
+);
+
 // tDUST is deliberately NOT a table row — the dedicated DUST battery panel
 // above owns the live DUST display (it's a fee resource, not a holding).
 const rows = computed<MidnightHoldingRow[]>(() => [
@@ -236,6 +264,7 @@ const rows = computed<MidnightHoldingRow[]>(() => [
     iconColor: 'grey lighten-2',
     image: midnightLogo,
   },
+  ...tokenRows.value,
 ]);
 </script>
 

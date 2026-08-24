@@ -4423,4 +4423,7 @@ export default {
   'midnight.proofServerPage.faq4A': 'Nein. Nur geschützte (private) Transaktionen benötigen einen Proof. Öffentliche NIGHT-Überweisungen sind von dieser Einstellung nicht betroffen.',
   'midnight.proofServerPage.faq5Q': 'Was ist Arkhia zkPaaS?',
   'midnight.proofServerPage.faq5A': 'Ein gehosteter Beweis-Dienst für das Midnight-Ökosystem, betrieben hinter dem Arkhia-API-Gateway auf Google Cloud Confidential Computing (einer Trusted Execution Environment, sodass Proof-Daten selbst während der Verarbeitung verschlüsselt bleiben). Er benötigt einen API-Key aus dem Arkhia-Dashboard. Wie jeder entfernte Prover erhält er deine privaten Transaktionsdaten für den Beweis-Schritt; anders als bei Gero Cloud gehen diese Daten an Arkhia statt an Gero.',
+  // Non-NIGHT-Token-Zeilen (Dezimalstellen unbekannt, bis Token-Metadaten verfügbar sind)
+  'midnight.unknownToken': 'Unbekanntes Token',
+  'midnight.rawBalanceNotice': 'Rohbetrag — Dezimalstellen unbekannt',
 }
