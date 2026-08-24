@@ -19,8 +19,11 @@ sees nothing in Gero.
 
 This is not a bug in that wallet or that address. **Gero has no support for non-NIGHT Midnight
 tokens at all.** The address is a valid mainnet bech32m unshielded address (bare `mn_addr1…`, no
-network segment — correct for mainnet). The tokens are on-chain and reach our backend. The wallet
-discards them.
+network segment — correct for mainnet). The tokens are on-chain and reach our backend.
+
+The wallet then fails them in two different ways at once: nothing in the UI ever renders a non-NIGHT
+color, and the sync layer's two ingest paths disagree about whether to keep one (§2). Either failure
+alone is enough to make the balance invisible, which is why the user sees nothing.
 
 Called in advance by our own audit — `docs/midnight/2026-07-05-midnight-ecosystem-audit.md`:
 
@@ -37,13 +40,34 @@ Every row below was read from source, not inferred.
 | Nexus UTxO ledger | **Already persists** every color. `token_type` column, no filter. | `entity/midnight/MidnightUnshieldedUtxo.java:67` |
 | Nexus Java build DTO | **Already permissive** — `@NotBlank String token`, no enum, no `"NIGHT"` constraint. | `model/midnight/transaction/BuildUnshieldedTxRequest.java:37` |
 | Sidecar | **Drops non-NIGHT at three points** (see §6) | `routes/buildUnshielded.ts:96`, `sdk/utxoLedgerClient.ts:120`, `sdk/unshieldedTransfer.ts` (`nightUtxos` filter) |
-| Wallet sync | **Drops non-NIGHT on ingest** — the decisive gate | `midnight-sync.service.ts:390` → `isNightOutput()` at `:526` |
+| Wallet sync — **delta** path | **Drops non-NIGHT.** Live receives never reach the store. | `midnight-sync.service.ts:390` → `isNightOutput()` at `:526` |
+| Wallet sync — **snapshot** path | **Admits every color.** `parseUtxos` has no token filter (its only `.filter` is a null-guard); `setUtxos(parsed)` stores all of them. Only the `night` sum is filtered. | `midnight-sync.service.ts:420-428`, `parseUtxos` `:566-584` |
 | Wallet store | No per-color balance field; `MidnightBalances` is five NIGHT/DUST scalars | `midnightTypes.ts:35-46` |
 | Wallet UI | Holdings table is a hardcoded single-element array | `MidnightHoldingsTable.vue:217` |
 | DApp connector | Returns at most one key | `background.ts:5305-5312` |
 | Token metadata | **Does not exist** for Midnight anywhere | zero hits across `nexus` and `gerowallet` |
 
 Key asymmetry: **the backend is already carrying USDM.** Only the wallet throws it away.
+
+### The two sync paths disagree — and that changes the diagnosis
+
+An earlier draft of this spec said the wallet uniformly discards non-native tokens. That is wrong,
+and the correction matters:
+
+- A **CATCH_UP snapshot** seeds `midnightStore.utxos` with every color, USDM included.
+- The **per-transaction delta path** then drops non-native creations while still processing
+  non-native *removals* (the removal loop has no token filter, by design — `:393-401`).
+
+Net effect: token balances are seeded by a snapshot and then **decay monotonically toward zero over a
+live session** — spends are subtracted, receives are never added back until the next full snapshot.
+
+Two consequences for planning:
+
+1. The reported USDM may **already be in the store right now**, invisible only because nothing renders
+   it. Display (P1 Task 3) may therefore surface it without any sync change at all.
+2. `background.ts:5300-5302` asserts *"`midnightStore.utxos` only ever carries NIGHT-type outputs
+   today"*. That comment is **stale** — it was true of the delta path only. Any code trusting it is
+   already wrong.
 
 ## 3. Fixed constraints
 
@@ -91,7 +115,9 @@ Nothing new is introduced. No new store, endpoint, table, component, or row type
 
 ### Changes
 
-1. Remove the `isNightOutput` gate on **adds** (`midnight-sync.service.ts:390`).
+1. Remove the `isNightOutput` gate on **adds** (`midnight-sync.service.ts:390`). This does not
+   "let tokens in" for the first time — the snapshot path already does — it makes the delta path
+   agree with the snapshot path and stops the live-session decay described in §2.
 2. Keep `nightUnshielded` NIGHT-only. Non-native colors are **derived** from the existing UTxO set,
    not stored as new state.
 3. Call the existing `syncAssets` machinery from the Midnight sync path, keyed by token color.

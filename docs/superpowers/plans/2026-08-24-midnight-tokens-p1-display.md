@@ -4,7 +4,7 @@
 
 **Goal:** Make non-NIGHT Midnight unshielded tokens (e.g. USDM) visible in the wallet's holdings table and DApp connector, instead of being silently discarded at sync.
 
-**Architecture:** The wallet already receives every token color — gero-sync forwards them and Nexus persists them. One filter in `midnight-sync.service.ts` throws them away before they reach the store. We delete that filter, derive per-color balances as a pure function over the UTxO set that already carries `tokenType`, and render extra rows. No new store, table, endpoint, or component. `nightUnshielded` is untouched: both balance paths already filter to native NIGHT independently, which Task 2 asserts rather than assumes.
+**Architecture:** The wallet already receives every token color — gero-sync forwards them and Nexus persists them. The sync layer's two ingest paths disagree: the CATCH_UP snapshot path admits every color, while the per-transaction delta path drops non-native creations but still processes their removals — so token balances decay toward zero over a live session. Nothing in the UI renders a non-NIGHT color either. We delete that filter, derive per-color balances as a pure function over the UTxO set that already carries `tokenType`, and render extra rows. No new store, table, endpoint, or component. `nightUnshielded` is untouched: both balance paths already filter to native NIGHT independently, which Task 2 asserts rather than assumes.
 
 **Tech Stack:** TypeScript, Vue 2.7 + Vuetify 2.7, Vitest, Dexie (IndexedDB), Chrome MV3 messaging.
 
@@ -176,7 +176,7 @@ git commit -m "feat(midnight): derive per-color unshielded balances from the UTx
 
 ### Task 2: Stop discarding non-native outputs at sync
 
-This is the one-line change that fixes the reported bug. The regression test matters more than the change: `nightUnshielded` must not move when a non-native UTxO enters the set.
+This makes the delta path agree with the snapshot path (which already admits every color) and stops the live-session decay. It is not what first makes USDM visible — Task 3 is — but without it a freshly received token disappears again until the next full snapshot. The regression test matters more than the change: `nightUnshielded` must not move when a non-native UTxO enters the set.
 
 **Files:**
 - Modify: `src/services/midnight-sync.service.ts:390`, `:526-529`
