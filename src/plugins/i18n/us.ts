@@ -1194,6 +1194,8 @@ export default {
   'governance.actionDroppedGone': '{title} was removed from this vote: it can no longer be found on chain.',
   'governance.actionDroppedNotOpen': '{title} was removed from this vote: it is now {status}.',
   'governance.actionPermissions': 'Action Permissions',
+  'governance.actionsOrderNote':
+    'Open actions come first, the one closing soonest at the top. Decided actions follow, newest first. This orders the page you are on, not every action on chain.',
   'governance.actionsSubtitle': 'Browse every on-chain governance action and see where it stands',
   'governance.actionsTitle': 'Governance Actions',
   'governance.actionType.hardforkinitiation': 'Hard Fork Initiation',
@@ -1247,6 +1249,9 @@ export default {
   'governance.approveSnapshot': 'Approve Snapshot',
   'governance.approveSnapshotDesc': 'Who can approve a Pending Snapshot Governance Action before it goes public to a community-wide vote?',
   'governance.approxDaysLeft': 'about {n} days',
+  'governance.approxExpiryDate': '≈ {date}',
+  'governance.approxExpiryHint':
+    'Approximate. Worked out from the epochs left at about 5 days each, and we cannot tell how far into the current epoch the chain already is, so voting may close a few days earlier.',
   'governance.asOf': 'As of {time}',
   'governance.back': 'Back',
   'governance.belowThreshold': 'Below threshold',

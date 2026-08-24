@@ -1,34 +1,41 @@
 <template>
-  <div class="vote-row">
+  <div class="vote-row" :class="{ 'vote-row--yours': isYours }">
+    <!-- AVATAR-SLOT: replace with DRepAvatar after merge -->
+    <span class="vote-row__avatar" aria-hidden="true"></span>
+
     <span class="t-caption vote-row__role">{{ roleLabel }}</span>
 
+    <!-- One line, not two: the id sits to the RIGHT of the name instead of
+         under it, which is what lets the row be this short. -->
     <div class="vote-row__identity">
-      <div class="vote-row__name-line">
-        <!-- A published name only. No name means the id is promoted to this
-             line rather than a placeholder standing in for an identity. -->
-        <button
-          v-if="name && route"
-          type="button"
-          class="t-body-sm vote-row__name vote-row__name--link"
-          @click="openVoter()"
-        >
-          {{ name }}
-        </button>
-        <span v-else-if="name" class="t-body-sm vote-row__name">{{ name }}</span>
-        <span v-else class="t-body-sm g-mono vote-row__name">{{ shortId }}</span>
+      <!-- A published name only. No name means the id is promoted to the name
+           slot rather than a placeholder standing in for an identity — and then
+           it is NOT repeated as a trailing id. -->
+      <button
+        v-if="name && route"
+        type="button"
+        class="t-body-sm vote-row__name vote-row__name--link"
+        @click="openVoter()"
+      >
+        {{ name }}
+      </button>
+      <span v-else-if="name" class="t-body-sm vote-row__name">{{ name }}</span>
+      <span v-else class="t-body-sm g-mono vote-row__name" :title="fullId">{{ shortId }}</span>
 
-        <span v-if="isYours" class="t-caption vote-row__chip vote-row__chip--yours">
-          {{ $t('governance.yours') }}
-        </span>
-        <span
-          v-if="row.hasScript"
-          class="t-caption vote-row__chip"
-          :title="$t('governance.scriptVoterHint')"
-        >
-          {{ $t('governance.scriptVoter') }}
-        </span>
-      </div>
-      <span v-if="name" class="t-caption g-mono vote-row__id">{{ shortId }}</span>
+      <!-- Truncated on screen, whole on hover, and selectable either way: the
+           id can still be read and copied out of a row this short. -->
+      <span v-if="name" class="t-caption g-mono vote-row__id" :title="fullId">{{ shortId }}</span>
+
+      <span v-if="isYours" class="t-caption vote-row__chip vote-row__chip--yours">
+        {{ $t('governance.yours') }}
+      </span>
+      <span
+        v-if="row.hasScript"
+        class="t-caption vote-row__chip"
+        :title="$t('governance.scriptVoterHint')"
+      >
+        {{ $t('governance.scriptVoter') }}
+      </span>
     </div>
 
     <span class="t-caption vote-row__pill" :class="`vote-row__pill--${toneClass}`">
@@ -81,6 +88,9 @@ const { t } = useTranslation();
 
 const shortId = computed(() => filters.truncate(props.row.id) || String(t('common.notAvailable')));
 
+/** The whole id for the hover title; undefined drops the attribute entirely. */
+const fullId = computed(() => props.row.id || undefined);
+
 const roleLabel = computed(() => {
   const key = {
     DRep: 'governance.dRep',
@@ -128,16 +138,34 @@ function openVoter(): void {
 </script>
 
 <style scoped>
+/* Slim density: one line of content, the table row height rather than the panel
+   one, and 4px of vertical padding. Both controls keep their own 24px floors
+   (pinned in VoteRow.spec.ts), so the row can shrink without the targets doing
+   the same. */
 .vote-row {
   display: grid;
-  grid-template-columns: 84px minmax(0, 1fr) auto auto auto;
+  grid-template-columns: auto 84px minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: var(--g-s-3);
-  min-height: var(--g-row-h-panel);
-  padding: var(--g-s-2) var(--g-s-3);
+  min-height: var(--g-row-h-table);
+  padding: var(--g-s-1) var(--g-s-3);
   background: var(--g-surface);
   border: 1px solid var(--g-hairline-1);
   border-radius: var(--g-r-control);
+}
+/* Your own representative's row keeps its accent, and the "Yours" chip beside
+   the name keeps saying so in words — the border is never the only cue. */
+.vote-row--yours {
+  border-color: var(--g-accent);
+}
+/* Placeholder for the voter's picture. Reserves the column so every row's name
+   starts on the same x whether or not a DRep has published an image. */
+.vote-row__avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--g-r-pill);
+  background: var(--g-raised);
+  border: 1px solid var(--g-hairline-1);
 }
 .vote-row__role {
   display: inline-flex;
@@ -150,11 +178,6 @@ function openVoter(): void {
   white-space: nowrap;
 }
 .vote-row__identity {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.vote-row__name-line {
   display: flex;
   align-items: center;
   gap: var(--g-s-2);
@@ -182,7 +205,12 @@ function openVoter(): void {
 .vote-row__name--link:hover {
   color: var(--g-accent);
 }
+/* The id gives up its width before the name does: it is the recogniser of last
+   resort, and the name is what the reader is scanning for. Still selectable
+   text, so it can be copied straight out of the row. */
 .vote-row__id {
+  flex: 0 1 auto;
+  min-width: 0;
   color: var(--g-text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -252,9 +280,11 @@ function openVoter(): void {
   white-space: nowrap;
   border: 0;
 }
+/* Side panel and popup: the identity line and the choice stay together on the
+   first row; the date and the rationale link each take a full row below. */
 @media (max-width: 720px) {
   .vote-row {
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
     row-gap: var(--g-s-1);
   }
   .vote-row__when,

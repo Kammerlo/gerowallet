@@ -291,6 +291,77 @@ describe('ActionList stat strip', () => {
     expect(governanceActionsStore.state.yourVotes.identityKind).toBe('delegated');
   });
 
+  // The board's job is "what needs you next", so the page is reordered for
+  // reading: live first, soonest to close at the top. `orderActions` owns the
+  // rule (ordering.spec.ts); this proves the view actually applies it, and says
+  // so to the reader rather than letting it look like the chain's own order.
+  it('lists live actions above concluded ones, soonest to expire first', async () => {
+    listProposals.mockResolvedValue({
+      items: [
+        proposal('decided#0', { status: 'enacted', submittedEpoch: 640, title: 'Decided' }),
+        proposal('later#0', { expiresEpoch: 680, title: 'Later' }),
+        proposal('soonest#0', { expiresEpoch: 652, title: 'Soonest' }),
+      ],
+      page: 1,
+      pageSize: 50,
+      total: 3,
+    });
+    getProposalVotes.mockResolvedValue(votesPage([]));
+
+    wrapper = mountPage();
+    await settle();
+
+    const titles = wrapper.findAll('.action-row__title').wrappers.map(row => row.text());
+    expect(titles).toEqual(['Soonest', 'Later', 'Decided']);
+    // The ordering is only ever this PAGE's ordering, and the note says so.
+    expect(wrapper.html()).toContain('governance.actionsOrderNote');
+  });
+
+  it('quiets the concluded rows and leaves the live ones at full weight', async () => {
+    listProposals.mockResolvedValue({
+      items: [
+        proposal('live#0'),
+        proposal('gone#0', { status: 'expired' }),
+        proposal('done#0', { status: 'enacted' }),
+      ],
+      page: 1,
+      pageSize: 50,
+      total: 3,
+    });
+    getProposalVotes.mockResolvedValue(votesPage([]));
+
+    wrapper = mountPage();
+    await settle();
+
+    expect(wrapper.findAll('.action-row')).toHaveLength(3);
+    const quiet = wrapper.findAll('.action-row--concluded');
+    expect(quiet).toHaveLength(2);
+    // Never tone alone: each quiet row still carries its status in words.
+    // (`$t` echoes the key here, which StatusPill reads as a missing
+    // translation and falls back to the raw status — still a word.)
+    const labels = quiet.wrappers.map(row => row.find('.status-pill').text()).sort();
+    expect(labels).toEqual(['enacted', 'expired']);
+  });
+
+  it('shows an approximate expiry date beside the epoch count, and none without an epoch', async () => {
+    listProposals.mockResolvedValue({
+      items: [proposal('dated#0'), proposal('undated#0', { expiresEpoch: null })],
+      page: 1,
+      pageSize: 50,
+      total: 2,
+    });
+    getProposalVotes.mockResolvedValue(votesPage([]));
+
+    wrapper = mountPage();
+    await settle();
+
+    // One row knows when it expires; the other must state nothing at all.
+    const dates = wrapper.findAll('.action-row__expires');
+    expect(dates).toHaveLength(1);
+    expect(dates.at(0).text()).toMatch(/\d{4}/);
+    expect(wrapper.html()).toContain('governance.epochsRemaining:{"n":10}');
+  });
+
   it('surfaces a retryable error instead of a strip full of zeroes', async () => {
     listProposals.mockRejectedValue(new Error('upstream down'));
 

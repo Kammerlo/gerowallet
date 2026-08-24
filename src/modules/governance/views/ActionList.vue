@@ -68,7 +68,7 @@
     <EmptyState v-else-if="!state.actions.length" :message="$t('governance.noGovernanceProposals')" />
 
     <div v-else class="action-list__rows">
-      <div v-for="action in state.actions" :key="action.govActionId" class="action-list__row">
+      <div v-for="action in orderedActions" :key="action.govActionId" class="action-list__row">
         <!-- Batch selection: only for actions still open to votes, and only when
              this wallet is a registered DRep whose type can batch-sign. -->
         <label v-if="selectable && isActionOpen(action)" class="action-list__select">
@@ -91,6 +91,13 @@
         />
       </div>
     </div>
+
+    <!-- The order is stated because it is only ever the order of THIS page: the
+         endpoint paginates server-side, so the soonest expiry on screen need
+         not be the soonest on chain. -->
+    <p v-if="!state.error && !state.loading && state.actions.length" class="action-list__note t-caption">
+      {{ $t('governance.actionsOrderNote') }}
+    </p>
 
     <div v-if="totalPages > 1" class="text-center">
       <v-pagination
@@ -135,6 +142,7 @@ import { isOpen, daysRemaining } from '@/shared/utils/govLifecycle';
 import { useVoting } from '@/shared/composables/useVoting';
 import { useTranslation } from '@/shared/composables/useTranslation';
 import { debugLog } from '@/utils/debug';
+import { orderActions } from '@/modules/governance/components/actions/ordering';
 import ActionRow from '@/modules/governance/components/actions/ActionRow.vue';
 import AsOf from '@/modules/governance/components/actions/AsOf.vue';
 import CastVoteDialog from '@/modules/governance/dialogs/CastVoteDialog.vue';
@@ -170,6 +178,13 @@ const currentEpoch = computed(() => NetworkStore.getCurrentEpoch());
 const totalPages = computed(() =>
   state.total === null ? 1 : Math.max(1, Math.ceil(state.total / state.pageSize)),
 );
+
+/**
+ * What the reader is here for goes first: still-open actions, the one closing
+ * next at the top. Decided ones keep their place in the list but fall below,
+ * newest first. Display-only — it never changes which page was fetched.
+ */
+const orderedActions = computed(() => orderActions(state.actions));
 
 // ---------------------------------------------------------------------------
 // Batch voting selection
@@ -475,6 +490,10 @@ onMounted(() => {
 .action-list__row-item {
   flex: 1;
   min-width: 0;
+}
+.action-list__note {
+  margin: 0;
+  color: var(--g-text-3);
 }
 .action-list__select {
   display: flex;

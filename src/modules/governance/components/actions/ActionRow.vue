@@ -1,5 +1,13 @@
 <template>
-  <button type="button" class="action-row" @click="$emit('select', action.govActionId)">
+  <!-- A concluded action keeps every word it had — the StatusPill still names
+       the outcome in text — but drops to a quieter surface and tone so a live
+       row wins the scan. Tone is never the ONLY cue: the pill is. -->
+  <button
+    type="button"
+    class="action-row"
+    :class="{ 'action-row--concluded': !live }"
+    @click="$emit('select', action.govActionId)"
+  >
     <div class="action-row__main">
       <div class="action-row__top">
         <span class="action-row__type t-label">{{ typeLabel }}</span>
@@ -38,6 +46,8 @@
            when a caller supplies a composition (the detail surface does). -->
       <TallyBar
         v-if="composition"
+        class="action-row__tally"
+        :class="{ 'action-row__tally--quiet': !live }"
         :yes-pct="composition.yesPct"
         :no-pct="composition.noPct"
         :threshold-pct="null"
@@ -45,9 +55,22 @@
       />
     </div>
     <div class="action-row__meta">
-      <span v-if="epochsLeft !== null" class="action-row__epochs t-caption">
-        {{ $t('governance.epochsRemaining', { n: epochsLeft }) }}
-      </span>
+      <div v-if="epochsLeft !== null" class="action-row__lifetime">
+        <span class="action-row__epochs t-caption g-num">
+          {{ $t('governance.epochsRemaining', { n: epochsLeft }) }}
+        </span>
+        <!-- The rough calendar date the epoch count works out to. The "≈" is
+             the whole point: we know the epoch, not the hour inside it, so the
+             real close lands on or before this day. An unknown epoch renders
+             nothing here rather than today's date. -->
+        <span
+          v-if="expiresOn"
+          class="action-row__expires t-caption"
+          :title="$t('governance.approxExpiryHint')"
+        >
+          {{ $t('governance.approxExpiryDate', { date: expiresOn }) }}
+        </span>
+      </div>
       <v-icon small class="action-row__chevron">mdi-chevron-right</v-icon>
     </div>
   </button>
@@ -59,7 +82,13 @@ import type { PropType } from 'vue';
 import type { GovProposal } from '@/api/governance.types';
 import type { Composition } from '@/shared/utils/govTally';
 import type { VoterIdentityKind, RowVoteStatus } from '@/stores/governanceActionsStore';
-import { epochsRemaining, daysRemaining, isOpen } from '@/shared/utils/govLifecycle';
+import {
+  epochsRemaining,
+  daysRemaining,
+  approxExpiryDate,
+  formatApproxExpiry,
+  isOpen,
+} from '@/shared/utils/govLifecycle';
 import { useTranslation } from '@/shared/composables/useTranslation';
 import StatusPill from '@/modules/governance/components/actions/StatusPill.vue';
 import TallyBar from '@/modules/governance/components/actions/TallyBar.vue';
@@ -97,15 +126,24 @@ const title = computed(() => {
   return `${hash.slice(0, 10)}…#${props.action.index}`;
 });
 
+/** Still open to votes. Drives both the lifetime figures and the row's weight. */
+const live = computed(() => isOpen(props.action.status));
+
 /** Remaining lifetime — only meaningful while the action is still open. */
 const epochsLeft = computed(() => {
-  if (!isOpen(props.action.status)) return null;
+  if (!live.value) return null;
   return epochsRemaining(props.currentEpoch, props.action.expiresEpoch);
 });
 
 const daysLeft = computed(() => {
-  if (!isOpen(props.action.status)) return null;
+  if (!live.value) return null;
   return daysRemaining(props.currentEpoch, props.action.expiresEpoch);
+});
+
+/** The same epoch count as a rough calendar day; '' when either epoch is unknown. */
+const expiresOn = computed(() => {
+  if (!live.value) return '';
+  return formatApproxExpiry(approxExpiryDate(props.currentEpoch, props.action.expiresEpoch));
 });
 
 const closingSoon = computed(() => daysLeft.value !== null && daysLeft.value <= CLOSING_SOON_DAYS);
@@ -155,6 +193,24 @@ const voteLabel = computed(() => {
 .action-row:hover {
   background: var(--g-raised);
   border-color: var(--g-hairline-2);
+}
+/* Concluded: a flatter surface, a hairline instead of a filled card, and one
+   step down the text ramp. Sanctioned tones only — no bespoke alpha — so the
+   contrast floor still holds and the row stays fully readable. */
+.action-row--concluded {
+  background: transparent;
+}
+.action-row--concluded .action-row__title {
+  color: var(--g-text-2);
+}
+.action-row--concluded .action-row__type,
+.action-row--concluded .action-row__id {
+  color: var(--g-text-3);
+}
+/* The bar is decoration next to the pill's words, so it is the one thing that
+   may recede without taking a fact with it. */
+.action-row__tally--quiet {
+  opacity: 0.6;
 }
 .action-row__main {
   flex: 1;
@@ -215,7 +271,19 @@ const voteLabel = computed(() => {
   gap: var(--g-s-2);
   flex-shrink: 0;
 }
+/* Epoch count over its approximate date, right-aligned against the chevron so
+   the two lifetime facts read as one unit rather than two competing figures. */
+.action-row__lifetime {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--g-s-1);
+  white-space: nowrap;
+}
 .action-row__epochs {
+  color: var(--g-text-2);
+}
+.action-row__expires {
   color: var(--g-text-3);
 }
 .action-row__chevron {

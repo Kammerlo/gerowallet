@@ -88,17 +88,25 @@ function fmt(pct: number | null): string {
 
 <style scoped>
 /* Surface, border and radius come from `glass-panel` (liquid-glass.css): this
-   is a top-level card on the detail page, per the ActionDetail artboard. */
+   is a top-level card on the detail page, per the ActionDetail artboard.
+   `height: 100%` so a card in a grid track fills it: the bodies sit side by
+   side and must not stair-step because one threshold note wrapped to two
+   lines. */
 .body-card {
   display: flex;
   flex-direction: column;
   gap: var(--g-s-2);
   padding: var(--g-s-4);
+  height: 100%;
 }
+/* Wraps rather than squeezing the verdict: a narrow track (side panel, or three
+   bodies on a mid-width window) would otherwise clip the words that ARE the
+   non-colour cue. */
 .body-card__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--g-s-2);
 }
 .body-card__verdict {
@@ -115,7 +123,9 @@ function fmt(pct: number | null): string {
   gap: var(--g-s-3);
   color: var(--g-text-2);
 }
+/* Pinned to the foot of the card so the counts line up across the row. */
 .body-card__counts {
+  margin-top: auto;
   color: var(--g-text-3);
 }
 </style>

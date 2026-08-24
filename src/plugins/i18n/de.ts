@@ -1373,6 +1373,8 @@ export default {
   'governance.actionDroppedGone': '{title} wurde aus dieser Abstimmung entfernt: Die Aktion ist auf der Chain nicht mehr auffindbar.',
   'governance.actionDroppedNotOpen': '{title} wurde aus dieser Abstimmung entfernt: Der Status ist jetzt {status}.',
   'governance.actionPermissions': 'Berechtigungen für Aktionen',
+  'governance.actionsOrderNote':
+    'Offene Aktionen stehen zuerst, die am schnellsten ablaufende ganz oben. Entschiedene Aktionen folgen, die neuesten zuerst. Sortiert wird nur diese Seite, nicht alle Aktionen auf der Chain.',
   'governance.actionsSubtitle': 'Alle On-Chain-Governance-Aktionen durchsuchen und ihren Stand einsehen',
   'governance.actionsTitle': 'Governance-Aktionen',
   'governance.actionType.hardforkinitiation': 'Hard-Fork-Einleitung',
@@ -1432,6 +1434,9 @@ export default {
   'governance.approveSnapshot': 'Snapshot genehmigen',
   'governance.approveSnapshotDesc': 'Wer kann eine ausstehende Snapshot-Governance-Aktion genehmigen, bevor sie öffentlich zur Abstimmung in der gesamten Community gestellt wird?',
   'governance.approxDaysLeft': 'etwa {n} Tage',
+  'governance.approxExpiryDate': '≈ {date}',
+  'governance.approxExpiryHint':
+    'Ungefährer Wert. Berechnet aus den verbleibenden Epochen zu je etwa 5 Tagen. Wie weit die aktuelle Epoche bereits fortgeschritten ist, wissen wir nicht, daher kann die Abstimmung einige Tage früher enden.',
   'governance.asOf': 'Stand {time}',
   'governance.autoApproved': 'Mitgliedschaft wird automatisch genehmigt',
   'governance.back': 'Zurück',
