@@ -330,7 +330,7 @@
  * DRep with no votes has no rationale rate, and printing 0% would accuse them
  * of withholding rationales nobody asked for.
  */
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router/composables';
 import { walletStore } from '@/stores/walletStore';
 import NetworkStore, { networkStore } from '@/stores/networkStore';
@@ -783,35 +783,7 @@ async function loadDRep(): Promise<void> {
 // Re-reads whenever the delegation itself changes, so delegating from another
 // surface (or a confirmation landing via Gero Sync) refreshes this page instead
 // of stranding it on the previous DRep until a reload.
-//
-// The log is temporary instrumentation. This page was reported reloading every
-// few seconds, and the first fix (stopping a partial gero-sync account push from
-// erasing `drep_id` — see walletBg.setAccountInfo) did not end it. Rather than
-// guess again: this prints WHICH values the watcher saw change, which separates
-// "drep_id really is flapping" from "something else is re-mounting the view".
-// Remove once the cause is confirmed.
-watch(
-  () => walletStore.account?.drep_id,
-  (next, previous) => {
-    debugLog(`[MYGOV] drep_id changed: previous=${String(previous)} next=${String(next)}`);
-    void loadDRep();
-  },
-  { immediate: true },
-);
-
-// Temporary instrumentation for a reported "the page reloads every few seconds".
-// The two candidate causes look identical on screen and need different fixes, so
-// these separate them:
-//
-//   [MYGOV] drep_id changed ... next=undefined   -> the account row really is
-//       losing the field, and the cause is still upstream of this view.
-//   [MYGOV] mounted (repeatedly, without a drep_id line)
-//       -> the view is being torn down and rebuilt; the watcher is innocent and
-//       the cause is routing or a keyed parent.
-//
-// Filter the console on "[MYGOV]". Remove all three logs once the cause is known.
-onMounted(() => debugLog('[MYGOV] mounted'));
-onUnmounted(() => debugLog('[MYGOV] unmounted'));
+watch(() => walletStore.account?.drep_id, () => void loadDRep(), { immediate: true });
 </script>
 
 <style scoped>
