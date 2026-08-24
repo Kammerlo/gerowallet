@@ -22,17 +22,48 @@ vi.mock('@/shared/composables/useWithdrawal', () => ({
 const getDRepById = vi.fn();
 vi.mock('@/api/blockchain-api', () => ({ default: { getDRepById: (...args: unknown[]) => getDRepById(...args) } }));
 
+// The vote rows name the action they were cast on, which means the governance
+// action list. It is a real axios client, so it is mocked rather than left to
+// fire at whatever origin happy-dom is pretending to be.
+const listProposals = vi.fn();
+vi.mock('@/api/governance-api', () => ({
+  default: { listProposals: (...args: unknown[]) => listProposals(...args) },
+}));
+
 vi.mock('@/modules/governance/dialogs/WithdrawGateDialog.vue', () => ({
   default: { name: 'WithdrawGateDialog', props: ['isOpen'], render: () => null },
 }));
 
-vi.mock('vue-router/composables', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+// The rationale dialog fetches an author's document; opening it is what this
+// page is asserted on, not what the dialog then does with it.
+vi.mock('@/modules/governance/dialogs/RationaleDialog.vue', () => ({
+  default: { name: 'RationaleDialog', props: ['isOpen', 'url', 'hash', 'actionTitle'], render: () => null },
+}));
+
+const push = vi.fn();
+vi.mock('vue-router/composables', () => ({ useRouter: () => ({ push: (...args: unknown[]) => push(...args) }) }));
 
 // @ts-ignore — tsconfig ships no `*.vue` shim; vite resolves this fine.
 import MyGovernance from './MyGovernance.vue';
 import { walletStore } from '@/stores/walletStore';
 import { governanceStore } from '@/stores/governanceStore';
 import { networkStore } from '@/stores/networkStore';
+import governanceActionsStore from '@/stores/governanceActionsStore';
+import governanceAlertsStore from '@/stores/governanceAlertsStore';
+
+/**
+ * One governance action, in BOTH id encodings.
+ *
+ * The two services disagree on how to spell an action: gero-backend stamps a
+ * DRep's vote with `proposal_id`, Nexus lists the action as `govActionId`
+ * (`{txHash}#{index}`) alongside `govActionIdCip129` (bech32). A vote can arrive
+ * in either form, so the fixtures below pin the CROSS: one action matched
+ * bech32-to-hex, the other hex-to-bech32.
+ */
+const ACTION_A_HEX = `${'1'.repeat(64)}#0`;
+const ACTION_A_BECH32 = 'gov_action1zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsq6dmejn';
+const ACTION_B_HEX = `${'ab'.repeat(32)}#3`;
+const ACTION_B_BECH32 = 'gov_action14w46h2at4w46h2at4w46h2at4w46h2at4w46h2at4w46h2at4w4sx873n5k';
 
 const $t = (key: string, values?: Record<string, unknown>): string =>
   values ? `${key}:${JSON.stringify(values)}` : key;
@@ -99,11 +130,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   withdrawalBlocked.value = false;
   getDRepById.mockResolvedValue(null);
+  listProposals.mockResolvedValue({ items: [], page: 1, pageSize: 50, total: 0 });
   walletStore.loggedWallet = { chain: 'Cardano', network: 'Mainnet', stakeAddress: 'stake1uexample' };
   walletStore.keys = null;
   walletStore.transactions = [];
   governanceStore.currentDRep = null;
   governanceStore.currentCompensationBps = null;
+  governanceActionsStore.reset();
 });
 
 afterEach(() => {
@@ -112,7 +145,16 @@ afterEach(() => {
   // The tile tests below drive the epoch through the real store; leaving a tip
   // behind would silently change every other case's expiry arithmetic.
   networkStore.tip = null;
+  governanceActionsStore.reset();
+  governanceAlertsStore.state.drepId = null;
+  governanceAlertsStore.state.evaluatedAt = null;
 });
+
+/** Pretend the action board is already loaded, so nothing refetches it. */
+function actionsLoaded(items: Record<string, unknown>[]): void {
+  governanceActionsStore.state.actions = items as never;
+  governanceActionsStore.state.fetchedAt = Date.now();
+}
 
 /** Captions under the three health tiles — the line each tile hangs off its fact. */
 function tileCaptions(w: Wrapper<Vue>) {
@@ -446,6 +488,227 @@ describe('MyGovernance', () => {
     // The unlock choices are gone. (The hero title is not a safe probe here:
     // the legend names every state by design.)
     expect(wrapper.html()).not.toContain('governance.unlocksWithdrawals');
+  });
+
+  // A row that shows `1111111…111#0` tells the reader nothing about what their
+  // stake was cast on. What makes the title resolvable at all is that BOTH id
+  // encodings are canonicalised before they are compared — matching the raw
+  // strings resolved nothing whenever the two services disagreed on spelling.
+  describe('how your stake was cast', () => {
+    const RATIONALE_HASH = 'aa'.repeat(32);
+
+    function votedOnBoth(): void {
+      getDRepById.mockResolvedValue({
+        registered: true,
+        votes: [
+          {
+            proposal_id: ACTION_A_BECH32,
+            vote: 'yes',
+            block_time: 300,
+            meta_url: 'https://author.test/r.json',
+            meta_hash: RATIONALE_HASH,
+          },
+          { proposal_id: ACTION_B_HEX, vote: 'no', block_time: 200 },
+          { proposal_id: 'not-an-action-id', vote: 'abstain', block_time: 100 },
+        ],
+      });
+      actionsLoaded([
+        // Listed in hex, voted in bech32.
+        { govActionId: ACTION_A_HEX, govActionIdCip129: null, title: 'Increase maxBlockExUnits', type: 'ParameterChange' },
+        // Listed in bech32, voted in hex.
+        { govActionId: null, govActionIdCip129: ACTION_B_BECH32, title: 'Reimburse Ikigai deposit', type: 'TreasuryWithdrawals' },
+      ]);
+    }
+
+    it('names the action, in whichever encoding either side used', async () => {
+      represented();
+      votedOnBoth();
+
+      wrapper = mountPage();
+      await settle();
+
+      const html = wrapper.html();
+      expect(html).toContain('Increase maxBlockExUnits');
+      expect(html).toContain('Reimburse Ikigai deposit');
+      // The type is stated as an eyebrow, from the same resolved action. The
+      // $t mock echoes keys, so `typeLabel` takes its own fallback here — which
+      // is the branch a chain that ships an eighth action type would hit, and
+      // it must be the type's own name rather than a raw i18n key.
+      const types = wrapper.findAll('.my-governance__row-type');
+      expect(types.at(0).text()).toBe('ParameterChange');
+      expect(types.at(1).text()).toBe('TreasuryWithdrawals');
+      // And the raw ids are gone from the rows that resolved.
+      expect(html).not.toContain(ACTION_A_BECH32);
+      expect(html).not.toContain('1'.repeat(64));
+    });
+
+    it('keeps the truncated id for an action it cannot resolve, never a blank', async () => {
+      represented();
+      votedOnBoth();
+
+      wrapper = mountPage();
+      await settle();
+
+      // `not-an-action-id` is in nobody's list and does not even parse.
+      const titles = wrapper.findAll('.my-governance__row-title');
+      expect(titles).toHaveLength(3);
+      expect(titles.at(2).text()).toBe('not-an-action-id');
+      // It parses as no action, so there is no detail page to offer.
+      expect(titles.at(2).element.tagName).toBe('SPAN');
+    });
+
+    it('opens the action detail from a resolved row', async () => {
+      represented();
+      votedOnBoth();
+
+      wrapper = mountPage();
+      await settle();
+
+      wrapper.findAll('.my-governance__row-link').at(0).trigger('click');
+      await Vue.nextTick();
+
+      expect(push).toHaveBeenCalledWith({
+        name: 'governanceAction',
+        params: { txHash: '1'.repeat(64), index: '0' },
+      });
+    });
+
+    it('opens the rationale dialog with that vote own anchor, and only on a click', async () => {
+      represented();
+      votedOnBoth();
+
+      wrapper = mountPage();
+      await settle();
+
+      // Nothing is mounted until asked: opening it is what sends a request to
+      // an author's host, and a render must never do that.
+      expect(wrapper.findComponent({ name: 'RationaleDialog' }).exists()).toBe(false);
+
+      const rationale = wrapper.findAll('.my-governance__rationale');
+      // One vote of the three published a rationale.
+      expect(rationale).toHaveLength(1);
+      rationale.at(0).trigger('click');
+      await Vue.nextTick();
+
+      const dialog = wrapper.findComponent({ name: 'RationaleDialog' });
+      expect(dialog.props('isOpen')).toBe(true);
+      expect(dialog.props('url')).toBe('https://author.test/r.json');
+      expect(dialog.props('hash')).toBe(RATIONALE_HASH);
+      expect(dialog.props('actionTitle')).toBe('Increase maxBlockExUnits');
+    });
+
+    it('loads the action list once, unfiltered, when a record arrives with votes', async () => {
+      represented();
+      getDRepById.mockResolvedValue({
+        registered: true,
+        votes: [{ proposal_id: ACTION_A_HEX, vote: 'yes', block_time: 300 }],
+      });
+
+      wrapper = mountPage();
+      await settle();
+
+      expect(listProposals).toHaveBeenCalledTimes(1);
+      // A board left filtered to "active" would hide every closed action a past
+      // vote points at, so the first load clears the filters it inherits.
+      const params = listProposals.mock.calls[0][0] as Record<string, unknown>;
+      expect(params['status']).toBeUndefined();
+      expect(params['type']).toBeUndefined();
+    });
+
+    it('spends no request on a record with nothing to name', async () => {
+      represented();
+      getDRepById.mockResolvedValue({ registered: true, votes: [] });
+
+      wrapper = mountPage();
+      await settle();
+
+      expect(listProposals).not.toHaveBeenCalled();
+    });
+  });
+
+  // The page is two columns: what the stake is doing on the left, everything
+  // that comments on it on the right. Before this, the watchdog and the "what
+  // each state means" legend each took a full-width row of their own.
+  describe('layout', () => {
+    it('keeps the watchdog, the legend and the DRep pitch out of the main column', async () => {
+      represented();
+      getDRepById.mockResolvedValue({ registered: true, votes: [] });
+      // A watched DRep with nothing wrong: the shape the panel takes on this
+      // page most of the time, and the one the redesign moves into the column.
+      governanceAlertsStore.state.drepId = 'drep1yfrexample';
+      governanceAlertsStore.state.evaluatedAt = 1_700_000_000_000;
+
+      wrapper = mountPage();
+      await settle();
+
+      const side = wrapper.find('.my-governance__side');
+      expect(side.exists()).toBe(true);
+      expect(side.find('.my-governance__legend').exists()).toBe(true);
+      expect(side.find('.my-governance__promo').exists()).toBe(true);
+      // The watchdog too — it renders nothing at all until it has a DRep to
+      // watch, which is why the store is given one above.
+      expect(side.find('.delegation-alerts').exists()).toBe(true);
+
+      const main = wrapper.find('.my-governance__main');
+      expect(main.find('.my-governance__hero').exists()).toBe(true);
+      expect(main.find('.my-governance__record').exists()).toBe(true);
+      expect(main.find('.my-governance__legend').exists()).toBe(false);
+    });
+
+    it('carries the glass material on the hero and the panels, per the canvas', async () => {
+      represented();
+      getDRepById.mockResolvedValue({ registered: true, votes: [] });
+
+      wrapper = mountPage();
+      await settle();
+
+      for (const selector of [
+        '.my-governance__hero',
+        '.my-governance__record',
+        '.my-governance__legend',
+        '.my-governance__promo',
+      ]) {
+        expect(wrapper.find(selector).classes()).toContain('glass-panel');
+      }
+    });
+
+    it('shows the DRep own avatar in the status chip, ipfs included', async () => {
+      represented();
+      getDRepById.mockResolvedValue({
+        registered: true,
+        votes: [],
+        metadata: {
+          meta_json: {
+            body: {
+              givenName: 'Cardano Foundation',
+              image: { contentUrl: 'ipfs://bafybeickzy3mupolsvukd2pt7huyba7a3wkln7vcfr47wnjkna7no6g72u' },
+            },
+          },
+        },
+      });
+
+      wrapper = mountPage();
+      await settle();
+
+      const img = wrapper.find('.my-governance__drep-chip img');
+      expect(img.exists()).toBe(true);
+      expect(img.attributes('src')).toContain('/api/ipfs?path=bafybeickzy3mupolsvukd2pt7huyba7a3wkln7vcfr47wnjkna7no6g72u');
+    });
+
+    it('falls back to the DRep initial rather than a broken image', async () => {
+      represented();
+      getDRepById.mockResolvedValue({
+        registered: true,
+        votes: [],
+        metadata: { meta_json: { body: { givenName: 'Meridian Collective' } } },
+      });
+
+      wrapper = mountPage();
+      await settle();
+
+      expect(wrapper.find('.my-governance__drep-chip img').exists()).toBe(false);
+      expect(wrapper.find('.my-governance__drep-chip .drep-avatar__initial').text()).toBe('M');
+    });
   });
 
   it('surfaces a retryable error instead of an empty page when the lookup fails', async () => {
