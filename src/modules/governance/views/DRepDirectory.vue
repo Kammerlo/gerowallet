@@ -91,16 +91,9 @@
           >
             <!-- Identity -->
             <div role="cell" class="drep-directory__col-name drep-directory__identity">
-              <v-avatar rounded size="36" color="var(--g-raised)" class="drep-directory__avatar">
-                <!-- Avatar slot: DRepAvatar lands here once it exists; until then
-                     the image-with-initial fallback below stays as it is. -->
-                <v-img v-if="row.image" :src="row.image" contain>
-                  <template v-slot:error>
-                    <v-icon size="18" color="var(--g-text-3)">mdi-account</v-icon>
-                  </template>
-                </v-img>
-                <v-icon v-else size="18" color="var(--g-text-3)">mdi-account</v-icon>
-              </v-avatar>
+              <!-- Routed through the in-app ipfs proxy: public gateways answer the
+                   extension with 403 + CORP, which is why raw urls rendered blank. -->
+              <DRepAvatar class="drep-directory__avatar" :image-url="row.image" :name="row.name" :size="36" />
               <span class="drep-directory__identity-text">
                 <span class="drep-directory__name-line">
                   <button type="button" class="t-body-lg drep-directory__name" @click="openProfile(row.id)">
@@ -319,6 +312,7 @@ import GButton from '@/shared/components/GButton/GButton.vue';
 import EmptyState from '@/shared/components/feedback/EmptyState.vue';
 import ErrorState from '@/shared/components/feedback/ErrorState.vue';
 import AsOf from '@/modules/governance/components/actions/AsOf.vue';
+import DRepAvatar from '@/modules/governance/components/dreps/DRepAvatar.vue';
 import MatchPanel from '@/modules/governance/components/dreps/MatchPanel.vue';
 import DRepDelegateDialog from '@/modules/governance/dialogs/DRepDelegateDialog.vue';
 import { useDRepDelegation, type PredefinedDRep } from '@/modules/governance/composables/useDRepDelegation';
