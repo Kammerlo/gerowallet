@@ -499,9 +499,13 @@ export class WalletManager {
       await Promise.all([
         // Arms the CIP-113 signing guard before any sign request can arrive.
         walletBg.loadProgrammableRefs(),
-        walletBg.loadCachedUtxos(),
         walletBg.loadCachedKeys(),
-        walletBg.loadCachedAccount(),
+        // Ordered, not parallel: `controlled_amount` is a stake-level total and the
+        // CIP-113 locked share comes off it as the account enters the store, so the
+        // partition has to be restored first. setAccount() re-derives when the order
+        // is the other way round, but setAccountInfo()'s synthesized lovelace token
+        // does not — it would keep the locked ADA in the spendable figure.
+        walletBg.loadCachedUtxos().then(() => walletBg.loadCachedAccount()),
       ]);
 
       promises.push(

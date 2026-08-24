@@ -42,6 +42,7 @@ import {
   submitTx as submitTxFn,
   toStakeAddress,
 } from '@/chrome/serialization';
+import { readCachedUtxoRows, serializeUtxoRows, type CachedUtxoRow } from '@/chrome/utxoCache';
 import { decryptPrivateKey, encryptWithPassword, isRawEncryptedKey } from '@/shared/utils/crypto';
 import type { IUnifiedUtxo } from '@/chains/common/interfaces';
 import type { BitcoinUtxo } from '@/api/bitcoin-api';
@@ -275,11 +276,25 @@ export class WalletBg {
    * Apply UTxOs: set on store, resolve assets, persist to DB.
    * Called on login (from DB) and when server UTxOs arrive.
    *
-   * @param source 'cache' loads only carry the spendable partition, so they must not
-   *   touch programmable state — doing so would wipe the restored refusal index.
+   * @param partitionKnown whether this set accounts for BOTH halves of the CIP-113
+   *   partition. False only for a cache written before the programmable half was
+   *   persisted: aggregating from it would report zero locked lovelace and wipe the
+   *   refusal index loadProgrammableRefs() just restored.
    */
-  async applyUtxos(utxos: Cardano.Utxo[], persist = false, source: 'live' | 'cache' = 'live') {
-    if (!utxos || utxos.length === 0) return;
+  async applyUtxos(utxos: Cardano.Utxo[], persist = false, partitionKnown = true) {
+    if (!utxos || utxos.length === 0) {
+      // An empty set still says the programmable half is empty, and that has to land
+      // before the early return: otherwise a phantom locked balance — and the refusal
+      // index derived from it — outlives the holdings it came from and keeps being
+      // subtracted from every later account push. Replace, not merge, exactly as for a
+      // non-empty push. The spendable half's tolerance of an empty push is pre-existing
+      // behaviour and deliberately left alone.
+      if (partitionKnown) {
+        this.setProgrammableAssets([]);
+        if (persist) await this.clearPersistedProgrammableUtxos();
+      }
+      return;
+    }
 
     // Defense-in-depth: filter to only UTxOs matching wallet's payment credentials
     const myCredentials = new Set(this.derivePaymentCredentials());
@@ -341,7 +356,7 @@ export class WalletBg {
 
     // Arm the signing guard before the syncAssets() await: until the set is installed
     // findProgrammableInputs() reports clean, which is a window for an external transfer.
-    if (source === 'live') {
+    if (partitionKnown) {
       this.setProgrammableAssets(programmable);
     }
 
@@ -351,31 +366,56 @@ export class WalletBg {
 
     // Re-aggregate so metadata fetched above is picked up. Best-effort — syncAssets()
     // does not await its write — but without it decimals/ticker stay stale forever.
-    if (source === 'live') {
+    if (partitionKnown) {
       this.setProgrammableAssets(programmable);
     }
 
-    // Persist to per-wallet DB so UTxOs survive logout
+    // Persist to per-wallet DB so UTxOs survive logout — both halves, tagged, so the
+    // locked lovelace is still known to be locked after a service-worker restart.
     if (persist) {
       try {
         const db = await this.getDb();
         const table = db.table('utxos');
         await table.clear();
-        // Store as serializable objects (BigInt → string, Map → array of entries)
-        const serialized = utxos.map(([txIn, txOut]) => ({
-          txId: txIn.txId,
-          index: txIn.index,
-          address: txOut.address,
-          coins: txOut.value.coins.toString(),
-          assets: txOut.value.assets ? Array.from(txOut.value.assets.entries()).map(([k, v]) => ({ unit: k, quantity: v.toString() })) : [],
-          datumHash: txOut.datumHash || null,
-          datum: txOut.datum || null,
-          scriptReference: txOut.scriptReference || null,
-        }));
-        await table.bulkPut(serialized);
+        await table.bulkPut([
+          ...serializeUtxoRows(utxos, 'spendable'),
+          ...serializeUtxoRows(programmable, 'programmable'),
+        ]);
       } catch (e) {
+        // Half a partition is worse than none: a cache holding only the spendable rows
+        // still reads as tagged, so the restore would trust it and under-report the
+        // locked share. Drop it and let the next push rebuild.
         debugLog('Failed to persist UTxOs:', e);
+        await this.clearPersistedUtxos();
       }
+    }
+  }
+
+  /** Drop the whole UTxO cache. Used when a partial write would be read as authoritative. */
+  private async clearPersistedUtxos() {
+    try {
+      const db = await this.getDb();
+      await db.table('utxos').clear();
+    } catch (e) {
+      debugLog('Failed to clear cached UTxOs:', e);
+    }
+  }
+
+  /**
+   * Drop the cached programmable rows only. The spendable rows stay tagged, so the
+   * cache still reads as partition-aware — it now records an empty programmable half
+   * rather than an unknown one.
+   */
+  private async clearPersistedProgrammableUtxos() {
+    try {
+      const db = await this.getDb();
+      const table = db.table('utxos');
+      const rows = await table.toArray();
+      const stale = rows.filter((row: CachedUtxoRow & { id?: number }) => row.partition === 'programmable');
+      if (stale.length === 0) return;
+      await table.bulkDelete(stale.map(row => row.id));
+    } catch (e) {
+      debugLog('Failed to clear cached programmable UTxOs:', e);
     }
   }
 
@@ -529,41 +569,10 @@ export class WalletBg {
 
       debugLog(`📦 Loading ${rows.length} persisted UTxOs from DB`);
 
-      // Reconstruct Cardano.Utxo[] from serialized rows
-      type PersistedUtxoRow = {
-        txId: string;
-        index: number;
-        address: string;
-        coins: string | number;
-        assets?: { unit: string; quantity: string | number }[];
-        datumHash?: Cardano.DatumHash;
-        datum?: Cardano.PlutusData;
-        scriptReference?: Cardano.Script;
-      };
-      const utxos: Cardano.Utxo[] = rows.map((row: PersistedUtxoRow) => {
-        const assets = new Map<Cardano.AssetId, bigint>();
-        if (row.assets) {
-          for (const a of row.assets) {
-            assets.set(Cardano.AssetId(a.unit), BigInt(a.quantity));
-          }
-        }
-        return [
-          {
-            txId: Cardano.TransactionId(row.txId),
-            index: row.index,
-            address: row.address as Cardano.PaymentAddress,
-          },
-          {
-            address: row.address as Cardano.PaymentAddress,
-            value: { coins: BigInt(row.coins), assets: assets.size > 0 ? assets : undefined },
-            datumHash: row.datumHash || undefined,
-            datum: row.datum || undefined,
-            scriptReference: row.scriptReference || undefined,
-          },
-        ] as Cardano.Utxo;
-      });
-
-      await this.applyUtxos(utxos, false, 'cache');
+      // Both halves go back through applyUtxos, which re-runs classifyUtxoAddress over
+      // them — the cache supplies the UTxOs, never the verdict.
+      const { utxos, partitionKnown } = readCachedUtxoRows(rows);
+      await this.applyUtxos(utxos, false, partitionKnown);
     } catch (e) {
       debugLog('Failed to load cached UTxOs:', e);
     }
