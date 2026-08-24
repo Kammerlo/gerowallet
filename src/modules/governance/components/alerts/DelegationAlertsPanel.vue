@@ -1,6 +1,6 @@
 <template>
   <div v-if="watching" class="delegation-alerts">
-    <!-- Nothing to flag: one line, not two cards. The watchdog earns its room
+    <!-- Nothing to flag: one small card, not a feed. The watchdog earns its room
          on the screen only when it has something to say; until then it states
          the fact and stays out of the way of the page's actual purpose. -->
     <section v-if="healthy" class="delegation-alerts__strip">
@@ -123,8 +123,8 @@
            saying the wallet names no replacement of its own has to be readable
            without a click. It sits outside the disclosure in every state this
            card renders in, error and loading included. The compact healthy
-           strip flags nothing and offers nothing, so there it rides inside the
-           settings disclosure instead and the strip stays one row. -->
+           card flags nothing and offers nothing, so there it rides inside the
+           settings disclosure instead and the card stays small. -->
       <p class="t-caption delegation-alerts__neutrality">{{ $t('governance.alerts.footer') }}</p>
 
       <AlertSettings
@@ -170,9 +170,9 @@ import NetworkStore from '@/stores/networkStore';
  *
  * TWO SHAPES, one component. With something to flag it is the full feed card,
  * unchanged: severity hairlines, the countdown track, snooze and dismiss. With
- * nothing to flag it is a single line, because a watchdog that has found
- * nothing has no claim on half the page — and the settings it used to shout
- * about live behind a closed disclosure in both shapes.
+ * nothing to flag it collapses to a small stacked card, because a watchdog that
+ * has found nothing has no claim on half the page — and the settings it used to
+ * shout about live behind a closed disclosure in both shapes.
  *
  * The neutrality footnote does NOT follow the settings into the disclosure. It
  * is only collapsible on the shape that flags nothing; wherever alerts and
@@ -357,43 +357,44 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--g-s-3);
-  padding: var(--g-s-5);
+  padding: var(--g-s-4);
   border-radius: var(--g-r-card);
 }
 
-/* Solid, not glass: glass means "this floats above content", and a one-line
-   status row is the most static thing on the page. */
+/* Solid, not glass: glass means "this floats above content", and a status card
+   that flags nothing is the most static thing on the page.
+
+   Stacked rather than a single wide row. The panel now lives in the governance
+   home's SIDE column, roughly a third of the page, so a row that fitted a
+   sentence, a timestamp and a disclosure across 1200px could only shred itself
+   there. A small column card is the shape the column actually has, and it is
+   width-independent: the same card works at 360px in the popup. */
 .delegation-alerts__strip {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--g-s-3);
-  row-gap: var(--g-s-2);
-  min-height: var(--g-row-h-panel);
-  padding: 0 var(--g-s-4);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--g-s-2);
+  padding: var(--g-s-4);
   background: var(--g-surface);
   border: 1px solid var(--g-hairline-1);
-  border-radius: var(--g-r-control);
+  border-radius: var(--g-r-card);
 }
 /* The lead is the flex item, not the sentence: the shield travels with the
    words it belongs to at every width. */
 .delegation-alerts__strip-lead {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--g-s-2);
-  flex: 1 1 auto;
   min-width: 0;
 }
 .delegation-alerts__strip-text {
   min-width: 0;
   color: var(--g-text-2);
 }
-/* Opened, the disclosure drops to its own full-width line rather than being
-   crushed into a 48px row. Attribute selector, no JS. */
-.delegation-alerts__disclosure[open] {
-  flex-basis: 100%;
-  order: 2;
-  padding-bottom: var(--g-s-3);
+/* The disclosure spans the card in both states now that the card is a column;
+   opening it simply grows the card downwards. Attribute selector, no JS. */
+.delegation-alerts__disclosure {
+  align-self: stretch;
 }
 
 .delegation-alerts__head {
@@ -532,18 +533,9 @@ onMounted(() => {
   color: var(--g-text-3);
 }
 
-/* Narrow surfaces are real here: the extension popup sits around 360px and the
-   side panel is not much wider. At those widths the sentence, the timestamp and
-   the disclosure preview cannot share a row, so the strip degrades to two
-   predictable rows — status line with its shield, then timestamp and settings —
-   rather than three with the icon stranded above the words. The lead moves as a
-   unit, so the previous rule's orphan is not reachable at any width. */
-@media (max-width: 720px) {
-  .delegation-alerts__strip {
-    padding: var(--g-s-2) var(--g-s-4);
-  }
-  .delegation-alerts__strip-lead {
-    flex-basis: 100%;
-  }
-}
+/* No narrow-width rule any more: the card stacks at every width by
+   construction, so the popup at 360px gets exactly the layout the side column
+   gets. The old rule existed to break a single row apart; there is no row left
+   to break. The shield still travels inside `__strip-lead`, which is markup
+   rather than a stylesheet, so it cannot be stranded above its own sentence. */
 </style>

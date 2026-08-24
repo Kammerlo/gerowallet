@@ -21,142 +21,137 @@
       <v-skeleton-loader type="list-item-three-line" />
     </template>
 
-    <template v-else>
-      <!-- ── The state hero ─────────────────────────────────────────────── -->
-      <div class="my-governance__hero" :class="`my-governance__hero--${status.tone}`">
-        <div class="my-governance__hero-top">
-          <div class="my-governance__hero-headline">
-            <span class="t-label">{{ $t('governance.yourVotingStatus') }}</span>
-            <div class="my-governance__hero-title">
-              <span class="my-governance__dot" :class="`my-governance__dot--${status.tone}`"></span>
-              <span class="t-title">{{ $t(status.titleKey) }}</span>
+    <!-- Two columns: what this wallet's stake is doing on the left, everything
+         that reads ALONGSIDE that on the right. The watchdog, the legend and the
+         DRep pitch are all commentary on the hero, so none of them earns a
+         full-width row of its own. -->
+    <div v-else class="my-governance__grid">
+      <div class="my-governance__main">
+        <!-- ── The state hero ───────────────────────────────────────────── -->
+        <div class="my-governance__hero glass-panel" :class="`my-governance__hero--${status.tone}`">
+          <div class="my-governance__hero-top">
+            <div class="my-governance__hero-headline">
+              <span class="t-label">{{ $t('governance.yourVotingStatus') }}</span>
+              <div class="my-governance__hero-title">
+                <span class="my-governance__dot" :class="`my-governance__dot--${status.tone}`"></span>
+                <span class="t-title">{{ $t(status.titleKey) }}</span>
+              </div>
+              <p class="t-body my-governance__hero-copy">{{ $t(status.descriptionKey) }}</p>
             </div>
-            <p class="t-body my-governance__hero-copy">{{ $t(status.descriptionKey) }}</p>
-          </div>
 
-          <!-- Who holds the vote, or what is being held back -->
-          <div v-if="status.drepId" class="my-governance__drep-chip">
-            <span class="my-governance__drep-avatar">
-              <v-icon size="16" color="var(--g-accent)">mdi-account-outline</v-icon>
-            </span>
-            <span class="my-governance__drep-ident">
-              <span class="t-body-sm my-governance__drep-name">{{ drepName }}</span>
-              <span v-if="!keywordNameKey" class="t-caption g-mono my-governance__drep-id">{{ truncate(status.drepId) }}</span>
-            </span>
-          </div>
-          <div v-else-if="status.withdrawalsBlocked" class="my-governance__locked">
-            <span class="my-governance__locked-icon">
-              <v-icon size="18" color="var(--g-error)">mdi-lock-outline</v-icon>
-            </span>
-            <span class="my-governance__locked-body">
-              <span class="t-label">{{ $t('staking.rewardsAmount') }}</span>
-              <span class="t-title g-num">{{ lockedRewardsDisplay }}</span>
-              <span class="t-caption my-governance__locked-note">{{ $t('governance.withdrawalLocked') }}</span>
-            </span>
-            <!-- Attempting the withdrawal is what raises the gate: useWithdrawal
-                 stops at the CIP-1694 check and the dialog explains the two
-                 ways out, instead of the user meeting the rule at signing. -->
-            <GButton tier="tertiary" compact @click="withdraw()">{{ $t('staking.withdraw') }}</GButton>
-          </div>
-        </div>
-
-        <p v-if="status.recordAvailable" class="t-body my-governance__hero-summary">
-          {{ $t('governance.representedSummary', { amount: votingPowerDisplay, votes: formatInt(health.voteCount) }) }}
-        </p>
-
-        <!-- Health strip: every number below comes from the DRep's own record -->
-        <div v-if="status.recordAvailable" class="my-governance__health">
-          <div class="my-governance__tile">
-            <span class="t-label">{{ $t('governance.rationaleRecent', { n: health.recentWindow }) }}</span>
-            <span class="t-heading g-num">{{ rationaleRecentDisplay }}</span>
-            <span class="t-caption">{{ rationaleLongRunDisplay }}</span>
-          </div>
-          <div class="my-governance__tile">
-            <span class="t-label">{{ $t('governance.lastVote') }}</span>
-            <span class="t-heading g-num">{{ lastVoteDisplay }}</span>
-            <!-- No caption at all when the countdown is unknown: see
-                 activityDisplay. A tile may show less; it may not imply more. -->
-            <span v-if="activityDisplay" class="t-caption">{{ activityDisplay }}</span>
-          </div>
-          <div class="my-governance__tile">
-            <span class="t-label">{{ $t('governance.votes') }}</span>
-            <span class="t-heading g-num">{{ formatInt(health.voteCount) }}</span>
-            <span v-if="expiresDisplay" class="t-caption">{{ expiresDisplay }}</span>
-          </div>
-        </div>
-
-        <div v-if="heroCta" class="my-governance__hero-actions">
-          <GButton :tier="heroCtaTier" @click="heroCta.run()">{{ $t(heroCta.labelKey) }}</GButton>
-        </div>
-      </div>
-
-      <!-- alerts-panel: wired by delegation-alerts -->
-      <DelegationAlertsPanel />
-
-      <!-- ── Registered but undelegated: the three ways to unlock ───────── -->
-      <template v-if="status.status === 'registeredNoDRep'">
-        <div class="my-governance__choices">
-          <div class="my-governance__choice my-governance__choice--featured">
-            <div class="my-governance__choice-top">
-              <span class="my-governance__choice-icon">
-                <v-icon size="18" color="var(--g-accent)">mdi-account-check-outline</v-icon>
+            <!-- Who holds the vote, or what is being held back -->
+            <div v-if="status.drepId" class="my-governance__drep-chip">
+              <!-- The DRep's own published avatar. Fixed size in every state, so
+                   a slow or dead image never moves the chip. -->
+              <DRepAvatar :image-url="drepImageSource" :name="drepName" :size="28" />
+              <span class="my-governance__drep-ident">
+                <span class="t-body-sm my-governance__drep-name">{{ drepName }}</span>
+                <span v-if="!keywordNameKey" class="t-caption g-mono my-governance__drep-id">{{ truncate(status.drepId) }}</span>
               </span>
-              <span class="my-governance__badge t-caption">{{ $t('governance.unlocksWithdrawals') }}</span>
             </div>
-            <span class="t-heading">{{ $t('governance.delegateToADRep') }}</span>
-            <p class="t-body-sm my-governance__choice-copy">{{ $t('governance.delegateChoiceDesc') }}</p>
-            <p class="t-caption my-governance__choice-note">{{ $t('governance.delegateChoiceNote') }}</p>
-            <GButton tier="primary" block class="my-governance__choice-cta" @click="goToDReps()">
-              {{ $t('governance.browseDReps') }}
-            </GButton>
-          </div>
-
-          <div class="my-governance__choice">
-            <div class="my-governance__choice-top">
-              <span class="my-governance__choice-icon">
-                <v-icon size="18" color="var(--g-text-3)">mdi-minus-circle-outline</v-icon>
+            <div v-else-if="status.withdrawalsBlocked" class="my-governance__locked">
+              <span class="my-governance__locked-icon">
+                <v-icon size="18" color="var(--g-error)">mdi-lock-outline</v-icon>
               </span>
-              <span class="my-governance__badge t-caption">{{ $t('governance.unlocksWithdrawals') }}</span>
-            </div>
-            <span class="t-heading">{{ $t('governance.alwaysAbstain') }}</span>
-            <p class="t-body-sm my-governance__choice-copy">{{ $t('governance.abstainChoiceDesc') }}</p>
-            <p class="t-caption my-governance__choice-note">{{ $t('governance.abstainChoiceNote') }}</p>
-            <GButton tier="secondary" block class="my-governance__choice-cta" @click="goToDReps('abstain')">
-              {{ $t('governance.chooseAbstain') }}
-            </GButton>
-          </div>
-
-          <div class="my-governance__choice">
-            <div class="my-governance__choice-top">
-              <span class="my-governance__choice-icon">
-                <v-icon size="18" color="var(--g-text-3)">mdi-close-circle-outline</v-icon>
+              <span class="my-governance__locked-body">
+                <span class="t-label">{{ $t('staking.rewardsAmount') }}</span>
+                <span class="t-title g-num">{{ lockedRewardsDisplay }}</span>
+                <span class="t-caption my-governance__locked-note">{{ $t('governance.withdrawalLocked') }}</span>
               </span>
-              <span class="my-governance__badge t-caption">{{ $t('governance.unlocksWithdrawals') }}</span>
+              <!-- Attempting the withdrawal is what raises the gate: useWithdrawal
+                   stops at the CIP-1694 check and the dialog explains the two
+                   ways out, instead of the user meeting the rule at signing. -->
+              <GButton tier="tertiary" compact @click="withdraw()">{{ $t('staking.withdraw') }}</GButton>
             </div>
-            <span class="t-heading">{{ $t('governance.alwaysNoConfidence') }}</span>
-            <p class="t-body-sm my-governance__choice-copy">{{ $t('governance.noConfidenceChoiceDesc') }}</p>
-            <p class="t-caption my-governance__choice-note">{{ $t('governance.noConfidenceChoiceNote') }}</p>
-            <GButton tier="secondary" block class="my-governance__choice-cta" @click="goToDReps('noConfidence')">
-              {{ $t('governance.chooseNoConfidence') }}
-            </GButton>
           </div>
-        </div>
 
-        <div class="my-governance__honesty">
-          <v-icon size="16" color="var(--g-accent)">mdi-information-outline</v-icon>
-          <p class="t-body-sm my-governance__honesty-text">
-            {{ $t('governance.threeChoicesHonesty') }}
-            {{ $t('common.learnMore') }}
-            <a class="my-governance__link" :href="GOV_TOOLS_URL" target="_blank" rel="noopener noreferrer">{{ $t('governance.govToolsLink') }}</a>
-            <span class="my-governance__sep">·</span>
-            <a class="my-governance__link" :href="CIP_1694_URL" target="_blank" rel="noopener noreferrer">{{ $t('governance.cip1694') }}</a>
+          <p v-if="status.recordAvailable" class="t-body my-governance__hero-summary">
+            {{ $t('governance.representedSummary', { amount: votingPowerDisplay, votes: formatInt(health.voteCount) }) }}
           </p>
-        </div>
-      </template>
 
-      <!-- ── Delegated: what the stake actually did, and the DRep pitch ── -->
-      <div v-else class="my-governance__columns">
-        <div class="my-governance__record">
+          <!-- Health strip: every number below comes from the DRep's own record -->
+          <div v-if="status.recordAvailable" class="my-governance__health">
+            <div class="my-governance__tile">
+              <span class="t-label">{{ $t('governance.rationaleRecent', { n: health.recentWindow }) }}</span>
+              <span class="t-heading g-num">{{ rationaleRecentDisplay }}</span>
+              <span class="t-caption">{{ rationaleLongRunDisplay }}</span>
+            </div>
+            <div class="my-governance__tile">
+              <span class="t-label">{{ $t('governance.lastVote') }}</span>
+              <span class="t-heading g-num">{{ lastVoteDisplay }}</span>
+              <!-- No caption at all when the countdown is unknown: see
+                   activityDisplay. A tile may show less; it may not imply more. -->
+              <span v-if="activityDisplay" class="t-caption">{{ activityDisplay }}</span>
+            </div>
+            <div class="my-governance__tile">
+              <span class="t-label">{{ $t('governance.votes') }}</span>
+              <span class="t-heading g-num">{{ formatInt(health.voteCount) }}</span>
+              <span v-if="expiresDisplay" class="t-caption">{{ expiresDisplay }}</span>
+            </div>
+          </div>
+
+          <div v-if="heroCta" class="my-governance__hero-actions">
+            <GButton :tier="heroCtaTier" @click="heroCta.run()">{{ $t(heroCta.labelKey) }}</GButton>
+          </div>
+        </div>
+
+        <!-- ── Registered but undelegated: the three ways to unlock ───────── -->
+        <template v-if="status.status === 'registeredNoDRep'">
+          <div class="my-governance__choices">
+            <div class="my-governance__choice my-governance__choice--featured glass-panel">
+              <div class="my-governance__choice-top">
+                <span class="my-governance__choice-icon">
+                  <v-icon size="18" color="var(--g-accent)">mdi-account-check-outline</v-icon>
+                </span>
+                <span class="my-governance__badge t-caption">{{ $t('governance.unlocksWithdrawals') }}</span>
+              </div>
+              <span class="t-heading">{{ $t('governance.delegateToADRep') }}</span>
+              <p class="t-body-sm my-governance__choice-copy">{{ $t('governance.delegateChoiceDesc') }}</p>
+              <p class="t-caption my-governance__choice-note">{{ $t('governance.delegateChoiceNote') }}</p>
+              <GButton tier="primary" block class="my-governance__choice-cta" @click="goToDReps()">
+                {{ $t('governance.browseDReps') }}
+              </GButton>
+            </div>
+
+            <div class="my-governance__choice glass-panel">
+              <div class="my-governance__choice-top">
+                <span class="my-governance__choice-icon">
+                  <v-icon size="18" color="var(--g-text-3)">mdi-minus-circle-outline</v-icon>
+                </span>
+                <span class="my-governance__badge t-caption">{{ $t('governance.unlocksWithdrawals') }}</span>
+              </div>
+              <span class="t-heading">{{ $t('governance.alwaysAbstain') }}</span>
+              <p class="t-body-sm my-governance__choice-copy">{{ $t('governance.abstainChoiceDesc') }}</p>
+              <p class="t-caption my-governance__choice-note">{{ $t('governance.abstainChoiceNote') }}</p>
+              <GButton tier="secondary" block class="my-governance__choice-cta" @click="goToDReps('abstain')">
+                {{ $t('governance.chooseAbstain') }}
+              </GButton>
+            </div>
+
+            <div class="my-governance__choice glass-panel">
+              <div class="my-governance__choice-top">
+                <span class="my-governance__choice-icon">
+                  <v-icon size="18" color="var(--g-text-3)">mdi-close-circle-outline</v-icon>
+                </span>
+                <span class="my-governance__badge t-caption">{{ $t('governance.unlocksWithdrawals') }}</span>
+              </div>
+              <span class="t-heading">{{ $t('governance.alwaysNoConfidence') }}</span>
+              <p class="t-body-sm my-governance__choice-copy">{{ $t('governance.noConfidenceChoiceDesc') }}</p>
+              <p class="t-caption my-governance__choice-note">{{ $t('governance.noConfidenceChoiceNote') }}</p>
+              <GButton tier="secondary" block class="my-governance__choice-cta" @click="goToDReps('noConfidence')">
+                {{ $t('governance.chooseNoConfidence') }}
+              </GButton>
+            </div>
+          </div>
+
+          <div class="my-governance__honesty">
+            <v-icon size="16" color="var(--g-accent)">mdi-information-outline</v-icon>
+            <p class="t-body-sm my-governance__honesty-text">{{ $t('governance.threeChoicesHonesty') }}</p>
+          </div>
+        </template>
+
+        <!-- ── Delegated: what the stake actually did ──────────────────── -->
+        <div v-else class="my-governance__record glass-panel">
           <div class="my-governance__record-head">
             <span class="t-label">{{ $t('governance.howYourStakeWasCast') }}</span>
             <AsOf :timestamp="fetchedAt" />
@@ -172,10 +167,30 @@
 
           <div v-else class="my-governance__rows">
             <div v-for="vote in recentVotes" :key="vote.key" class="my-governance__row">
-              <span class="t-caption g-mono my-governance__row-id">{{ truncate(vote.proposalId) }}</span>
-              <span v-if="vote.hasRationale" class="my-governance__rationale t-caption">
+              <span v-if="vote.typeLabel" class="t-label my-governance__row-type">{{ vote.typeLabel }}</span>
+              <!-- The action, by its NAME. The id is the fallback, never the
+                   headline: a truncated hash tells the reader nothing about what
+                   their stake was cast on. A button rather than a clickable row,
+                   so it is reachable by keyboard and the rationale control below
+                   is not nested inside another control. -->
+              <button
+                v-if="vote.route"
+                type="button"
+                class="t-body-sm my-governance__row-title my-governance__row-link"
+                @click="openAction(vote.route)"
+              >
+                {{ vote.title }}
+              </button>
+              <span v-else class="t-body-sm my-governance__row-title">{{ vote.title }}</span>
+
+              <button
+                v-if="vote.metaUrl"
+                type="button"
+                class="my-governance__rationale t-caption"
+                @click="openRationale(vote)"
+              >
                 {{ $t('governance.rationaleAttached') }}
-              </span>
+              </button>
               <span class="my-governance__vote t-caption" :class="`my-governance__vote--${vote.tone}`">
                 {{ $t(vote.labelKey) }}
               </span>
@@ -185,43 +200,63 @@
 
           <p class="t-caption my-governance__record-note">{{ $t('governance.onlyCastVotesCount') }}</p>
         </div>
-
-        <div class="my-governance__aside">
-          <!-- What each state means: the legend the status hero is read against -->
-          <div class="my-governance__legend">
-            <span class="t-label">{{ $t('governance.statusHelpTitle') }}</span>
-            <div v-for="entry in legend" :key="entry.key" class="my-governance__legend-row">
-              <span class="my-governance__dot my-governance__dot--small" :class="`my-governance__dot--${entry.tone}`"></span>
-              <span class="my-governance__legend-body">
-                <span class="t-body-sm my-governance__legend-title">{{ $t(`${entry.key}.title`) }}</span>
-                <span class="t-caption">{{ $t(`${entry.key}.description`) }}</span>
-              </span>
-            </div>
-          </div>
-
-          <!-- Become a DRep. Hidden when the wallet already is one. -->
-          <div v-if="status.status !== 'selfDRep'" class="my-governance__promo">
-            <span class="my-governance__choice-icon">
-              <v-icon size="20" color="var(--g-accent)">mdi-shield-check-outline</v-icon>
-            </span>
-            <span class="t-heading">{{ $t('governance.representYourself') }}</span>
-            <p class="t-body-sm my-governance__choice-copy">{{ $t('governance.representYourselfDesc') }}</p>
-            <ul class="my-governance__bullets">
-              <li class="t-caption">{{ $t('governance.keysNeverLeaveWallet') }}</li>
-              <li class="t-caption">{{ $t('governance.publicProfileSigned') }}</li>
-              <li class="t-caption">{{ $t('governance.retireAnyTime') }}</li>
-            </ul>
-            <!-- Always secondary: this card renders in the delegated states,
-                 where the alerts panel above owns the screen's one gradient. -->
-            <GButton tier="secondary" block class="my-governance__choice-cta" @click="goToRegister()">
-              {{ $t('navigation.becomeDRep') }}
-            </GButton>
-          </div>
-        </div>
       </div>
-    </template>
+
+      <aside class="my-governance__side">
+        <!-- alerts-panel: wired by delegation-alerts. Renders nothing at all
+             when there is no DRep to watch, so it is safe here unconditionally. -->
+        <DelegationAlertsPanel />
+
+        <!-- What each state means: the legend the status hero is read against -->
+        <div class="my-governance__legend glass-panel">
+          <span class="t-label">{{ $t('governance.statusHelpTitle') }}</span>
+          <div v-for="entry in legend" :key="entry.key" class="my-governance__legend-row">
+            <span class="my-governance__dot my-governance__dot--small" :class="`my-governance__dot--${entry.tone}`"></span>
+            <span class="my-governance__legend-body">
+              <span class="t-body-sm my-governance__legend-title">{{ $t(`${entry.key}.title`) }}</span>
+              <span class="t-caption">{{ $t(`${entry.key}.description`) }}</span>
+            </span>
+          </div>
+          <p class="t-caption my-governance__legend-foot">
+            {{ $t('common.learnMore') }}
+            <a class="my-governance__link" :href="GOV_TOOLS_URL" target="_blank" rel="noopener noreferrer">{{ $t('governance.govToolsLink') }}</a>
+            <span class="my-governance__sep">·</span>
+            <a class="my-governance__link" :href="CIP_1694_URL" target="_blank" rel="noopener noreferrer">{{ $t('governance.cip1694') }}</a>
+          </p>
+        </div>
+
+        <!-- Become a DRep. Hidden when the wallet already is one. -->
+        <div v-if="status.status !== 'selfDRep'" class="my-governance__promo glass-panel">
+          <span class="my-governance__choice-icon">
+            <v-icon size="20" color="var(--g-accent)">mdi-shield-check-outline</v-icon>
+          </span>
+          <span class="t-heading">{{ $t('governance.representYourself') }}</span>
+          <p class="t-body-sm my-governance__choice-copy">{{ $t('governance.representYourselfDesc') }}</p>
+          <ul class="my-governance__bullets">
+            <li class="t-caption">{{ $t('governance.keysNeverLeaveWallet') }}</li>
+            <li class="t-caption">{{ $t('governance.publicProfileSigned') }}</li>
+            <li class="t-caption">{{ $t('governance.retireAnyTime') }}</li>
+          </ul>
+          <!-- Always secondary: this card renders in the delegated states,
+               where the alerts panel above owns the screen's one gradient. -->
+          <GButton tier="secondary" block class="my-governance__choice-cta" @click="goToRegister()">
+            {{ $t('navigation.becomeDRep') }}
+          </GButton>
+        </div>
+      </aside>
+    </div>
 
     <WithdrawGateDialog :is-open="withdrawalBlocked" @close="closeWithdrawalDialog()" />
+    <!-- Mounted only while open: opening it is what sends the request, and a
+         request to an author's host must follow a click, never a render. -->
+    <RationaleDialog
+      v-if="rationaleOpen"
+      :is-open="rationaleOpen"
+      :url="rationaleUrl"
+      :hash="rationaleHash"
+      :action-title="rationaleTitle"
+      @close="closeRationale()"
+    />
   </div>
 </template>
 
@@ -243,6 +278,7 @@ import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router/composables';
 import { walletStore } from '@/stores/walletStore';
 import NetworkStore, { networkStore } from '@/stores/networkStore';
+import governanceActionsStore from '@/stores/governanceActionsStore';
 import {
   applyGovernanceHydration,
   fetchDelegatedDRepRecord,
@@ -252,13 +288,17 @@ import { useGovernanceStatus } from '@/shared/composables/useGovernanceStatus';
 import type { DelegatedDRepRecord, DRepVoteRecord } from '@/shared/composables/useDelegationHealth';
 import { useWithdrawal } from '@/shared/composables/useWithdrawal';
 import DelegationAlertsPanel from '@/modules/governance/components/alerts/DelegationAlertsPanel.vue';
+import DRepAvatar from '@/modules/governance/components/dreps/DRepAvatar.vue';
 import { useTranslation } from '@/shared/composables/useTranslation';
 import { formatInt } from '@/shared/utils/format';
 import filters from '@/shared/utils/filters';
 import networks from '@/utils/networks';
 import { debugLog } from '@/utils/debug';
+import { canonicalActionKey } from '@/shared/utils/drepView';
+import { parseGovActionId, type GovActionId } from '@/shared/utils/govActionId';
 import AsOf from '@/modules/governance/components/actions/AsOf.vue';
 import WithdrawGateDialog from '@/modules/governance/dialogs/WithdrawGateDialog.vue';
+import RationaleDialog from '@/modules/governance/dialogs/RationaleDialog.vue';
 import GButton from '@/shared/components/GButton/GButton.vue';
 import EmptyState from '@/shared/components/feedback/EmptyState.vue';
 import ErrorState from '@/shared/components/feedback/ErrorState.vue';
@@ -277,6 +317,8 @@ const error = ref('');
 const fetchedAt = ref<number | null>(null);
 
 const { withdraw, withdrawalBlocked, closeWithdrawalDialog } = useWithdrawal();
+
+const actionsState = governanceActionsStore.state;
 
 const status = useGovernanceStatus(() => ({
   account: walletStore.account,
@@ -375,17 +417,30 @@ const KEYWORD_NAME_KEYS: Record<string, string> = {
 
 const keywordNameKey = computed(() => KEYWORD_NAME_KEYS[status.value.delegation] ?? null);
 
+/* eslint-disable-next-line @typescript-eslint/no-explicit-any -- upstream metadata is untyped JSON-LD */
+const metaBody = computed<any>(() => (record.value?.metadata as any)?.meta_json?.body ?? null);
+
 /**
  * CIP-119 `givenName` arrives either as a bare string or as a JSON-LD
  * `{ '@value': … }`. Falls back to the id so the chip is never blank.
  */
 const drepName = computed(() => {
   if (keywordNameKey.value) return String(t(keywordNameKey.value));
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- upstream metadata is untyped JSON-LD
-  const given = (record.value?.metadata as any)?.meta_json?.body?.givenName;
+  const given = metaBody.value?.givenName;
   const name = typeof given === 'object' && given !== null ? given['@value'] : given;
   const text = String(name ?? '').trim();
   return text.length > 0 ? text : truncate(status.value.drepId ?? '');
+});
+
+/**
+ * The RAW `contentUrl`, handed to DRepAvatar unresolved on purpose: about a
+ * quarter of DReps publish an `ipfs://` image, and the avatar owns the mapping
+ * that turns one into something the extension can actually load.
+ */
+const drepImageSource = computed<string | null>(() => {
+  const image = metaBody.value?.image;
+  const url = image && typeof image === 'object' ? image['contentUrl'] : image;
+  return typeof url === 'string' && url.trim() ? url.trim() : null;
 });
 
 /** The vote glyphs the record can carry, mapped to copy plus a tone. */
@@ -394,6 +449,37 @@ const VOTE_COPY: Record<string, { labelKey: string; tone: string }> = {
   no: { labelKey: 'governance.votedNo', tone: 'no' },
   abstain: { labelKey: 'governance.votedAbstain', tone: 'abstain' },
 };
+
+/**
+ * Governance actions, indexed by the ONE canonical id form.
+ *
+ * A DRep's `proposal_id` is stamped by gero-backend and may be bech32
+ * (`gov_action1…`) or `{txHash}#{index}`; Nexus lists the same action under both
+ * spellings. Both sides go through `canonicalActionKey`, so a vote resolves to
+ * its action whichever encoding either service happens to use — matching on the
+ * raw strings resolved nothing at all for a bech32 feed.
+ */
+const actionIndex = computed(() => {
+  const map = new Map<string, { title: string | null; type: string | null }>();
+  for (const action of actionsState.actions) {
+    const entry = {
+      title: typeof action.title === 'string' && action.title.trim() ? action.title.trim() : null,
+      type: typeof action.type === 'string' ? action.type : null,
+    };
+    for (const raw of [action.govActionId, action.govActionIdCip129]) {
+      const key = canonicalActionKey(raw);
+      if (key) map.set(key, entry);
+    }
+  }
+  return map;
+});
+
+function typeLabel(type: string | null): string {
+  if (!type) return '';
+  const key = `governance.actionType.${type.toLowerCase()}`;
+  const label = String(t(key));
+  return label === key ? type : label;
+}
 
 /**
  * The newest votes, one row per proposal.
@@ -405,10 +491,17 @@ const VOTE_COPY: Record<string, { labelKey: string; tone: string }> = {
 interface VoteRow {
   key: string;
   proposalId: string;
+  /** The action's published name, or the truncated id when it is not loaded. */
+  title: string;
+  typeLabel: string;
   labelKey: string;
   tone: string;
-  hasRationale: boolean;
+  /** The CIP-136 anchor, when the voter published one. */
+  metaUrl: string | null;
+  metaHash: string | null;
   when: string;
+  /** Set only when the id parses; without it there is no detail page to open. */
+  route: GovActionId | null;
 }
 
 const recentVotes = computed<VoteRow[]>(() => {
@@ -422,13 +515,22 @@ const recentVotes = computed<VoteRow[]>(() => {
     if (proposalId && seen.has(proposalId)) continue;
     if (proposalId) seen.add(proposalId);
     const copy = VOTE_COPY[String(vote.vote ?? '').toLowerCase()];
+    const action = actionIndex.value.get(canonicalActionKey(proposalId) ?? '');
+    const fallback = proposalId ? truncate(proposalId) : String(t('common.notAvailable'));
+    const metaUrl = String(vote.meta_url ?? '').trim();
     rows.push({
       key,
-      proposalId: proposalId || String(t('common.notAvailable')),
+      proposalId,
+      // An unresolvable id keeps its truncated self. Never blank, and never a
+      // guessed name for an action nobody has loaded.
+      title: action?.title ?? fallback,
+      typeLabel: typeLabel(action?.type ?? null),
       labelKey: copy?.labelKey ?? 'governance.didNotVote',
       tone: copy?.tone ?? 'none',
-      hasRationale: String(vote.meta_url ?? '').trim().length > 0,
+      metaUrl: metaUrl || null,
+      metaHash: String(vote.meta_hash ?? '').trim() || null,
       when: vote.block_time ? new Date(vote.block_time * 1000).toLocaleDateString() : '',
+      route: parseGovActionId(proposalId),
     });
     if (rows.length >= 6) break;
   }
@@ -478,6 +580,30 @@ const heroCtaTier = computed<'primary' | 'secondary'>(() =>
   status.value.drepId ? 'secondary' : 'primary',
 );
 
+// ---------------------------------------------------------------------------
+// The rationale dialog
+// ---------------------------------------------------------------------------
+
+const openRationaleRow = ref<VoteRow | null>(null);
+
+const rationaleOpen = computed(() => openRationaleRow.value !== null);
+const rationaleUrl = computed(() => openRationaleRow.value?.metaUrl ?? null);
+const rationaleHash = computed(() => openRationaleRow.value?.metaHash ?? null);
+const rationaleTitle = computed(() => openRationaleRow.value?.title ?? null);
+
+function openRationale(row: VoteRow): void {
+  if (!row.metaUrl) return;
+  openRationaleRow.value = row;
+}
+
+function closeRationale(): void {
+  openRationaleRow.value = null;
+}
+
+function openAction(id: GovActionId): void {
+  router.push({ name: 'governanceAction', params: { txHash: id.txHash, index: String(id.index) } });
+}
+
 function goToDReps(choice?: string): void {
   router.push({ name: 'governanceDReps', query: choice ? { choice } : undefined });
 }
@@ -488,6 +614,23 @@ function goToActions(): void {
 
 function goToRegister(): void {
   router.push({ name: 'governanceRegister' });
+}
+
+/**
+ * Make sure the action list is loaded, so the vote rows can name what they were
+ * cast on instead of showing a hash.
+ *
+ * Only ever fires when the store has NEVER loaded (`fetchedAt === null`), which
+ * is also the only moment its filters can be reset without changing a board the
+ * user is looking at — and they have to be reset, because a board left filtered
+ * to "active" would hide every closed action a past vote points at.
+ */
+function ensureActionTitles(): void {
+  if (actionsState.fetchedAt !== null || actionsState.loading || actionsState.actions.length) return;
+  const network = String(walletStore.loggedWallet?.network ?? '');
+  if (!network) return;
+  governanceActionsStore.setFilters({ type: null, status: null });
+  void governanceActionsStore.loadActions(network);
 }
 
 /**
@@ -522,6 +665,8 @@ async function loadDRep(): Promise<void> {
     record.value = await fetchDelegatedDRepRecord(drepId, wallet);
     fetchedAt.value = Date.now();
     applyGovernanceHydration(record.value);
+    // Titles are only worth a request once there is a record with votes in it.
+    if (record.value?.votes?.length) ensureActionTitles();
   } catch (err: unknown) {
     debugLog('MyGovernance: DRep lookup failed', err);
     record.value = null;
@@ -574,17 +719,31 @@ watch(() => walletStore.account?.drep_id, () => void loadDRep(), { immediate: tr
   border-radius: var(--g-r-card);
 }
 
+/* ---- The two columns ---- */
+.my-governance__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--g-s-4);
+  align-items: start;
+}
+.my-governance__main,
+.my-governance__side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--g-s-4);
+  min-width: 0;
+}
+
 /* ---- Hero ---- */
+/* Surface, border and radius come from `.glass-panel` — declaring them here
+   too would win on scoped specificity and repaint the panel solid. */
 .my-governance__hero {
   position: relative;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: var(--g-s-4);
-  padding: var(--g-s-5);
-  background: var(--g-surface);
-  border: 1px solid var(--g-hairline-2);
-  border-radius: var(--g-r-card);
+  gap: var(--g-s-3);
+  padding: var(--g-s-4);
 }
 /* Elevation by hairline, never glow: the top edge carries the state's tone. */
 .my-governance__hero::before {
@@ -603,7 +762,7 @@ watch(() => walletStore.account?.drep_id, () => void loadDRep(), { immediate: tr
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--g-s-4);
+  gap: var(--g-s-3);
   flex-wrap: wrap;
 }
 .my-governance__hero-headline {
@@ -653,16 +812,6 @@ watch(() => walletStore.account?.drep_id, () => void loadDRep(), { immediate: tr
   max-width: 100%;
   min-width: 0;
 }
-.my-governance__drep-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: var(--g-r-pill);
-  background: var(--g-overlay);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-}
 .my-governance__drep-ident {
   display: flex;
   flex-direction: column;
@@ -684,7 +833,7 @@ watch(() => walletStore.account?.drep_id, () => void loadDRep(), { immediate: tr
   display: flex;
   align-items: center;
   gap: var(--g-s-3);
-  padding: var(--g-s-4) var(--g-s-5);
+  padding: var(--g-s-3) var(--g-s-4);
   background: var(--g-raised);
   border: 1px solid var(--g-error-line);
   border-radius: var(--g-r-control);
@@ -728,17 +877,14 @@ watch(() => walletStore.account?.drep_id, () => void loadDRep(), { immediate: tr
 /* ---- The three unlock choices ---- */
 .my-governance__choices {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: var(--g-s-4);
 }
 .my-governance__choice {
   display: flex;
   flex-direction: column;
   gap: var(--g-s-3);
-  padding: var(--g-s-5);
-  background: var(--g-surface);
-  border: 1px solid var(--g-hairline-2);
-  border-radius: var(--g-r-card);
+  padding: var(--g-s-4);
 }
 .my-governance__choice--featured {
   border-color: var(--g-accent);
@@ -777,11 +923,13 @@ watch(() => walletStore.account?.drep_id, () => void loadDRep(), { immediate: tr
 }
 
 /* ---- Honesty strip ---- */
+/* Solid on purpose: glass means "this floats above content", and a one-line
+   footnote under three cards is the most static thing on the page. */
 .my-governance__honesty {
   display: flex;
   align-items: center;
   gap: var(--g-s-3);
-  padding: var(--g-s-4) var(--g-s-5);
+  padding: var(--g-s-3) var(--g-s-4);
   background: var(--g-surface);
   border: 1px solid var(--g-hairline-2);
   border-radius: var(--g-r-card);
@@ -796,23 +944,14 @@ watch(() => walletStore.account?.drep_id, () => void loadDRep(), { immediate: tr
   color: var(--g-text-3);
 }
 
-/* ---- Record + aside ---- */
-.my-governance__columns {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-  gap: var(--g-s-4);
-  align-items: start;
-}
+/* ---- Record + side column ---- */
 .my-governance__record,
 .my-governance__legend,
 .my-governance__promo {
   display: flex;
   flex-direction: column;
   gap: var(--g-s-3);
-  padding: var(--g-s-5);
-  background: var(--g-surface);
-  border: 1px solid var(--g-hairline-2);
-  border-radius: var(--g-r-card);
+  padding: var(--g-s-4);
 }
 .my-governance__record-head {
   display: flex;
@@ -830,16 +969,36 @@ watch(() => walletStore.account?.drep_id, () => void loadDRep(), { immediate: tr
   gap: var(--g-s-3);
   min-height: var(--g-row-h-panel);
   border-bottom: 1px solid var(--g-hairline-1);
+  flex-wrap: wrap;
 }
 .my-governance__row:last-child {
   border-bottom: none;
 }
-.my-governance__row-id {
-  flex: 1;
-  min-width: 0;
+.my-governance__row-type {
+  width: 120px;
+  flex: none;
+  color: var(--g-text-3);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.my-governance__row-title {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  color: var(--g-text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.my-governance__row-link {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.my-governance__row-link:hover {
+  color: var(--g-accent);
 }
 .my-governance__row-when {
   width: 88px;
@@ -848,10 +1007,15 @@ watch(() => walletStore.account?.drep_id, () => void loadDRep(), { immediate: tr
 }
 .my-governance__rationale {
   color: var(--g-accent);
+  background: none;
   border: 1px solid var(--g-hairline-2);
   border-radius: var(--g-r-chip);
   padding: 0 var(--g-s-2);
   white-space: nowrap;
+  cursor: pointer;
+}
+.my-governance__rationale:hover {
+  border-color: var(--g-accent);
 }
 .my-governance__vote {
   border-radius: var(--g-r-chip);
@@ -878,11 +1042,6 @@ watch(() => walletStore.account?.drep_id, () => void loadDRep(), { immediate: tr
   margin: 0;
   margin-top: auto;
 }
-.my-governance__aside {
-  display: flex;
-  flex-direction: column;
-  gap: var(--g-s-4);
-}
 .my-governance__legend-row {
   display: flex;
   align-items: flex-start;
@@ -897,6 +1056,13 @@ watch(() => walletStore.account?.drep_id, () => void loadDRep(), { immediate: tr
   color: var(--g-text-1);
   font-weight: 550;
 }
+.my-governance__legend-foot {
+  margin: 0;
+  margin-top: auto;
+  padding-top: var(--g-s-3);
+  border-top: 1px solid var(--g-hairline-1);
+  color: var(--g-text-3);
+}
 .my-governance__bullets {
   display: flex;
   flex-direction: column;
@@ -905,11 +1071,21 @@ watch(() => walletStore.account?.drep_id, () => void loadDRep(), { immediate: tr
   padding-left: var(--g-s-4);
 }
 
+/* The side panel sits around 400px and the popup narrower still. Below the
+   two-column breakpoint everything stacks, and the side column follows the main
+   one rather than being squeezed beside it. */
 @media (max-width: 960px) {
-  .my-governance__columns,
-  .my-governance__choices,
+  .my-governance__grid,
   .my-governance__health {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 720px) {
+  .my-governance__row-type {
+    width: auto;
+  }
+  .my-governance__row-title {
+    flex-basis: 100%;
   }
 }
 </style>
