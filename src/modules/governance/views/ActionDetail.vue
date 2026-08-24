@@ -44,6 +44,11 @@
           <span v-if="epochsLeft !== null" class="g-num">
             {{ $t('governance.epochsRemaining', { n: epochsLeft }) }}<template v-if="daysLeft !== null"> ({{ $t('governance.approxDaysLeft', { n: daysLeft }) }})</template>
           </span>
+          <!-- Same epoch count, said as a day. Approximate by construction: the
+               position inside the current epoch is unknown, so the "≈" stays. -->
+          <span v-if="expiresOn" :title="$t('governance.approxExpiryHint')">
+            {{ $t('governance.approxExpiryDate', { date: expiresOn }) }}
+          </span>
         </div>
         <VoteCta :action="action" @vote="voteDialogOpen = true" />
       </div>
@@ -195,7 +200,13 @@ import { drepTallies, spoTallies, ccProgress } from '@/shared/utils/govTally';
 import type { Composition } from '@/shared/utils/govTally';
 import { evaluateThresholds } from '@/shared/utils/govThresholds';
 import type { BodyResult, GovThresholdParams } from '@/shared/utils/govThresholds';
-import { epochsRemaining, daysRemaining, isOpen } from '@/shared/utils/govLifecycle';
+import {
+  epochsRemaining,
+  daysRemaining,
+  approxExpiryDate,
+  formatApproxExpiry,
+  isOpen,
+} from '@/shared/utils/govLifecycle';
 import { safeExternalHref } from '@/shared/utils/externalLink';
 import { renderMarkdown, referenceMarkerIndex } from '@/shared/utils/renderMarkdown';
 import { governanceStatus } from '@/shared/composables/useGovernanceStatus';
@@ -383,6 +394,12 @@ const epochsLeft = computed(() => {
 const daysLeft = computed(() => {
   if (!isOpen(action.value?.status)) return null;
   return daysRemaining(currentEpoch.value, action.value?.expiresEpoch);
+});
+
+/** That same approximation as a calendar day; '' when either epoch is unknown. */
+const expiresOn = computed(() => {
+  if (!isOpen(action.value?.status)) return '';
+  return formatApproxExpiry(approxExpiryDate(currentEpoch.value, action.value?.expiresEpoch));
 });
 
 /**
@@ -605,9 +622,14 @@ onBeforeUnmount(() => proseRoot.value?.removeEventListener('click', onProseClick
   margin: 0 0 var(--g-s-1);
   color: var(--g-text-3);
 }
+/* The bodies vote in PARALLEL, so they are read side by side: DReps beside the
+   committee, plus SPOs where the action type gives them a say. `auto-fit` +
+   a min track means the same markup collapses to a single column in the side
+   panel and the popup, where there is no room for two. Grid items stretch, so
+   the cards share a height however long a threshold note wraps. */
 .action-detail__tallies {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: var(--g-s-3);
 }
 .action-detail__section {

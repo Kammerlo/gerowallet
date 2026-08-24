@@ -13,7 +13,10 @@
 //
 // Everything with a network call, a router or a heavy child behind it is
 // mocked; the prose, the reference list and the click wiring are the subject.
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { mount, type Wrapper } from '@vue/test-utils';
 import Vue from 'vue';
 
@@ -69,6 +72,18 @@ import { walletStore } from '@/stores/walletStore';
 import NetworkStore from '@/stores/networkStore';
 
 const $t = (key: string): string => key;
+
+// Read beside this spec, not via `new URL('./x', import.meta.url)`: the
+// happy-dom environment resolves that against the document base and hands back
+// an http: URL.
+const SOURCE = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'ActionDetail.vue'), 'utf8');
+
+/** The declaration block of the tally wrapper's rule in the scoped stylesheet. */
+function talliesRule(): string {
+  const match = /\.action-detail__tallies\s*\{([^}]*)\}/.exec(SOURCE);
+  expect(match, 'no CSS rule for .action-detail__tallies').not.toBeNull();
+  return (match as RegExpExecArray)[1];
+}
 
 /**
  * Reference 1 is `ipfs://`, which the safe-URL guard drops, so only reference 2
@@ -198,5 +213,59 @@ describe('ActionDetail references', () => {
     expect(document.activeElement).toBe(target);
     expect(target.classList.contains('action-detail__reference--jumped')).toBe(true);
     expect(window.location.hash).toBe(before);
+  });
+});
+
+// The bodies vote in parallel, so they are read in parallel: DReps beside the
+// committee rather than stacked down a column. The layout lives in the scoped
+// stylesheet, which vitest does not apply in happy-dom, so it is asserted
+// against the file — after the DOM has confirmed there are two cards in the
+// wrapper to lay out.
+describe('ActionDetail body tallies', () => {
+  it('puts every voting body in one grid, side by side', async () => {
+    // A treasury withdrawal is decided by DReps AND the committee.
+    getProposal.mockResolvedValue(detail({ type: 'TreasuryWithdrawals' }));
+    wrapper = mountPage();
+    await settle();
+
+    const tallies = wrapper.find('.action-detail__tallies');
+    expect(tallies.exists()).toBe(true);
+    expect(wrapper.findAllComponents({ name: 'BodyTallyCard' })).toHaveLength(2);
+
+    const declarations = talliesRule();
+    expect(declarations).toMatch(/display:\s*grid/);
+    // auto-fit + a min track: two across where there is room, one column in the
+    // side panel and the popup, from the same markup.
+    expect(declarations).toMatch(/grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(/);
+    expect(declarations).not.toMatch(/flex-direction:\s*column/);
+  });
+
+  it('keeps the advisory panel instead of a tally grid for an info action', async () => {
+    // InfoAction has no threshold and can never ratify, so there is nothing to
+    // lay out side by side.
+    wrapper = mountPage();
+    await settle();
+
+    expect(wrapper.find('.action-detail__tallies').exists()).toBe(false);
+    expect(wrapper.find('.action-detail__advisory').exists()).toBe(true);
+  });
+
+  it('states the rough expiry day beside the epoch count', async () => {
+    wrapper = mountPage();
+    await settle();
+
+    // Current epoch 650, expires 660: ten epochs, and a date to go with them.
+    expect(wrapper.html()).toContain('governance.epochsRemaining');
+    expect(wrapper.html()).toContain('governance.approxExpiryDate');
+  });
+
+  it('states no expiry day when the current epoch is unknown', async () => {
+    (NetworkStore.getCurrentEpoch as unknown as Mock).mockReturnValue(null);
+    wrapper = mountPage();
+    await settle();
+
+    expect(wrapper.html()).not.toContain('governance.approxExpiryDate');
+    // The epoch the chain published is still a fact and still renders.
+    expect(wrapper.html()).toContain('governance.expiresEpochLabel');
   });
 });

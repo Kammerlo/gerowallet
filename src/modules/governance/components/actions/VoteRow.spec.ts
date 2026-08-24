@@ -117,3 +117,76 @@ describe('VoteRow target size', () => {
     wrapper.destroy();
   });
 });
+
+// The slim layout: an avatar column, the id beside the name rather than under
+// it, and a row height that can only come down because the two controls keep
+// their own floors (pinned above).
+describe('VoteRow layout', () => {
+  it('reserves the avatar column on every row, decoratively', () => {
+    const wrapper = mountRow();
+    const avatar = wrapper.find('.vote-row__avatar');
+
+    expect(avatar.exists()).toBe(true);
+    // A placeholder standing in for a picture is not a control and carries no
+    // name of its own, so assistive tech skips it rather than announcing it.
+    expect(avatar.attributes('aria-hidden')).toBe('true');
+    expect(avatar.element.tagName).toBe('SPAN');
+    wrapper.destroy();
+  });
+
+  it('puts the id beside the name, on the same line', () => {
+    const wrapper = mountRow();
+    const identity = wrapper.find('.vote-row__identity');
+    const name = identity.find('.vote-row__name');
+    const id = identity.find('.vote-row__id');
+
+    expect(name.exists()).toBe(true);
+    expect(id.exists()).toBe(true);
+    // Siblings in one flex line, which is what saves the second row of height.
+    expect(id.element.parentElement).toBe(name.element.parentElement);
+    expect(rule('.vote-row__identity')).not.toMatch(/flex-direction:\s*column/);
+    wrapper.destroy();
+  });
+
+  it('does not repeat the id when the id IS the name', () => {
+    // An unnamed voter shows its id in the name slot; a second copy beside it
+    // would be the same string twice on one line.
+    const wrapper = mountRow({ name: null, route: null });
+
+    expect(wrapper.find('.vote-row__name').exists()).toBe(true);
+    expect(wrapper.find('.vote-row__id').exists()).toBe(false);
+    wrapper.destroy();
+  });
+
+  it('keeps the row slimmer than a panel row without dropping below the target floors', () => {
+    const declarations = rule('.vote-row');
+    const minHeight = /min-height:\s*var\(--g-row-h-table\)/.test(declarations);
+
+    // The table row height (44px), not the panel one (48px). Asserted by token
+    // rather than by number so the row keeps tracking the scale.
+    expect(minHeight).toBe(true);
+    // Still tall enough for the 24px controls plus their padding.
+    expect(declarations).toMatch(/padding:\s*var\(--g-s-1\)/);
+    expect(pxOf('.vote-row__name--link', 'min-height')).toBeGreaterThanOrEqual(24);
+    expect(pxOf('.vote-row__rationale', 'min-height')).toBeGreaterThanOrEqual(24);
+  });
+
+  it('marks your own representative in words as well as in colour', () => {
+    const wrapper = mountRow({ isYours: true });
+
+    expect(wrapper.classes()).toContain('vote-row--yours');
+    expect(wrapper.find('.vote-row__chip--yours').text()).toBe('governance.yours');
+    wrapper.destroy();
+  });
+
+  it('renders the choice, the date and the rationale link in that order', () => {
+    const wrapper = mountRow();
+    const cells = wrapper.findAll('.vote-row > *');
+    const classes = cells.wrappers.map(cell => cell.classes().join(' '));
+
+    expect(classes.join(' | ')).toMatch(
+      /vote-row__avatar.*vote-row__role.*vote-row__identity.*vote-row__pill.*vote-row__when.*vote-row__rationale/,
+    );
+    wrapper.destroy();
+  });
+});
