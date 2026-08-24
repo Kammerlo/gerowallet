@@ -951,13 +951,20 @@ export const midnightActions = {
     /** Highest indexer txId seen in this batch — advances the resume cursor. */
     maxTxId?: number;
   }) {
-    const byKey = new Map<string, MidnightUnshieldedUtxo>();
-    for (const u of midnightStore.utxos) {
-      byKey.set(`${u.intentHash}:${u.outputIndex}`, u);
-    }
-
     let balanceDelta = 0n;
     const isNight = (u: MidnightUnshieldedUtxo) => isNativeNight(u.tokenType);
+
+    const byKey = new Map<string, MidnightUnshieldedUtxo>();
+    for (const u of midnightStore.utxos) {
+      const key = `${u.intentHash}:${u.outputIndex}`;
+      const collided = byKey.get(key);
+      // `setUtxos` stores an array and does NOT dedup, so a persisted set can
+      // hold two entries under one key. Folding them into the map here drops
+      // one of them; without this its value would stay in nightUnshielded
+      // while it vanished from the set.
+      if (collided && isNight(collided)) balanceDelta -= collided.value;
+      byKey.set(key, u);
+    }
 
     // ORDER MATTERS: removals BEFORE additions, and callers apply deltas
     // PER TRANSACTION. DUST registration flags a UTxO in place — the tx
@@ -976,13 +983,19 @@ export const midnightActions = {
     }
     for (const u of deltas.added) {
       const key = `${u.intentHash}:${u.outputIndex}`;
-      if (byKey.has(key)) {
-        // Duplicate replay — refresh metadata (e.g. registeredForDustGeneration)
-        // without touching the balance.
-        byKey.set(key, u);
-        continue;
-      }
+      const replaced = byKey.get(key);
       byKey.set(key, u);
+      // A duplicate replay carries the same color and value, so the two
+      // adjustments below cancel out and the balance is untouched — that is
+      // the long-standing behaviour, which exists so a re-delivery can refresh
+      // metadata like registeredForDustGeneration. They only bite when the key
+      // collides between genuinely DIFFERENT UTxOs, which a malformed payload
+      // can cause (see resolveOutputIndex in midnight-sync.service.ts). The
+      // bare overwrite dropped the previous entry from the set while leaving
+      // its value in nightUnshielded, and the eventual spend then decremented
+      // against the wrong color — a permanent overstatement. Keep the balance
+      // tied to whatever actually survives in the set.
+      if (replaced && isNight(replaced)) balanceDelta -= replaced.value;
       if (isNight(u)) balanceDelta += u.value;
     }
 
