@@ -1,10 +1,10 @@
-// The governance submenu as rendered.
+// The Governance section of the drawer, as rendered.
 //
-// `navGroup.spec.ts` pins the open/closed RULE; this file pins that the drawer
-// obeys it in the DOM, because the bug the rule replaced was not a wrong value,
-// it was three links that were never rendered. Standing on the DRep directory,
-// My governance / DReps / Actions must all be present and all be real links,
-// whatever the user last did with the chevron.
+// It used to be one expandable row with a submenu, and that submenu is the bug
+// these tests were written for: collapsed on /governance/dreps, Actions was not
+// gated — it was not in the DOM at all, and nothing inside the group could
+// bring it back. The pages are a SECTION now, so the property to hold is
+// simpler and stronger: every governance page is a row, on every page, always.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mount, type Wrapper } from '@vue/test-utils';
 import Vue from 'vue';
@@ -35,7 +35,7 @@ vi.mock('@/shared/composables/useTranslation', () => ({ useTranslation: () => ({
 import NavigationDrawer from './NavigationDrawer.vue';
 import { walletStore } from '@/stores/walletStore';
 import featureFlagsStore from '@/stores/featureFlagsStore';
-import { GOVERNANCE_CHILDREN } from './navGroup';
+import { GOVERNANCE_ITEMS } from './governanceNav';
 
 function mountDrawer(path: string): Wrapper<Vue> {
   h.route.path = path;
@@ -69,17 +69,41 @@ function mountDrawer(path: string): Wrapper<Vue> {
 }
 
 /**
- * Every submenu row's target, in render order. Vuetify is not installed here, so
+ * Every drawer row's target, in render order. Vuetify is not installed here, so
  * `v-list-item` stays an unresolved element and its `to` is a plain attribute —
  * which is exactly the binding under test.
  */
-function childLinks(w: Wrapper<Vue>): string[] {
-  return w.findAll('.nav-group__child').wrappers.map(row => row.attributes('to') ?? '');
+function rowLinks(w: Wrapper<Vue>): string[] {
+  return w.findAll('.menuItem').wrappers.map(linkOf);
 }
 
-/** The labels a person actually sees under Governance, in render order. */
-function childTitles(w: Wrapper<Vue>): string[] {
-  return w.findAll('.nav-group__child-title').wrappers.map(node => node.text());
+/** `attributes()` is typed `string | void`; narrow once rather than at each use. */
+function linkOf(row: Wrapper<Vue>): string {
+  const to = row.attributes('to');
+  return typeof to === 'string' ? to : '';
+}
+
+/** Only the governance rows, in render order. */
+function governanceLinks(w: Wrapper<Vue>): string[] {
+  return rowLinks(w).filter(link => link.startsWith('/governance'));
+}
+
+/** The section headings the drawer renders, in order. */
+function sectionHeadings(w: Wrapper<Vue>): string[] {
+  return w.findAll('v-subheader').wrappers.map(node => node.text().trim());
+}
+
+/**
+ * Governance rows a person can actually SEE. Gated rows are `v-show`n, so they
+ * stay in the DOM with `display: none` rather than being removed — asserting on
+ * presence alone would pass for a row nobody can click.
+ */
+function visibleGovernanceLinks(w: Wrapper<Vue>): string[] {
+  return w
+    .findAll('.menuItem')
+    .wrappers.filter(row => (row.element as HTMLElement).style.display !== 'none')
+    .map(linkOf)
+    .filter(link => link.startsWith('/governance'));
 }
 
 let wrapper: Wrapper<Vue> | null = null;
@@ -117,67 +141,78 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('NavigationDrawer: the governance submenu', () => {
-  it('renders every child on every governance page', () => {
+describe('NavigationDrawer: the Governance section', () => {
+  it('renders every governance page as a row, on every governance page', () => {
+    // The property the submenu could not hold: no page in the section is ever
+    // one that hides its siblings.
     for (const path of GOVERNANCE_PAGES) {
       wrapper = mountDrawer(path);
-      expect(childLinks(wrapper), path).toEqual(GOVERNANCE_CHILDREN.map(child => child.link));
+      expect(visibleGovernanceLinks(wrapper), path).toEqual(GOVERNANCE_ITEMS.map(item => item.link));
       wrapper.destroy();
       wrapper = null;
     }
   });
 
+  it('renders them from outside the section too, with nothing to expand', () => {
+    // The old row had to be opened first; standing on /staking, the governance
+    // pages simply were not there.
+    wrapper = mountDrawer('/staking');
+    expect(visibleGovernanceLinks(wrapper)).toEqual(GOVERNANCE_ITEMS.map(item => item.link));
+  });
+
   it('reaches Actions from the DReps screen, which is the bug this replaced', () => {
     wrapper = mountDrawer('/governance/dreps');
-    expect(childLinks(wrapper)).toContain('/governance/actions');
-    expect(childTitles(wrapper)).toEqual([
-      'navigation.governanceMe',
-      'governance.dReps',
-      'common.actions',
-      'navigation.becomeDRep',
-    ]);
+    expect(governanceLinks(wrapper)).toContain('/governance/actions');
   });
 
-  it('keeps the children rendered after the chevron is used inside the group', async () => {
+  it('gives every governance row the drawer own active treatment', () => {
     wrapper = mountDrawer('/governance/dreps');
-    // The chevron is not even offered inside the group: there is nothing it
-    // could do, and offering it is how people used to strand themselves.
-    expect(wrapper.find('.nav-group__actions button').exists()).toBe(false);
-
-    // Force the user-toggle false anyway and re-render: the route still wins.
-    (wrapper.vm as unknown as { governanceUserExpanded: boolean }).governanceUserExpanded = false;
-    await Vue.nextTick();
-    expect(childLinks(wrapper)).toContain('/governance/actions');
-  });
-
-  it('marks the active child with the drawer\'s own active class, not a bespoke rail', () => {
-    wrapper = mountDrawer('/governance/dreps');
-    // The bespoke `--active` modifier (and the accent side border it carried) is
-    // gone: children take the same treatment as every other active drawer row.
-    expect(wrapper.html()).not.toContain('nav-group__child--active');
-    const rows = wrapper.findAll('.nav-group__child').wrappers;
-    expect(rows.length).toBeGreaterThan(0);
+    const rows = wrapper
+      .findAll('.menuItem')
+      .wrappers.filter(row => linkOf(row).startsWith('/governance'));
+    expect(rows.length).toBe(GOVERNANCE_ITEMS.length);
     for (const row of rows) {
       expect(row.attributes('active-class')).toBe('activePageDark');
     }
   });
 
-  it('hides the submenu elsewhere until the chevron opens it', async () => {
-    wrapper = mountDrawer('/staking');
-    expect(childLinks(wrapper)).toEqual([]);
+  it('heads the section, between Financial hub and Activities & rewards', () => {
+    wrapper = mountDrawer('/governance/me');
+    const headings = sectionHeadings(wrapper);
 
-    const chevron = wrapper.find('.nav-group__actions button');
-    expect(chevron.exists()).toBe(true);
-    await chevron.trigger('click');
-    await Vue.nextTick();
-    expect(childLinks(wrapper)).toEqual(GOVERNANCE_CHILDREN.map(child => child.link));
+    // Also proves the negative case above is not vacuous: this selector really
+    // does find the heading when the section is on.
+    expect(headings).toContain('navigation.governance');
+    expect(headings.indexOf('navigation.governance')).toBeGreaterThan(
+      headings.indexOf('navigation.financialHub'),
+    );
+    expect(headings.indexOf('navigation.governance')).toBeLessThan(
+      headings.indexOf('navigation.activitiesRewards'),
+    );
+  });
+
+  it('carries the Gero DAO in the section, under its own network gate', () => {
+    wrapper = mountDrawer('/governance/me');
+    expect(rowLinks(wrapper)).toContain('/dao');
   });
 
   it('drops registration when the voting sub-flag is off', () => {
     vi.spyOn(featureFlagsStore, 'isGovernanceVotingEnabled').mockReturnValue(false);
     wrapper = mountDrawer('/governance/dreps');
-    const links = childLinks(wrapper);
+    const links = visibleGovernanceLinks(wrapper);
     expect(links).not.toContain('/governance/register');
     expect(links).toContain('/governance/actions');
+  });
+
+  it('shows no governance rows, and no heading, when the master flag is off', () => {
+    vi.spyOn(featureFlagsStore, 'isGovernanceEnabled').mockReturnValue(false);
+    wrapper = mountDrawer('/staking');
+
+    expect(visibleGovernanceLinks(wrapper)).toEqual([]);
+    // And no orphaned heading above the nothing. Matched on the heading element
+    // rather than the drawer's text, because "navigation.governance" is also a
+    // PREFIX of every row key ("navigation.governanceMe") and a text search
+    // would pass while the label was still on screen.
+    expect(sectionHeadings(wrapper)).not.toContain('navigation.governance');
   });
 });

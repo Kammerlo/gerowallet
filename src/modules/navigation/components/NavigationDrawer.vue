@@ -36,91 +36,6 @@
           {{ item.header }}
         </v-subheader>
 
-        <!-- Expandable parent (Governance only). The row itself navigates to the
-             group's landing page. Standing anywhere inside the group pins the
-             submenu open; the chevron only exists for the case where the user is
-             somewhere else. Children inherit the parent's gate. -->
-        <div
-          v-else-if="item.children"
-          v-show="item.enabled"
-          :key="index"
-          class="nav-group"
-        >
-          <v-list-item
-            link
-            class="menuItem"
-            style="height: 34px"
-            @click="openNavGroup(item)"
-          >
-            <v-list-item-avatar tile size="18">
-              <v-badge :value="!!item.notificationDot" dot color="error" overlap bordered>
-                <v-icon v-if="item.icon?.startsWith('mdi-')" size="18" color="var(--g-accent)">{{ item.icon }}</v-icon>
-                <span
-                  v-else
-                  class="nav-svg-icon"
-                  role="img"
-                  :aria-label="item.title"
-                  :style="{ maskImage: `url(${item.icon})`, WebkitMaskImage: `url(${item.icon})` }"
-                />
-              </v-badge>
-            </v-list-item-avatar>
-
-            <v-list-item-content>
-              <v-list-item-title style="font-weight: 500">
-                {{ item.title }}
-              </v-list-item-title>
-            </v-list-item-content>
-
-            <v-list-item-action class="ma-0 nav-group__actions">
-              <!-- The health dot bubbles up from My governance so a collapsed
-                   submenu never hides an alert. -->
-              <span
-                v-if="item.alertDot"
-                class="nav-dot"
-                role="img"
-                :aria-label="$t('governance.delegationNeedsAttention')"
-                :title="$t('governance.delegationNeedsAttention')"
-              />
-              <!-- Hidden while inside the group: there the submenu is pinned
-                   open, so a toggle would be a control that does nothing. -->
-              <v-btn
-                v-if="!onGovernanceRoute"
-                icon
-                x-small
-                :aria-label="$t('navigation.toggleSubmenu')"
-                @click.stop.prevent="toggleNavGroup()"
-              >
-                <v-icon size="16">{{ governanceExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
-              </v-btn>
-            </v-list-item-action>
-          </v-list-item>
-
-          <div v-if="governanceExpanded" class="nav-group__children">
-            <v-list-item
-              v-for="child in item.children"
-              :key="child.link"
-              :to="child.link"
-              link
-              class="nav-group__child"
-              :active-class="themeDark ? 'activePageDark' : 'activePage'"
-            >
-              <v-list-item-content>
-                <v-list-item-title class="t-body-sm nav-group__child-title">
-                  {{ child.title }}
-                </v-list-item-title>
-              </v-list-item-content>
-              <v-list-item-action v-if="child.alertDot" class="ma-0">
-                <span
-                  class="nav-dot"
-                  role="img"
-                  :aria-label="$t('governance.delegationNeedsAttention')"
-                  :title="$t('governance.delegationNeedsAttention')"
-                />
-              </v-list-item-action>
-            </v-list-item>
-          </div>
-        </div>
-
         <v-list-item
           v-else-if="item.link"
           :to="item.link"
@@ -323,24 +238,7 @@ import assets from '@/utils/assets';
 import { updateVuetifyTheme } from '@/plugins/vuetify';
 import { debugLog } from '@/utils/debug';
 import { hasNewFeaturesInPath } from '@/shared/composables/useFeatureNotifications';
-import {
-  GOVERNANCE_CHILDREN,
-  isGovernanceGroupOpen,
-  isInGovernanceGroup,
-} from '@/modules/navigation/components/navGroup';
-
-/** A row inside an expandable parent's submenu. */
-interface NavigationChildItem {
-  title: string;
-  link: string;
-  /**
-   * Children inherit the parent's gate; this only narrows it further (e.g. the
-   * DRep registration sub-flag). Omitted means "inherit and show".
-   */
-  enabled?: boolean;
-  /** Amber health dot — mirrored onto the parent row so it survives collapse. */
-  alertDot?: boolean;
-}
+import { GOVERNANCE_ITEMS } from '@/modules/navigation/components/governanceNav';
 
 interface NavigationItem {
   title?: string;
@@ -356,21 +254,14 @@ interface NavigationItem {
   loading?: boolean;
   /** Brand spotlight item (Nexus): colored icon, animated gradient border. */
   special?: boolean;
-  /** Expandable parent: renders `children` as a submenu under this row. */
-  children?: NavigationChildItem[];
-  /** Amber health dot bubbled up from a child. */
+  /** Amber delegation-health dot. Rides My governance. */
   alertDot?: boolean;
 }
 
 type NavigationLinkItem = NavigationItem & { link: string };
 type NavigationHrefItem = NavigationItem & { href: string };
 type NavigationHeaderItem = NavigationItem & { header: string };
-type NavigationGroupItem = NavigationItem & { link: string; children: NavigationChildItem[] };
-type NavigationItemUnion =
-  | NavigationLinkItem
-  | NavigationHrefItem
-  | NavigationHeaderItem
-  | NavigationGroupItem;
+type NavigationItemUnion = NavigationLinkItem | NavigationHrefItem | NavigationHeaderItem;
 
 const { t } = useTranslation();
 const changeLogRef = ref(changeLog)
@@ -446,31 +337,17 @@ const navLogo = computed(() => {
  */
 const governanceAlertCount = computed(() => governanceAlertsStore.alertCount());
 
-/** True on My governance, DReps, a DRep profile, Actions and registration. */
-const onGovernanceRoute = computed(() => isInGovernanceGroup(vmProxy.$route?.path));
-
-/** What the chevron last chose, and only that. */
-const governanceUserExpanded = ref(false);
-
 /**
- * Governance submenu open state. THE ROUTE WINS — see navGroup.ts for why the
- * derivation lives there rather than as a ref anything can write.
+ * The Governance section's gate. Textually identical to the router's own
+ * `governance` guard: network support AND the master feature flag. Every row in
+ * the section reads this, so the drawer and the router cannot disagree about
+ * whether governance exists for this wallet.
  */
-const governanceExpanded = computed(() =>
-  isGovernanceGroupOpen(vmProxy.$route?.path, governanceUserExpanded.value),
+const governanceEnabled = computed(
+  () =>
+    networks.resolveGovernanceSupport(loggedWallet.value?.chain, loggedWallet.value?.network) &&
+    featureFlagsStore.isGovernanceEnabled(),
 );
-
-function toggleNavGroup() {
-  governanceUserExpanded.value = !governanceUserExpanded.value;
-}
-
-function openNavGroup(item: NavigationItemUnion) {
-  governanceUserExpanded.value = true;
-  if (item.link && vmProxy.$route?.path !== item.link) {
-    // Duplicated navigation rejects — harmless when the row is clicked twice.
-    router.push(item.link).catch(() => undefined);
-  }
-}
 
 const items = computed((): NavigationItemUnion[] => {
   let isStakingEnabled = false;
@@ -509,31 +386,6 @@ const items = computed((): NavigationItemUnion[] => {
     { title: t('navigation.transactions'), icon: 'mdi-swap-horizontal', link: '/transactions', enabled: networks.resolveTransactionsSupport(loggedWallet.value?.chain, loggedWallet.value?.network) && (loggedWallet.value?.chain === Blockchain.MIDNIGHT ? midnightTransactions.value.length > 0 : transactions.value.length > 0), notificationDot: hasNewFeaturesInPath(['transactions']) },
     { title: t('navigation.midnightProofServer'), icon: 'mdi-server-security', link: '/proof-server', enabled: isMidnight.value },
     { title: t('navigation.staking'), icon: assts.coinsStacked, link: '/staking', enabled: isStakingEnabled },
-    // Governance — the only expandable parent. `enabled` mirrors the router's
-    // `governance` guard exactly (network support AND the master feature flag);
-    // keep the two textually identical. Children inherit that gate, so only a
-    // narrower per-child flag is repeated below.
-    {
-      title: t('navigation.governance'),
-      icon: assts.governance,
-      // Clicking the row lands on My governance; the chevron only toggles.
-      link: '/governance/me',
-      enabled: networks.resolveGovernanceSupport(loggedWallet.value?.chain, loggedWallet.value?.network) && featureFlagsStore.isGovernanceEnabled(),
-      notificationDot: hasNewFeaturesInPath(['navigation', 'governance']),
-      alertDot: governanceAlertCount.value > 0,
-      // The submenu is declared in navGroup.ts, which the nav spec checks
-      // against the router's own governance paths. Registration is a
-      // value-moving surface behind the voting sub-flag — mirrors the router's
-      // extra `governanceRegister` maintenance gate, so the item never leads to
-      // a redirect back to the dashboard.
-      children: GOVERNANCE_CHILDREN.map(child => ({
-        title: t(child.titleKey),
-        link: child.link,
-        alertDot: child.link === '/governance/me' && governanceAlertCount.value > 0,
-        enabled: child.flag === 'voting' ? featureFlagsStore.isGovernanceVotingEnabled() : true,
-      })).filter(child => child.enabled !== false),
-    },
-    { title: t('navigation.dao'), icon: assts.dao, link: '/dao', enabled: networks.resolveDaoSupport(loggedWallet.value?.chain, loggedWallet.value?.network) },
     {
       title: t('navigation.geroCard'),
       icon: assts.cardIcon,
@@ -585,6 +437,36 @@ const items = computed((): NavigationItemUnion[] => {
       link: '/lightning',
       enabled: networks.resolveLightningSupport(loggedWallet.value?.chain, loggedWallet.value?.network) && featureFlagsStore.isBitcoinEnabled(),
       new: true,
+    },
+    // ── Governance ───────────────────────────────────────────────────────
+    // A section of its own rather than one expandable row. `governanceEnabled`
+    // mirrors the router's `governance` guard exactly (network support AND the
+    // master feature flag) — keep the two textually identical. Every row
+    // inherits that gate; only registration adds a narrower one, because it
+    // posts a deposit and a certificate on chain and the router gates that
+    // route the same way. A row the router would redirect away from is worse
+    // than no row at all.
+    { header: t('navigation.governance'), enabled: governanceEnabled.value },
+    ...GOVERNANCE_ITEMS.filter(
+      item => item.flag !== 'voting' || featureFlagsStore.isGovernanceVotingEnabled(),
+    ).map(item => ({
+      title: t(item.titleKey),
+      icon: item.icon,
+      link: item.link,
+      enabled: governanceEnabled.value,
+      // The delegation-health dot rides My governance, the page that explains it.
+      alertDot: item.link === '/governance/me' && governanceAlertCount.value > 0,
+      notificationDot:
+        item.link === '/governance/me' && hasNewFeaturesInPath(['navigation', 'governance']),
+    })),
+    // Gero's own organisation, so it wears Gero's mark. It keeps its own network
+    // gate: the DAO is not part of Cardano governance and is supported on a
+    // different set of chains.
+    {
+      title: t('navigation.dao'),
+      icon: assts.geroNoText,
+      link: '/dao',
+      enabled: networks.resolveDaoSupport(loggedWallet.value?.chain, loggedWallet.value?.network),
     },
     { header: t('navigation.activitiesRewards'), enabled: hasActivitiesRewardsItems },
     { title: t('navigation.claimRewards'), icon: assts.infinity, link: '/claim-rewards', enabled: isClaimRewardsEnabled },
@@ -851,43 +733,6 @@ onUnmounted(() => {
 
 .menuItem ::v-deep .v-badge {
   overflow: visible !important;
-}
-
-/* ── Expandable nav group (Governance) ────────────────────────────────
-   No container box and no accent rail down the children: both read as
-   decoration bolted onto the drawer rather than part of it. The group is
-   the parent row plus indented rows, and an active child takes the SAME
-   `activePage` treatment as every other active row in this drawer. */
-.nav-group {
-  margin-bottom: 4px;
-}
-
-.nav-group__actions {
-  flex-direction: row;
-  align-items: center;
-  gap: var(--g-s-2);
-}
-
-.nav-group__children {
-  display: flex;
-  flex-direction: column;
-}
-
-/* Mirrors `.menuItem`: a transparent border so the active state adds colour
-   rather than layout, and the same single-class specificity so `.activePage`
-   (declared later in this file) wins the tie exactly as it does one level up. */
-.nav-group__child {
-  border: 1px solid transparent;
-  border-radius: var(--g-r-control);
-  margin-bottom: 2px;
-}
-
-/* Two classes so the row height outranks Vuetify's `.v-list--dense .v-list-item`
-   on specificity alone. The indent aligns the children under the parent's label,
-   which is the only signal the submenu needs. */
-.nav-group__children .nav-group__child {
-  min-height: 30px;
-  margin-left: var(--g-s-4);
 }
 
 /* Delegation-health dot. Amber, quiet, and never animated. */
