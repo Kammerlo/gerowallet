@@ -193,6 +193,18 @@
                   @blur="touch('paymentAddress')"
                 />
 
+                <!-- The common case, in one click: most DReps want support sent
+                     to the wallet they are registering from, and typing it out
+                     means copying a 103-character string between two screens. -->
+                <div v-if="ownAddress" class="become-drep__own">
+                  <GButton tier="tertiary" compact :disabled="usingOwnAddress" @click="useOwnAddress()">
+                    <v-icon left size="16">mdi-wallet-outline</v-icon>
+                    <!-- The label carries the disabled reason, so the button is
+                         never inert without saying why. -->
+                    {{ usingOwnAddress ? $t('governance.drepUsingThisWallet') : $t('governance.drepUseThisWallet') }}
+                  </GButton>
+                </div>
+
                 <!-- A handle is a POINTER, and what CIP-119 publishes is an
                      address. So the address it resolves to is shown here: it is
                      what goes in the document, it is what delegators will send
@@ -612,6 +624,25 @@ function errorFor(field: keyof Cip119Profile): string[] {
  * here and the resulting address is what goes into the document.
  */
 const paymentInput = ref('');
+
+/**
+ * This wallet's own receive address — the same one the receive screen shows
+ * (`keys.payment[0]`), so the two can never disagree about what "this wallet's
+ * address" means.
+ *
+ * Empty until the keys are loaded, which hides the shortcut rather than offering
+ * one that would fill in nothing.
+ */
+const ownAddress = computed(() => walletStore.keys?.payment?.[0]?.address ?? '');
+
+const usingOwnAddress = computed(() => !!ownAddress.value && paymentInput.value.trim() === ownAddress.value);
+
+function useOwnAddress(): void {
+  // Written to the INPUT, not to the profile, so it goes through the same watcher
+  // as anything typed: one path decides what gets published.
+  paymentInput.value = ownAddress.value;
+  touch('paymentAddress');
+}
 
 type HandleState = 'idle' | 'resolving' | 'resolved' | 'notFound' | 'failed' | 'unsupported';
 
@@ -1335,6 +1366,11 @@ onMounted(loadRegistration);
   color: var(--g-text-3);
   text-align: right;
   min-width: 0;
+}
+
+.become-drep__own {
+  display: flex;
+  margin-top: calc(-1 * var(--g-s-1));
 }
 
 /* The resolved handle. Deliberately shows the ADDRESS in full rather than

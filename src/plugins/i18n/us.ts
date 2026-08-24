@@ -1171,6 +1171,8 @@ export default {
   'governance.drepHandleNotFound': 'No wallet holds this ADA Handle. Check the spelling, or paste an address instead.',
   'governance.drepHandleLookupFailed': 'Could not reach the ADA Handle service. Try again, or paste an address instead.',
   'governance.drepHandleMainnetOnly': 'ADA Handles resolve on Cardano mainnet only. Paste an address instead.',
+  'governance.drepUseThisWallet': "Use this wallet's address",
+  'governance.drepUsingThisWallet': "Using this wallet's address",
   'governance.drepPaymentAddressOptional': 'Payment address (optional)',
   'governance.drepPreviewBlurbPlaceholder': 'Your objectives appear here.',
   'governance.drepPreviewCaption': 'Written as CIP-119 metadata, hashed in this wallet, and checked against the chain every time anyone views it.',
