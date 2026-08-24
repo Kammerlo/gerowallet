@@ -225,6 +225,7 @@ import assts from '@/utils/assets'
 import changeLog from '@/plugins/changeLog'
 import { Cardano } from '@cardano-sdk/core'
 import { walletStore } from '@/stores/walletStore';
+import governanceAlertsStore from '@/stores/governanceAlertsStore';
 import { geroStore } from '@/stores/geroStore';
 import geroStoreDefault from '@/stores/geroStore';
 import snackbar from '@/plugins/snackbar';
@@ -237,6 +238,7 @@ import assets from '@/utils/assets';
 import { updateVuetifyTheme } from '@/plugins/vuetify';
 import { debugLog } from '@/utils/debug';
 import { hasNewFeaturesInPath } from '@/shared/composables/useFeatureNotifications';
+import { GOVERNANCE_ITEMS } from '@/modules/navigation/components/governanceNav';
 
 interface NavigationItem {
   title?: string;
@@ -252,6 +254,8 @@ interface NavigationItem {
   loading?: boolean;
   /** Brand spotlight item (Nexus): colored icon, animated gradient border. */
   special?: boolean;
+  /** Amber delegation-health dot. Rides My governance. */
+  alertDot?: boolean;
 }
 
 type NavigationLinkItem = NavigationItem & { link: string };
@@ -327,6 +331,24 @@ const navLogo = computed(() => {
   }
 });
 
+/**
+ * Delegation-health alerts waiting on the user. Drives the amber dot on My
+ * governance and its mirror on the Governance parent row.
+ */
+const governanceAlertCount = computed(() => governanceAlertsStore.alertCount());
+
+/**
+ * The Governance section's gate. Textually identical to the router's own
+ * `governance` guard: network support AND the master feature flag. Every row in
+ * the section reads this, so the drawer and the router cannot disagree about
+ * whether governance exists for this wallet.
+ */
+const governanceEnabled = computed(
+  () =>
+    networks.resolveGovernanceSupport(loggedWallet.value?.chain, loggedWallet.value?.network) &&
+    featureFlagsStore.isGovernanceEnabled(),
+);
+
 const items = computed((): NavigationItemUnion[] => {
   let isStakingEnabled = false;
   // Only parse address for Cardano-based chains
@@ -364,7 +386,6 @@ const items = computed((): NavigationItemUnion[] => {
     { title: t('navigation.transactions'), icon: 'mdi-swap-horizontal', link: '/transactions', enabled: networks.resolveTransactionsSupport(loggedWallet.value?.chain, loggedWallet.value?.network) && (loggedWallet.value?.chain === Blockchain.MIDNIGHT ? midnightTransactions.value.length > 0 : transactions.value.length > 0), notificationDot: hasNewFeaturesInPath(['transactions']) },
     { title: t('navigation.midnightProofServer'), icon: 'mdi-server-security', link: '/proof-server', enabled: isMidnight.value },
     { title: t('navigation.staking'), icon: assts.coinsStacked, link: '/staking', enabled: isStakingEnabled },
-    { title: t('navigation.governance'), icon: assts.governance, link: '/governance', enabled: networks.resolveGovernanceSupport(loggedWallet.value?.chain, loggedWallet.value?.network) },
     {
       title: t('navigation.geroCard'),
       icon: assts.cardIcon,
@@ -416,6 +437,36 @@ const items = computed((): NavigationItemUnion[] => {
       link: '/lightning',
       enabled: networks.resolveLightningSupport(loggedWallet.value?.chain, loggedWallet.value?.network) && featureFlagsStore.isBitcoinEnabled(),
       new: true,
+    },
+    // ── Governance ───────────────────────────────────────────────────────
+    // A section of its own rather than one expandable row. `governanceEnabled`
+    // mirrors the router's `governance` guard exactly (network support AND the
+    // master feature flag) — keep the two textually identical. Every row
+    // inherits that gate; only registration adds a narrower one, because it
+    // posts a deposit and a certificate on chain and the router gates that
+    // route the same way. A row the router would redirect away from is worse
+    // than no row at all.
+    { header: t('navigation.governance'), enabled: governanceEnabled.value },
+    ...GOVERNANCE_ITEMS.filter(
+      item => item.flag !== 'voting' || featureFlagsStore.isGovernanceVotingEnabled(),
+    ).map(item => ({
+      title: t(item.titleKey),
+      icon: item.icon,
+      link: item.link,
+      enabled: governanceEnabled.value,
+      // The delegation-health dot rides My governance, the page that explains it.
+      alertDot: item.link === '/governance/me' && governanceAlertCount.value > 0,
+      notificationDot:
+        item.link === '/governance/me' && hasNewFeaturesInPath(['navigation', 'governance']),
+    })),
+    // Gero's own organisation, so it wears Gero's mark. It keeps its own network
+    // gate: the DAO is not part of Cardano governance and is supported on a
+    // different set of chains.
+    {
+      title: t('navigation.dao'),
+      icon: assts.geroNoText,
+      link: '/dao',
+      enabled: networks.resolveDaoSupport(loggedWallet.value?.chain, loggedWallet.value?.network),
     },
     { header: t('navigation.activitiesRewards'), enabled: hasActivitiesRewardsItems },
     { title: t('navigation.claimRewards'), icon: assts.infinity, link: '/claim-rewards', enabled: isClaimRewardsEnabled },
@@ -682,6 +733,16 @@ onUnmounted(() => {
 
 .menuItem ::v-deep .v-badge {
   overflow: visible !important;
+}
+
+/* Delegation-health dot. Amber, quiet, and never animated. */
+.nav-dot {
+  display: inline-block;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--g-r-pill);
+  background: var(--g-warning);
 }
 
 /* ── Nexus spotlight item ─────────────────────────────────────────────

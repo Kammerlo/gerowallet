@@ -682,6 +682,7 @@ export function analyzeTransactionForSignatures(
           certificate.__typename === Cardano.CertificateType.Unregistration ||
           certificate.__typename === Cardano.CertificateType.StakeDelegation ||
           certificate.__typename === Cardano.CertificateType.StakeRegistrationDelegation ||
+          certificate.__typename === Cardano.CertificateType.StakeVoteDelegation ||
           certificate.__typename === Cardano.CertificateType.VoteDelegation ||
           certificate.__typename === Cardano.CertificateType.VoteRegistrationDelegation ||
           certificate.__typename === Cardano.CertificateType.StakeVoteRegistrationDelegation) {
@@ -715,6 +716,43 @@ export function analyzeTransactionForSignatures(
       if (certificate.__typename === Cardano.CertificateType.PoolRetirement) {
         // Pool retirement requires cold key signature (handled by pool signing flow)
         (requiredSigners as unknown as { requiresColdKeySignature?: boolean }).requiresColdKeySignature = true;
+      }
+    }
+  }
+
+  // Conway voting procedures. This is BOTH the witness source and the fee
+  // sizer (minFee counts these signers for witness overhead), so a missing
+  // branch here under-bills the transaction as well as producing an
+  // unwitnessable one.
+  //
+  // VotingProcedures is an array of { voter, votes[] } groups. One group per
+  // voter means one witness per voter regardless of how many votes it carries —
+  // that is what makes a batch vote a single signature.
+  if (transaction.body.votingProcedures && transaction.body.votingProcedures.length > 0) {
+    for (const group of transaction.body.votingProcedures) {
+      switch (group.voter?.__typename) {
+        case Cardano.VoterType.dRepKeyHash:
+          requiredSigners.push({
+            derivationPath: [ChainDerivations.DREP, 0],
+            type: 'drep'
+          });
+          break;
+        case Cardano.VoterType.stakePoolKeyHash:
+          // The pool cold key lives outside the HD tree — it is imported or
+          // held on a hardware device — so it is flagged out-of-band exactly
+          // as pool certificates are above, not resolved to a path here.
+          (requiredSigners as unknown as { requiresColdKeySignature?: boolean }).requiresColdKeySignature = true;
+          break;
+        case Cardano.VoterType.ccHotKeyHash:
+          requiredSigners.push({
+            derivationPath: [ChainDerivations.CONSTITUTIONAL_COMMITTEE_HOT, 0],
+            type: 'ccHot'
+          });
+          break;
+        // Script-credential voters (dRepScriptHash, ccHotScriptHash) are
+        // witnessed by the script itself, not by a key from this wallet.
+        default:
+          break;
       }
     }
   }

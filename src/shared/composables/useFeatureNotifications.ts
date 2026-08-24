@@ -37,12 +37,12 @@ const FEATURE_DEFINITIONS: FeatureDefinition[] = [
     version: '2.6.3',
     path: ['settings', 'profile', 'germanLanguage']
   },
-  // Navigation > Governance (example of new page in navigation menu)
-  // {
-  //   id: 'navigation.governance',
-  //   version: '2.6.0',
-  //   path: ['navigation', 'governance']
-  // },
+  // Navigation > Governance (the governance hub and its submenu)
+  {
+    id: 'navigation.governance',
+    version: '2.7.0',
+    path: ['navigation', 'governance']
+  },
   // Navigation > Pool Operator (SPO Management)
   {
     id: 'navigation.poolOperator',

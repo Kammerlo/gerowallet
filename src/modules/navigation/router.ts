@@ -21,6 +21,13 @@ const Swap = () => import('@/modules/swap/Swap.vue');
 // Market.vue no longer used as standalone route — unified into PortfolioPage
 const DevTools = () => import('@/modules/devTools/DevTools.vue');
 const Governance = () => import('@/modules/governance/Governance.vue');
+const GovernanceActionList = () => import('@/modules/governance/views/ActionList.vue');
+const GovernanceActionDetail = () => import('@/modules/governance/views/ActionDetail.vue');
+const GovernanceDReps = () => import('@/modules/governance/views/DRepDirectory.vue');
+const GovernanceDRepProfile = () => import('@/modules/governance/views/DRepProfile.vue');
+const GovernanceMe = () => import('@/modules/governance/views/MyGovernance.vue');
+const GovernanceRegister = () => import('@/modules/governance/views/BecomeDRep.vue');
+const Dao = () => import('@/modules/dao/Dao.vue');
 const WarningPopUp = () => import('@/popup/modules/views/WarningPopUp.vue');
 const Transactions = () => import('@/modules/transactions/Transactions.vue');
 const Blog = () => import('@/modules/blog/Blog.vue');
@@ -108,6 +115,79 @@ const routes = [
     path: '/governance',
     name: 'governance',
     component: Governance,
+    meta: {
+      layout: ContentLayout,
+      requiresAuth: true,
+    },
+  },
+  {
+    // The governance landing page: what THIS wallet's stake is doing. The
+    // `/governance` shell redirects here.
+    path: '/governance/me',
+    name: 'governanceMe',
+    component: GovernanceMe,
+    meta: {
+      layout: ContentLayout,
+      requiresAuth: true,
+    },
+  },
+  {
+    // DRep registration. Gated one notch tighter than the rest of governance —
+    // see the `governanceRegister` maintenance case below.
+    path: '/governance/register',
+    name: 'governanceRegister',
+    component: GovernanceRegister,
+    meta: {
+      layout: ContentLayout,
+      requiresAuth: true,
+    },
+  },
+  {
+    path: '/governance/actions',
+    name: 'governanceActions',
+    component: GovernanceActionList,
+    meta: {
+      layout: ContentLayout,
+      requiresAuth: true,
+    },
+  },
+  {
+    // The gov action id is `{txHash}#{index}`; a `#` cannot survive a URL, so
+    // the two parts are separate segments here exactly as they are in the API.
+    path: '/governance/actions/:txHash/:index',
+    name: 'governanceAction',
+    component: GovernanceActionDetail,
+    meta: {
+      layout: ContentLayout,
+      requiresAuth: true,
+    },
+  },
+  {
+    // The DRep directory. The `?drep=` deep link from global search resolves
+    // here (forwarded by Governance.vue) and pre-fills the search box.
+    path: '/governance/dreps',
+    name: 'governanceDReps',
+    component: GovernanceDReps,
+    meta: {
+      layout: ContentLayout,
+      requiresAuth: true,
+    },
+  },
+  {
+    // One DRep's record. `:drepId` accepts any of the three live id forms
+    // (CIP-129, CIP-105, raw credential hex); the view canonicalises it.
+    path: '/governance/dreps/:drepId',
+    name: 'governanceDRep',
+    component: GovernanceDRepProfile,
+    meta: {
+      layout: ContentLayout,
+      requiresAuth: true,
+    },
+  },
+  {
+    path: '/dao',
+    name: 'dao',
+    component: Dao,
     meta: {
       layout: ContentLayout,
       requiresAuth: true,
@@ -382,6 +462,21 @@ function isRouteUnderMaintenance(routeName: string | null | undefined): boolean 
       // deliberately via gero-sync rather than by default.
       return !featureFlagsStore.isRealFiEnabled();
 
+    case 'governance':
+    case 'governanceMe':
+    case 'governanceActions':
+    case 'governanceAction':
+    case 'governanceDReps':
+    case 'governanceDRep':
+      // Cardano governance ships dark — enabled deliberately via gero-sync.
+      return !featureFlagsStore.isGovernanceEnabled();
+
+    case 'governanceRegister':
+      // Registration posts a deposit and a certificate on chain, so it rides the
+      // voting sub-flag on top of the master governance gate rather than opening
+      // with the read-only surfaces. Both must be on.
+      return !featureFlagsStore.isGovernanceEnabled() || !featureFlagsStore.isGovernanceVotingEnabled();
+
     case 'copilotFeed':
       // Gero Copilot feed gated by the master feature flag (ships dark)
       return !featureFlagsStore.isCopilotEnabled();
@@ -461,6 +556,13 @@ router.beforeEach(async (to: Route, from: Route, next: NavigationGuardNext) => {
     const routeNetworkGuards: Record<string, (c: string, n: string) => boolean> = {
       cashback: (c, n) => networks.resolveCashbackSupport(c, n),
       governance: (c, n) => networks.resolveGovernanceSupport(c, n),
+      governanceMe: (c, n) => networks.resolveGovernanceSupport(c, n),
+      governanceRegister: (c, n) => networks.resolveGovernanceSupport(c, n),
+      governanceActions: (c, n) => networks.resolveGovernanceSupport(c, n),
+      governanceAction: (c, n) => networks.resolveGovernanceSupport(c, n),
+      governanceDReps: (c, n) => networks.resolveGovernanceSupport(c, n),
+      governanceDRep: (c, n) => networks.resolveGovernanceSupport(c, n),
+      dao: (c, n) => networks.resolveDaoSupport(c, n),
       staking: (c, n) => networks.resolveStakingSupport(c, n),
       // The swap page's route is named 'swap' (‘/market’ is only a redirect, no
       // named route). Keying this guard 'market' left #/swap ungated, so an Apex
