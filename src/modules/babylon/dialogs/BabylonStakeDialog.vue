@@ -372,10 +372,8 @@ const amountError = ref('');
 // Derived
 const availableBalance = computed(() => {
   if (!utxos.value || utxos.value.length === 0) return BigInt(0);
-  return utxos.value.reduce(
-    (sum: bigint, u: { value: string | number }) => sum + BigInt(u.value),
-    BigInt(0),
-  );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- walletStore.utxos is a chain-agnostic union (bigint | IUnifiedUtxo | Utxo); annotating a shape here type-errors rather than describes it
+  return utxos.value.reduce((sum: bigint, u: any) => sum + BigInt(u.value), BigInt(0));
 });
 
 const stakingAmountSats = computed(() => {
@@ -484,7 +482,8 @@ async function confirmStake() {
       stakingTimelock: timelockBlocks.value,
       stakingAmountSat: stakingAmountSats.value,
       feeRate: feeEstimates.value[selectedFeePriority.value],
-      utxos: (utxos.value || []) as unknown[],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- walletStore.utxos is a chain-agnostic union (bigint | IUnifiedUtxo | Utxo); annotating a shape here type-errors rather than describes it
+      utxos: (utxos.value || []) as any,
       params: props.params,
       network: loggedWallet.value?.network || 'Mainnet',
     });
@@ -498,11 +497,11 @@ async function confirmStake() {
       payload['password'] = password.value;
     }
 
-    const response: { data: { success?: boolean; error?: string; txId?: string } } =
-      await Messaging.sendToBackgroundFromOptions({
-        method: MessageTypes.BABYLON_STAKE,
-        data: payload,
-      });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- sendToBackgroundFromOptions resolves an untyped messaging envelope
+    const response: any = await Messaging.sendToBackgroundFromOptions({
+      method: MessageTypes.BABYLON_STAKE,
+      data: payload,
+    });
 
     if (!response.data.success) {
       throw new Error(response.data.error || t('send.transactionFailed'));

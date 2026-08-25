@@ -184,9 +184,12 @@ onMounted(async () => {
     setTimeout(() => {
       window.close();
     }, 500);
-  } catch (error: unknown) {
-    const err = error as { name?: string; message?: string };
-    console.error('[PassKeyAuth] Error:', error);
+  } catch (caught: unknown) {
+    // NOT named `error`: this component has an `error` ref, and shadowing it
+    // makes `error.value = ...` below write to the exception instead of the
+    // ref, so the failure never reaches the screen.
+    const err = caught as { name?: string; message?: string };
+    console.error('[PassKeyAuth] Error:', caught);
 
     // Check if this is a user cancellation
     // WebAuthn throws NotAllowedError when user cancels or denies
