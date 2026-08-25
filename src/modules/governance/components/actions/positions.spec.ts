@@ -8,6 +8,7 @@ import {
   committeeNameIndex,
   committeeNameOf,
   filterPositions,
+  isCommitteeRow,
   isYourRow,
   orderNoteKey,
   resolveYourPosition,
@@ -195,6 +196,68 @@ describe('committeeNameIndex', () => {
     const [row] = toPositionRows([committeeVote()]);
     expect(committeeNameOf(row, committeeNameIndex(null))).toBeNull();
     expect(committeeNameOf(row, null)).toBeNull();
+  });
+
+  it('names the member when the projection resolved the cold credential', () => {
+    // Gero-Labs/nexus#898: the vote row now carries the member's COLD hash
+    // alongside the hot one it was signed with. That is the only value the
+    // committee endpoint lists, so it is the only thing this index can match.
+    const index = committeeNameIndex([member({ displayName: 'Tingvard' })]);
+    const [row] = toPositionRows([committeeVote({ committeeColdHash: CC_COLD })]);
+
+    expect(row.committeeColdHex).toBe(CC_COLD);
+    // The hot hash is kept: it is what signed the vote, and a reader may have
+    // copied it from another explorer.
+    expect(row.committeeHex).toBe(CC_HOT);
+    expect(committeeNameOf(row, index)).toBe('Tingvard');
+  });
+
+  it('still names nothing when the projection could not resolve one', () => {
+    // A hot key with no authorization certificate, a vote predating every known
+    // authorization, or an ambiguous tie: nexus omits the field rather than
+    // guessing, and the row falls back to its hash exactly as before.
+    const index = committeeNameIndex([member({ displayName: 'Tingvard' })]);
+    const [row] = toPositionRows([committeeVote()]);
+
+    expect(row.committeeColdHex).toBeNull();
+    expect(committeeNameOf(row, index)).toBeNull();
+  });
+
+  it('ignores a cold hash that is not a credential', () => {
+    const index = committeeNameIndex([member({ displayName: 'Tingvard' })]);
+    for (const bad of ['not-hex', 'ab', '', null]) {
+      const [row] = toPositionRows([committeeVote({ committeeColdHash: bad as string | null })]);
+      expect(row.committeeColdHex, String(bad)).toBeNull();
+      expect(committeeNameOf(row, index), String(bad)).toBeNull();
+    }
+  });
+
+  it('carries a cold hash only for committee rows', () => {
+    // A DRep row that happened to carry the field must not gain a committee
+    // identity from it.
+    const [drep] = toPositionRows([vote({ drepId: DREP_A, committeeColdHash: CC_COLD })]);
+    expect(drep.committeeColdHex).toBeNull();
+    expect(drep.committeeHex).toBeNull();
+  });
+
+  it('is a committee row by ROLE, not by which hashes happened to parse', () => {
+    // The lookup's gate. Reading it off `committeeHex` instead would skip the
+    // committee index entirely for a row whose hot credential arrived in a form
+    // `toCredentialHex` rejects — with a cold hash resolved and the name sitting
+    // right there in the index.
+    const [resolved] = toPositionRows([
+      committeeVote({ voterHash: 'cc_hot1notrawhex', committeeColdHash: CC_COLD }),
+    ]);
+    expect(resolved.committeeHex).toBeNull();
+    expect(resolved.committeeColdHex).toBe(CC_COLD);
+    expect(isCommitteeRow(resolved)).toBe(true);
+    expect(committeeNameOf(resolved, committeeNameIndex([member({ displayName: 'Tingvard' })]))).toBe(
+      'Tingvard',
+    );
+
+    // And a DRep row is never one, whatever it carries.
+    const [drep] = toPositionRows([vote({ drepId: DREP_A })]);
+    expect(isCommitteeRow(drep)).toBe(false);
   });
 
   it('never names a row of another body', () => {
