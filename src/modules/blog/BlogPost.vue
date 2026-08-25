@@ -57,7 +57,7 @@ import { ref, computed, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router/composables';
 import { documentToHtmlString } from '@contentful/rich-text-html-renderer';
 import { BLOCKS, INLINES } from '@contentful/rich-text-types';
-import { getBlogPostBySlug, type BlogPost } from '@/api/contentful.api';
+import { getBlogPostBySlug, type BlogPost } from '@/api/blog.api';
 import { useTranslation } from '@/shared/composables/useTranslation';
 import ErrorState from '@/shared/components/feedback/ErrorState.vue';
 
@@ -92,8 +92,11 @@ const safeUrl = (raw: string): string | null => {
   return /^https?:\/\//i.test(u) || /^mailto:/i.test(u) ? u : null;
 };
 
-/** Full-width hero: strip the list-thumbnail transform if present. */
-const heroImage = computed(() => (post.value?.image ? post.value.image.split('?')[0] : ''));
+// Full-width hero. The backend sizes both variants, so take the one it marks as the hero and
+// fall back to the card thumbnail. Do not derive it from `image` by dropping the query: the
+// version that did meant every reader downloaded the untouched original, which is how the
+// CMS asset-bandwidth allowance ran out.
+const heroImage = computed(() => post.value?.heroImage ?? post.value?.image ?? '');
 
 const bodyHtml = computed<string>(() => {
   const p = post.value;
