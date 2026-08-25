@@ -34,8 +34,11 @@
             </p>
             <h1 class="t-display post-title">{{ post.title }}</h1>
 
+            <!-- Gate on what actually renders. `image` and `heroImage` are separate
+                 fields now, and the backend mirrors the two sizes independently, so a
+                 post can carry a hero without a card thumbnail. -->
             <div
-              v-if="post.image"
+              v-if="heroImage"
               class="post-hero"
               :style="{ backgroundImage: `url(${heroImage})` }"
             ></div>
