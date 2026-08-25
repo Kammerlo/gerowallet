@@ -43,8 +43,8 @@ import { ref, onMounted } from 'vue';
 import { walletStore } from '@/stores/walletStore';
 import assets from '@/utils/assets';
 import { getDb } from '@/db/wallet-db';
-import { decryptSpendingPasswordWithPrf, decryptPrivateKeyWithPrf, evaluatePrfForWallet } from '@/shared/utils/webauthn-prf';
-import { setWalletWebAuthnTransports } from '@/db/gero-db';
+import { decryptSpendingPasswordWithPrf, decryptPrivateKeyWithPrf } from '@/shared/utils/webauthn-prf';
+import { evaluateWalletPrf } from '@/shared/utils/passkeyPrf';
 
 const loading = ref(true);
 const error = ref('');
@@ -85,14 +85,7 @@ onMounted(async () => {
       if (!wallet.webAuthnCredentialId) {
         throw new Error('PRF wallet not properly configured');
       }
-      const prfOutput = await evaluatePrfForWallet(
-        wallet.webAuthnCredentialId,
-        wallet.id.toString(),
-        wallet.webAuthnTransports,
-        learned => {
-          void setWalletWebAuthnTransports(wallet.id, learned).catch(() => undefined);
-        },
-      );
+      const prfOutput = await evaluateWalletPrf(wallet);
       resultPayload = {
         success: true,
         prfOutput: Array.from(new Uint8Array(prfOutput)),

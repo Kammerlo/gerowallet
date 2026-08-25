@@ -254,8 +254,8 @@ async function confirmAction(source: DustSource) {
       if (!record?.webAuthnCredentialId) {
         throw new Error('PassKey wallet missing credential ID');
       }
-      const { evaluatePrfForWallet } = await import('@/shared/utils/webauthn-prf');
-      prfOutput = await evaluatePrfForWallet(record.webAuthnCredentialId, record.id.toString());
+      const { evaluateWalletPrf } = await import('@/shared/utils/passkeyPrf');
+      prfOutput = await evaluateWalletPrf(record);
     }
     const credentials = {
       password: source.encryptionMethod === 'prf' ? undefined : authPassword.value,

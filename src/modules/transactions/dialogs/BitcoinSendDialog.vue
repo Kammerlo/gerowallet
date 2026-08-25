@@ -337,7 +337,10 @@ const btcPrice = computed(() => priceStore.btcUsd?.lastPrice ?? 0);
 // Available balance (from UTXOs)
 const availableBalance = computed(() => {
   if (!utxos.value || utxos.value.length === 0) return BigInt(0);
-  return utxos.value.reduce((sum: bigint, utxo: any) => sum + BigInt(utxo.value), BigInt(0));
+  return utxos.value.reduce(
+    (sum: bigint, utxo: { value: string | number }) => sum + BigInt(utxo.value),
+    BigInt(0),
+  );
 });
 
 // Amount in satoshis
@@ -353,7 +356,7 @@ function estimateInputCount(): number {
   const target = BigInt(amountInSats.value || 0);
   if (target <= BigInt(0)) return 1;
   // Simulate largest-first selection (default strategy)
-  const sorted = [...utxos.value].sort((a: any, b: any) => {
+  const sorted = [...utxos.value].sort((a: { value: string | number }, b: { value: string | number }) => {
     const av = BigInt(a.value), bv = BigInt(b.value);
     return bv > av ? 1 : bv < av ? -1 : 0;
   });
@@ -481,13 +484,10 @@ async function authenticateWithPassKey() {
   }
   loading.value = true;
   try {
-    const { evaluatePrfForWallet } = await import('@/shared/utils/webauthn-prf');
-    const prfOutput = await evaluatePrfForWallet(
-      loggedWallet.value.webAuthnCredentialId,
-      loggedWallet.value.id.toString()
-    );
+    const { evaluateWalletPrf } = await import('@/shared/utils/passkeyPrf');
+    const prfOutput = await evaluateWalletPrf(loggedWallet.value);
     privateKeyBytes.value = new Uint8Array(prfOutput);
-  } catch (error: any) {
+  } catch (error: unknown) {
     txStatus.value = { type: 'error', message: error.message || t('security.passKeyAuthFailed') };
   } finally {
     loading.value = false;
@@ -499,7 +499,7 @@ async function confirmSend() {
   loading.value = true;
   txStatus.value = { type: 'info', message: t('send.buildingTransaction') };
   try {
-    const signingData: Record<string, any> = {
+    const signingData: Record<string, unknown> = {
       recipientAddress: recipientAddress.value,
       amount: amountInSats.value,
       feeRate: feeEstimates.value[selectedFeePriority.value],
@@ -511,10 +511,11 @@ async function confirmSend() {
       signingData['password'] = password.value;
     }
 
-    const response: any = await Messaging.sendToBackgroundFromOptions({
-      method: MessageTypes.SEND_BITCOIN,
-      data: signingData,
-    });
+    const response: { data: { success?: boolean; error?: string; txId?: string } } =
+      await Messaging.sendToBackgroundFromOptions({
+        method: MessageTypes.SEND_BITCOIN,
+        data: signingData,
+      });
     if (!response.data.success) throw new Error(response.data.error || t('send.transactionFailed'));
     txStatus.value = { type: 'success', message: t('send.transactionSent', { txId: response.data.txId }) };
     emit('success', response.data.txId);

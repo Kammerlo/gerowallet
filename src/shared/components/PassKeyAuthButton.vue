@@ -56,8 +56,8 @@ async function authenticate() {
   try {
     // Dynamic imports to reduce bundle size
     const { walletStore } = await import('@/stores/walletStore');
-    const { decryptPrivateKeyWithPrf, evaluatePrfForWallet } = await import('@/shared/utils/webauthn-prf');
-    const { setWalletWebAuthnTransports } = await import('@/db/gero-db');
+    const { decryptPrivateKeyWithPrf } = await import('@/shared/utils/webauthn-prf');
+    const { evaluateWalletPrf } = await import('@/shared/utils/passkeyPrf');
 
     const loggedWallet = walletStore.loggedWallet;
     if (!loggedWallet) {
@@ -86,18 +86,7 @@ async function authenticate() {
       // decrypt the mnemonic; Cardano consumers ignore the event) can
       // reuse the same gesture instead of prompting twice. Then pass the
       // pre-evaluated PRF into the Cardano private-key decryptor.
-      const prfBuffer = await evaluatePrfForWallet(
-        loggedWallet.webAuthnCredentialId,
-        loggedWallet.id.toString(),
-        loggedWallet.webAuthnTransports,
-        // A wallet created before transports were recorded learns its own answer
-        // from this ceremony, so it only ever shows the browser's picker once.
-        learned => {
-          void setWalletWebAuthnTransports(loggedWallet.id, learned).catch(error =>
-            console.error('Could not record PassKey transports:', error),
-          );
-        },
-      );
+      const prfBuffer = await evaluateWalletPrf(loggedWallet);
       emit('prf-output', new Uint8Array(prfBuffer));
       privateKeyBytes = await decryptPrivateKeyWithPrf(
         loggedWallet.prfEncryptedPrivateKey,

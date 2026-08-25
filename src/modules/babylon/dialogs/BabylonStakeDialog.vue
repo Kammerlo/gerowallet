@@ -455,12 +455,8 @@ async function authenticateWithPassKey() {
   if (!loggedWallet.value?.webAuthnCredentialId) return;
   loading.value = true;
   try {
-    const { evaluatePrfForWallet } = await import('@/shared/utils/webauthn-prf');
-    const prfOutput = await evaluatePrfForWallet(
-      loggedWallet.value.webAuthnCredentialId,
-      loggedWallet.value.id.toString(),
-      loggedWallet.value.webAuthnTransports
-    );
+    const { evaluateWalletPrf } = await import('@/shared/utils/passkeyPrf');
+    const prfOutput = await evaluateWalletPrf(loggedWallet.value);
     privateKeyBytes.value = new Uint8Array(prfOutput);
   } catch (error: unknown) {
     const message = (error as { message?: string })?.message;
