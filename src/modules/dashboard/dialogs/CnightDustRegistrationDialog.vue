@@ -576,7 +576,11 @@ async function confirmRemove() {
         throw new Error('PRF wallet missing credential ID');
       }
       const { evaluatePrfForWallet } = await import('@/shared/utils/webauthn-prf');
-      prfOutput = await evaluatePrfForWallet(wallet.webAuthnCredentialId, wallet.id.toString());
+      prfOutput = await evaluatePrfForWallet(
+        wallet.webAuthnCredentialId,
+        wallet.id.toString(),
+        wallet.webAuthnTransports,
+      );
     }
     const credentials = {
       password: isPrfWallet.value ? undefined : localPassword.value,
@@ -622,7 +626,11 @@ async function confirmManage() {
         throw new Error('PRF wallet missing credential ID');
       }
       const { evaluatePrfForWallet } = await import('@/shared/utils/webauthn-prf');
-      prfOutput = await evaluatePrfForWallet(wallet.webAuthnCredentialId, wallet.id.toString());
+      prfOutput = await evaluatePrfForWallet(
+        wallet.webAuthnCredentialId,
+        wallet.id.toString(),
+        wallet.webAuthnTransports,
+      );
     }
     const credentials = {
       password: isPrfWallet.value ? undefined : localPassword.value,
@@ -678,7 +686,11 @@ async function confirmRegistration() {
         throw new Error('PRF wallet missing credential ID');
       }
       const { evaluatePrfForWallet } = await import('@/shared/utils/webauthn-prf');
-      prfOutput = await evaluatePrfForWallet(wallet.webAuthnCredentialId, wallet.id.toString());
+      prfOutput = await evaluatePrfForWallet(
+        wallet.webAuthnCredentialId,
+        wallet.id.toString(),
+        wallet.webAuthnTransports,
+      );
     }
 
     const result = await register({

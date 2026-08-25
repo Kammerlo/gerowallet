@@ -57,6 +57,7 @@ async function authenticate() {
     // Dynamic imports to reduce bundle size
     const { walletStore } = await import('@/stores/walletStore');
     const { decryptPrivateKeyWithPrf, evaluatePrfForWallet } = await import('@/shared/utils/webauthn-prf');
+    const { setWalletWebAuthnTransports } = await import('@/db/gero-db');
 
     const loggedWallet = walletStore.loggedWallet;
     if (!loggedWallet) {
@@ -88,6 +89,14 @@ async function authenticate() {
       const prfBuffer = await evaluatePrfForWallet(
         loggedWallet.webAuthnCredentialId,
         loggedWallet.id.toString(),
+        loggedWallet.webAuthnTransports,
+        // A wallet created before transports were recorded learns its own answer
+        // from this ceremony, so it only ever shows the browser's picker once.
+        learned => {
+          void setWalletWebAuthnTransports(loggedWallet.id, learned).catch(error =>
+            console.error('Could not record PassKey transports:', error),
+          );
+        },
       );
       emit('prf-output', new Uint8Array(prfBuffer));
       privateKeyBytes = await decryptPrivateKeyWithPrf(
@@ -108,7 +117,8 @@ async function authenticate() {
   }
 }
 
-async function authenticateInPopup(_wallet: any): Promise<Uint8Array> {
+/** The wallet is unused here — the popup re-reads it from the store. */
+async function authenticateInPopup(_wallet: unknown): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
     // Open small popup for PassKey authentication
     const popupUrl = chrome.runtime.getURL('index.html?mode=privateKey#/passkey-auth');
