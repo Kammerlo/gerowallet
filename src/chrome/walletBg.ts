@@ -727,9 +727,6 @@ export class WalletBg {
     if (!this.isEnterpriseAddress() && isStakingSupported) {
       chrome.alarms.create('refreshStakingPools', { delayInMinutes: 0, periodInMinutes: 240 });
     }
-    if (!this.isEnterpriseAddress() && networks.resolveGovernanceSupport(this.chain, this.network)) {
-      chrome.alarms.create('refreshDReps', { delayInMinutes: 0, periodInMinutes: 280 });
-    }
     // Set Collections
     const collectibles = Object.fromEntries(resolvedAssets.filter(([, resolved]) => isCollectible(resolved)));
     if (Object.values(collectibles).length === 0) {
@@ -868,8 +865,20 @@ export class WalletBg {
 
   async setAccountInfo(accountInfo): Promise<unknown> {
     const resAccount = await this.getAccountInfo();
+    // MERGE over the stored row, never replace it. `put` writes a whole record,
+    // and gero-sync's pushed account is a PARTIAL projection — the zero-filled
+    // balance guard in sync.service is the same lesson learned once already. A
+    // push that omits `drep_id` used to blank it, and because the account table
+    // has a liveQuery subscription feeding walletStore, that reached the UI as a
+    // delegation briefly disappearing and coming back: My governance flashed its
+    // empty state, and every `!account.drep_id` gate (withdrawals, unstake,
+    // auto-withdraw) saw an undelegated wallet for a moment.
+    //
+    // Absent is not cleared; null is. A field the server means to clear it sends
+    // as null, which the spread still applies.
     const acc = {
       walletId: this.id,
+      ...(resAccount ?? {}),
       ...accountInfo,
     };
     const accountInfoId = await this.getDb()

@@ -166,7 +166,7 @@ export default {
       defaultProvider: Provider.KOIOS,
       cashbackSupport: false,
       stakingSupport: true,
-      governanceSupport: false,
+      governanceSupport: true,
       daoSupport: false,
       transactionSupport:true,
       swapSupport: false,

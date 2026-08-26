@@ -426,6 +426,7 @@
 </template>
 
 <script setup lang="ts">
+import '@/shared/styles/compact-pagination.css';
 import { ref, computed, watch, onMounted } from 'vue';
 import { programmableTooltipKey } from '@/shared/utils/programmableTokenDisplay';
 import assets from '@/utils/assets';

@@ -1466,6 +1466,7 @@ app.add(METHOD.getPubDRepKey, async (request, sendResponse) => {
       target: TARGET,
       sender: SENDER.extension,
     });
+    return;
   }
   try {
     const key = getDrepKey(loggedWallet.publicKey, 0);
@@ -1496,6 +1497,7 @@ app.add(METHOD.getRegisteredPubStakeKeys, async (request, sendResponse) => {
         target: TARGET,
         sender: SENDER.extension,
       });
+      return;
     }
     if (isStakeKeyRegistered(account)) {
       const loggedWallet = WalletStore.state.loggedWallet;
@@ -1506,6 +1508,7 @@ app.add(METHOD.getRegisteredPubStakeKeys, async (request, sendResponse) => {
           target: TARGET,
           sender: SENDER.extension,
         });
+        return;
       }
       const key: string = getStakeKey(loggedWallet.publicKey, 0).hex()
       if (key) {
@@ -1523,9 +1526,18 @@ app.add(METHOD.getRegisteredPubStakeKeys, async (request, sendResponse) => {
           sender: SENDER.extension,
         });
       }
+    } else {
+      // CIP-95: an unregistered stake key simply means there are no
+      // registered keys to report — an empty array is the correct answer.
+      sendResponse({
+        id: request.id,
+        data: [],
+        target: TARGET,
+        sender: SENDER.extension,
+      });
     }
   } catch (error) {
-    console.error("Error in getUnregisteredPubStakeKeys:", error);
+    console.error("Error in getRegisteredPubStakeKeys:", error);
     sendResponse({
       id: request.id,
       error: APIError.InternalError,
@@ -1545,8 +1557,9 @@ app.add(METHOD.getUnregisteredPubStakeKeys, async (request, sendResponse) => {
         target: TARGET,
         sender: SENDER.extension,
       });
+      return;
     }
-    if (isStakeKeyRegistered(account)) {
+    if (!isStakeKeyRegistered(account)) {
       const loggedWallet = WalletStore.state.loggedWallet;
       if (!loggedWallet || !loggedWallet.publicKey) {
         sendResponse({
@@ -1555,23 +1568,33 @@ app.add(METHOD.getUnregisteredPubStakeKeys, async (request, sendResponse) => {
           target: TARGET,
           sender: SENDER.extension,
         });
+        return;
       }
       const key: string = getStakeKey(loggedWallet.publicKey, 0).hex()
       if (key) {
-        sendResponse({
-          id: request.id,
-          data: [],
-          target: TARGET,
-          sender: SENDER.extension,
-        });
-      } else {
         sendResponse({
           id: request.id,
           data: [key],
           target: TARGET,
           sender: SENDER.extension,
         });
+      } else {
+        sendResponse({
+          id: request.id,
+          data: [],
+          target: TARGET,
+          sender: SENDER.extension,
+        });
       }
+    } else {
+      // CIP-95: the stake key is registered, so there are no unregistered
+      // keys to report — an empty array is the correct answer.
+      sendResponse({
+        id: request.id,
+        data: [],
+        target: TARGET,
+        sender: SENDER.extension,
+      });
     }
   } catch (error) {
     console.error("Error in getUnregisteredPubStakeKeys:", error);
