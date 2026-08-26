@@ -43,12 +43,23 @@ export interface PositionRow {
   /** 28-byte credential of a DRep row — the only safe name-index key. Null otherwise. */
   credentialHex: string | null;
   /**
-   * 28-byte credential of a COMMITTEE row, lower-case hex. Kept apart from
-   * `credentialHex` on purpose: the two are looked up in different indexes, and
-   * a shared field would let a committee hash collide with a DRep credential and
-   * borrow that DRep's name.
+   * 28-byte credential of a COMMITTEE row, lower-case hex — the HOT one, which
+   * is what the member signed this vote with. Kept apart from `credentialHex` on
+   * purpose: the two are looked up in different indexes, and a shared field
+   * would let a committee hash collide with a DRep credential and borrow that
+   * DRep's name.
    */
   committeeHex: string | null;
+  /**
+   * The same member's COLD credential, when the projection resolved one.
+   *
+   * A SECOND field rather than a swap, because the two hashes are different
+   * facts and both are wanted: the hot one is what signed the vote and is what a
+   * reader may have copied from another explorer, so it stays searchable, while
+   * only the cold one can be looked up in the committee index. See
+   * `GovVote.committeeColdHash` for why they never match.
+   */
+  committeeColdHex: string | null;
   drepId: string | null;
   vote: string;
   /** Unix seconds, or null when the projection does not carry a block time. */
@@ -131,6 +142,20 @@ function toHasRationale(value: unknown): boolean {
 const COMMITTEE_ROLE = 'ConstitutionalCommittee';
 
 /**
+ * Whether this row belongs to the committee register.
+ *
+ * The ROLE, not the presence of a hash. A caller that gates the name lookup on
+ * `committeeHex` instead is asserting "is this a committee row" from a value
+ * that may legitimately be absent — a hot credential the projection sent in a
+ * form `toCredentialHex` rejects would then skip the lookup entirely, even with
+ * a cold hash resolved and a name sitting in the index. Which register a row
+ * belongs to is a fact about the voter, so it is read from the voter.
+ */
+export function isCommitteeRow(row: PositionRow): boolean {
+  return row.role === COMMITTEE_ROLE;
+}
+
+/**
  * A 28-byte credential as lower-case hex, or null.
  *
  * Shape-checked rather than trusted: `voterHash` is whatever upstream sent, and
@@ -164,13 +189,22 @@ export function committeeNameIndex(
   return index;
 }
 
-/** This committee row's published name, or null when nothing in the index is it. */
+/**
+ * This committee row's published name, or null when nothing in the index is it.
+ *
+ * Keyed on the COLD credential, because that is what the committee endpoint
+ * lists. The hot credential is tried second only so that behaviour is unchanged
+ * where no join was resolved — it has never matched anything and is not expected
+ * to, but a lookup that silently stopped happening would be harder to notice
+ * than one that keeps returning null.
+ */
 export function committeeNameOf(
   row: PositionRow,
   index: ReadonlyMap<string, string> | null | undefined,
 ): string | null {
-  if (!row.committeeHex || !index) return null;
-  return index.get(row.committeeHex) ?? null;
+  if (!index) return null;
+  const key = row.committeeColdHex ?? row.committeeHex;
+  return key ? (index.get(key) ?? null) : null;
 }
 
 export function toPositionRows(votes: GovVote[]): PositionRow[] {
@@ -187,6 +221,7 @@ export function toPositionRows(votes: GovVote[]): PositionRow[] {
       id,
       credentialHex,
       committeeHex: role === COMMITTEE_ROLE ? toCredentialHex(vote.voterHash) : null,
+      committeeColdHex: role === COMMITTEE_ROLE ? toCredentialHex(vote.committeeColdHash) : null,
       drepId: vote.drepId ?? null,
       vote: String(vote.vote ?? ''),
       votedAt: toVotedAt(vote.votedAt),
@@ -244,7 +279,7 @@ export function summarizePositions(rows: PositionRow[]): PositionSummary {
 
 /** Case-insensitive substring match over the voter's name and every id form it has. */
 function matchesSearch(row: PositionRow, needle: string, name: string | null): boolean {
-  const haystack = [name, row.id, row.drepId, row.credentialHex, row.committeeHex]
+  const haystack = [name, row.id, row.drepId, row.credentialHex, row.committeeHex, row.committeeColdHex]
     .filter((v): v is string => !!v)
     .join(' ')
     .toLowerCase();
