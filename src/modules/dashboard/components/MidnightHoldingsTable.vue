@@ -111,6 +111,8 @@ import { walletStore } from '@/stores/walletStore';
 import { Network } from '@/models/types';
 import { MIDNIGHT_DECIMALS } from '@/chains/midnight/midnightTypes';
 import { midnightTokenBalances } from '@/chains/midnight/midnightTokenBalances';
+import { midnightTokenMeta } from '@/chains/midnight/midnightTokenRegistry';
+import { getTokenByUnit } from '@/modules/market/composables/useMarketData';
 import { useTranslation } from '@/shared/composables/useTranslation';
 import { useMidnightLoading } from '@/shared/composables/useMidnightLoading';
 import { useNightFiat } from '@/shared/composables/useNightFiat';
@@ -229,24 +231,64 @@ const nightValueUsd = computed<number>(() => {
  * balance is worse than an obviously-unscaled one.
  */
 const tokenRows = computed<MidnightHoldingRow[]>(() =>
-  Object.entries(midnightTokenBalances(midnightStore.utxos)).map(([color, amount]) => ({
-    // Head+tail, not a prefix: a prefix-only label lets a malicious issuer
-    // grind a colliding prefix and impersonate a legitimate token.
-    ticker: `${color.slice(0, 8)}…${color.slice(-6)}`,
-    name: t('midnight.unknownToken') as string,
-    balanceFormatted: amount.toString(),
-    breakdownText: t('midnight.rawBalanceNotice') as string,
-    price: '—',
-    value: '—',
-    change24h: '—',
-    change24hRaw: null,
-    mcap: '—',
-    avgCost: '—',
-    pnl: '—',
-    icon: 'mdi-help-circle-outline',
-    iconBg: 'grey darken-4',
-    iconColor: 'grey',
-  })),
+  Object.entries(midnightTokenBalances(midnightStore.utxos)).map(([color, amount]) => {
+    const meta = midnightTokenMeta(color);
+
+    // Unlisted color: the amount is known, the exponent is not. Show raw base
+    // units and say so. Guessing a divisor would repeat the Cardano
+    // mis-scaling bug fixed in e0af42bc — a wrong balance is worse than an
+    // obviously unscaled one. This path is permanent, not a stopgap: with
+    // manual curation every new token starts here.
+    if (!meta) {
+      return {
+        // Head+tail, not a prefix: a prefix-only label lets a malicious issuer
+        // grind a colliding prefix and impersonate a legitimate token.
+        ticker: `${color.slice(0, 8)}…${color.slice(-6)}`,
+        name: t('midnight.unknownToken') as string,
+        balanceFormatted: amount.toString(),
+        breakdownText: t('midnight.rawBalanceNotice') as string,
+        price: '—',
+        value: '—',
+        change24h: '—',
+        change24hRaw: null,
+        mcap: '—',
+        avgCost: '—',
+        pnl: '—',
+        icon: 'mdi-help-circle-outline',
+        iconBg: 'grey darken-4',
+        iconColor: 'grey',
+      };
+    }
+
+    // Listed color. Price, 24h change and logo are BORROWED from the Cardano
+    // token named by `cardanoPriceUnit` — an assumption that the two are
+    // economically interchangeable, not a feed for this token. See that
+    // field's doc in midnightTokenRegistry.ts. With no market data every
+    // money-ish cell falls back to an em-dash rather than a fabricated number.
+    const divisor = 10n ** BigInt(meta.decimals);
+    const market = meta.cardanoPriceUnit ? getTokenByUnit(meta.cardanoPriceUnit) : undefined;
+    const priceUsd = market?.price ?? 0;
+    const hasPrice = priceUsd > 0;
+    const units = Number(amount) / Number(divisor);
+
+    return {
+      ticker: meta.symbol,
+      name: meta.name,
+      balanceFormatted: `${formatBigDecimal(amount, divisor, 2)} ${meta.symbol}`,
+      breakdownText: '',
+      price: hasPrice ? formatPrice(priceUsd) : '—',
+      value: hasPrice ? formatUsd(units * priceUsd) : '—',
+      change24h: hasPrice && market?.change24h != null ? formatSignedChange(market.change24h) : '—',
+      change24hRaw: hasPrice ? market?.change24h ?? null : null,
+      mcap: '—',
+      avgCost: '—',
+      pnl: '—',
+      icon: 'mdi-circle-multiple-outline',
+      iconBg: 'grey darken-4',
+      iconColor: 'grey',
+      image: market?.img || undefined,
+    };
+  }),
 );
 
 // tDUST is deliberately NOT a table row — the dedicated DUST battery panel
