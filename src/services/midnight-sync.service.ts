@@ -173,6 +173,29 @@ interface WsSyncMessage {
   [key: string]: unknown;
 }
 
+/**
+ * An output's index within its transaction, or `null` when the payload didn't
+ * carry a usable one.
+ *
+ * Do NOT default a missing index to `0`. The UTxO set is deduped on
+ * `${intentHash}:${outputIndex}` (see `applyUtxoDeltas`), so defaulting buckets
+ * every index-less output of a transaction under the same key — two genuinely
+ * different UTxOs then collapse into one entry and the balance stops matching
+ * the set.
+ *
+ * Skipping cannot drop a legitimate index 0: gero-sync selects `outputIndex`
+ * in its GraphQL subscription and forwards the indexer's map verbatim, and the
+ * Nexus-bound records serialize it as a boxed `Integer` under
+ * `@JsonInclude(NON_NULL)` — so index 0 arrives as `0`, which is an integer and
+ * passes this check. Only a missing, null, or non-numeric value returns `null`.
+ */
+export function resolveOutputIndex(
+  o: { outputIndex?: number; output_index?: number },
+): number | null {
+  const raw = o.outputIndex ?? o.output_index;
+  return Number.isInteger(raw) ? (raw as number) : null;
+}
+
 class MidnightSyncService {
   private active = false;
   private currentNetwork: string | null = null;
@@ -429,6 +452,17 @@ class MidnightSyncService {
             debugLog(`🌙 Midnight delta: created output missing intentHash, skipped — owner=${o.owner.slice(0, 12)}… tokenType=${o.tokenType ?? o.token_type ?? ''}`);
             continue;
           }
+          // The index half of that same key, guarded the same way. Defaulting a
+          // missing index to 0 buckets every index-less output of this tx under
+          // `<intentHash>:0`, and the store's dedup then collapses genuinely
+          // different UTxOs into one entry. With every color admitted below,
+          // that silently swaps a NIGHT holding for a token one and leaves the
+          // NIGHT value stranded in `nightUnshielded`. See resolveOutputIndex.
+          const outputIndex = resolveOutputIndex(o);
+          if (outputIndex === null) {
+            debugLog(`🌙 Midnight delta: created output missing outputIndex, skipped — owner=${o.owner.slice(0, 12)}… tokenType=${o.tokenType ?? o.token_type ?? ''}`);
+            continue;
+          }
           // Admit every token color, matching the CATCH_UP snapshot path
           // (parseUtxos applies no token filter). Without this the delta path
           // removed spent token UTxOs but never re-added received ones, so
@@ -437,7 +471,7 @@ class MidnightSyncService {
           // `nightUnshielded` stays native-only: the delta path filters via
           // isNight() before touching balanceDelta, and the snapshot re-sum
           // below applies its own native check.
-          added.push(this.outputToUtxo(o));
+          added.push(this.outputToUtxo(o, outputIndex));
         }
         for (const o of this.readOutputs(rawTx, 'spent')) {
           if (o.owner !== myUnshielded) continue;
@@ -446,8 +480,11 @@ class MidnightSyncService {
           // a matching key to remove; if we somehow never saw it created,
           // the remove is a no-op against an absent key.
           const intentHash = o.intentHash ?? o.intent_hash ?? '';
-          const outputIndex = o.outputIndex ?? o.output_index ?? 0;
-          if (intentHash) removed.push({ intentHash, outputIndex });
+          const outputIndex = resolveOutputIndex(o);
+          // Same reasoning as the created loop: a fabricated index would target
+          // an unrelated UTxO for removal. The matching add was skipped for the
+          // same reason, so there is nothing in the set to remove anyway.
+          if (intentHash && outputIndex !== null) removed.push({ intentHash, outputIndex });
         }
         if (added.length > 0 || removed.length > 0 || maxTxId !== undefined) {
           midnightActions.applyUtxoDeltas({ added, removed, maxTxId });
@@ -621,14 +658,21 @@ class MidnightSyncService {
     return isNativeNight(tt) ? NIGHT_TOKEN_TYPE_NULL : tt;
   }
 
-  /** Map a gero-sync WS output payload to the wallet's UTxO record. */
-  private outputToUtxo(o: WsMidnightOutput): MidnightUnshieldedUtxo {
+  /**
+   * Map a gero-sync WS output payload to the wallet's UTxO record.
+   *
+   * `outputIndex` is resolved and validated by the caller (see
+   * `resolveOutputIndex`), which skips the output entirely when it has none —
+   * so the record this builds always carries a real dedup key rather than a
+   * fabricated `0`.
+   */
+  private outputToUtxo(o: WsMidnightOutput, outputIndex: number): MidnightUnshieldedUtxo {
     return {
       owner: o.owner,
       tokenType: o.tokenType ?? o.token_type ?? '',
       value: this.toBig(o.value),
       intentHash: o.intentHash ?? o.intent_hash ?? '',
-      outputIndex: o.outputIndex ?? o.output_index ?? 0,
+      outputIndex,
       ctime: undefined,
       initialNonce: '',
       registeredForDustGeneration:
