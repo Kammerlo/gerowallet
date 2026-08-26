@@ -36,5 +36,5 @@ export const CIP113_BASE_PREPROD: readonly string[] = [];
  * testnet parameters" section documents — do not add it back on that basis.
  */
 export const CIP113_BASE_PREVIEW: readonly string[] = [
-  '33ceea92481cd6cc5b9ad1750302642042bb8ea5d028b830ad86fc31',
+  '698c48a630206282690774aebcfa9410895c09f85bc103b19f9888dc',
 ];
