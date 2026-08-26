@@ -14,7 +14,7 @@
     </div>
 
     <div v-else class="mn-tx-list__rows">
-      <div v-for="tx in sorted" :key="tx.hash" class="mn-tx-row">
+      <div v-for="tx in sorted" :key="`${tx.hash}-${tx.token}`" class="mn-tx-row">
         <div class="mn-tx-row__main">
           <div class="mn-tx-row__type">{{ typeLabel(tx) }}</div>
           <div class="mn-tx-row__meta">
@@ -32,7 +32,13 @@
           </v-btn>
         </div>
         <div class="mn-tx-row__amount" :style="{ color: amountColor(tx.type) }">
-          {{ formatAmountSigned(tx) }}
+          <span>{{ formatAmountSigned(tx) }}</span>
+          <v-tooltip v-if="isUnscaled(tx.token)" top content-class="custom-tooltip">
+            <template v-slot:activator="{ on, attrs }">
+              <v-icon x-small color="warning" v-bind="attrs" v-on="on">mdi-help-circle-outline</v-icon>
+            </template>
+            {{ $t('midnight.rawBalanceNotice') }}
+          </v-tooltip>
         </div>
       </div>
     </div>
@@ -46,6 +52,7 @@ import { walletStore } from '@/stores/walletStore';
 import { Network } from '@/models/types';
 import { MIDNIGHT_DECIMALS } from '@/chains/midnight/midnightTypes';
 import type { MidnightTransaction, MidnightTransactionType } from '@/chains/midnight/midnightTypes';
+import { midnightTokenMeta } from '@/chains/midnight/midnightTokenRegistry';
 import { useTranslation } from '@/shared/composables/useTranslation';
 import snackbar from '@/plugins/snackbar';
 
@@ -63,8 +70,30 @@ const sorted = computed<MidnightTransaction[]>(() =>
 );
 
 function currencySymbol(token: string): string {
-  const base = token === 'DUST' ? 'DUST' : 'NIGHT';
-  return isMainnet.value ? base : `t${base}`;
+  if (token === 'NIGHT' || token === 'DUST') {
+    return isMainnet.value ? token : `t${token}`;
+  }
+  // A real token color (not NIGHT/DUST). Fall back to a head+tail truncation
+  // — not a prefix, so a malicious issuer can't grind a colliding prefix and
+  // impersonate a listed token (same reasoning as MidnightHoldingsTable.vue).
+  return midnightTokenMeta(token)?.symbol ?? `${token.slice(0, 8)}…${token.slice(-6)}`;
+}
+
+/** Base-unit divisor for a token, or null when its decimals aren't known. */
+function tokenDivisor(token: string): bigint | null {
+  if (token === 'NIGHT') return NIGHT_DIVISOR;
+  if (token === 'DUST') return DUST_DIVISOR;
+  const meta = midnightTokenMeta(token);
+  return meta ? 10n ** BigInt(meta.decimals) : null;
+}
+
+/**
+ * True when the token's decimals are unknown, so the amount shown is the raw
+ * base-unit integer rather than a scaled value. Never guess an exponent —
+ * a wrong balance is worse than an obviously-unscaled one (see e0af42bc).
+ */
+function isUnscaled(token: string): boolean {
+  return tokenDivisor(token) === null;
 }
 
 function formatBigDecimal(value: bigint, divisor: bigint, fractionDigits: number): string {
@@ -97,9 +126,13 @@ function amountColor(type: MidnightTransactionType): string {
 }
 
 function formatAmountSigned(tx: MidnightTransaction): string {
-  const divisor = tx.token === 'NIGHT' ? NIGHT_DIVISOR : DUST_DIVISOR;
-  const fractionDigits = tx.token === 'NIGHT' ? 2 : 4;
   const sign = tx.type === 'receive' ? '+' : tx.type === 'send' ? '−' : '';
+  const divisor = tokenDivisor(tx.token);
+  if (divisor === null) {
+    // Unknown color: raw base units, no guessed exponent (see e0af42bc).
+    return `${sign}${tx.amount.toString()} ${currencySymbol(tx.token)}`;
+  }
+  const fractionDigits = tx.token === 'DUST' ? 4 : 2;
   return `${sign}${formatBigDecimal(tx.amount, divisor, fractionDigits)} ${currencySymbol(tx.token)}`;
 }
 
@@ -204,6 +237,10 @@ async function copyHash(hash: string): Promise<void> {
 }
 
 .mn-tx-row__amount {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
   flex-shrink: 0;
   font-family: 'Roboto Mono', monospace;
   font-size: 13px;

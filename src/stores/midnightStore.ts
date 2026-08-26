@@ -328,6 +328,20 @@ function normalizeTxHash(hash: string): string {
   return h.startsWith('0x') ? h.slice(2) : h;
 }
 
+/**
+ * Dedup key for a transaction row: hash + token. A single indexer tx that
+ * moves more than one color now produces multiple `MidnightTransaction`
+ * rows sharing one hash (one per color) — keying on hash alone would make
+ * the second `applyTransaction` call overwrite the first instead of adding
+ * a second row. Keying on hash+token keeps the original single-row dedup
+ * behavior for NIGHT/DUST-only txs (including the optimistic pending-send
+ * insert in background.ts, which is hardcoded to 'NIGHT') while letting
+ * distinct colors of the same tx coexist.
+ */
+function txRowKey(tx: MidnightTransaction): string {
+  return `${normalizeTxHash(tx.hash)}::${tx.token}`;
+}
+
 // ---------------------------------------------------------------- hydration
 
 // Persisted shapes mirror the store's interfaces with BigInts serialized as
@@ -892,9 +906,11 @@ export const midnightActions = {
     // Normalize (strip 0x, lowercase) so an optimistic pending entry inserted
     // right after submit — whose hash may carry a `0x` prefix or different
     // case than gero-sync's later confirmed hash — is replaced in place rather
-    // than duplicated when the confirmed event arrives.
-    const key = normalizeTxHash(tx.hash);
-    const existing = midnightStore.transactions.findIndex(t => normalizeTxHash(t.hash) === key);
+    // than duplicated when the confirmed event arrives. Keyed on hash+token
+    // (see txRowKey) so a multi-color tx's rows land as separate entries
+    // instead of clobbering each other.
+    const key = txRowKey(tx);
+    const existing = midnightStore.transactions.findIndex(t => txRowKey(t) === key);
     if (existing >= 0) {
       midnightStore.transactions.splice(existing, 1, tx);
     } else {

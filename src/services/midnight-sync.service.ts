@@ -396,8 +396,10 @@ class MidnightSyncService {
     if (Array.isArray(data.transactions) && data.transactions.length > 0) {
       const myUnshielded = this.currentAddresses?.unshielded ?? '';
       for (const rawTx of data.transactions) {
-        const tx = this.parseTx(rawTx, myUnshielded);
-        if (tx) midnightActions.applyTransaction(tx);
+        // One row per token color moved for us — a tx can carry NIGHT and a
+        // custom color (e.g. USDM) at once, and each needs its own amount.
+        const txs = this.parseTx(rawTx, myUnshielded);
+        for (const tx of txs) midnightActions.applyTransaction(tx);
         // gero-sync's per-tx WS payload carries `midnight_tx_id` (snake-cased
         // from SyncPayload.TxData.midnightTxId). Advancing the cursor per tx
         // is safe — the store only moves it forward.
@@ -506,68 +508,117 @@ class MidnightSyncService {
 
   // ---------------------------------------------------------------- parsers
 
-  private parseTx(raw: WsSyncTx, myUnshielded: string): MidnightTransaction | null {
+  /**
+   * One row PER TOKEN COLOR moved for our address in this tx — a single tx
+   * can carry NIGHT and a custom color (e.g. USDM) at once, and each needs
+   * its own net amount, its own send/receive classification and its own
+   * counterparty. (Previously this hardcoded `token: 'NIGHT'` and summed
+   * only native outputs, so a USDM-only tx rendered as "Received +0.00
+   * NIGHT" — wrong token AND wrong amount.)
+   *
+   * A tx that doesn't touch our address on either side (created or spent)
+   * yields no rows at all, rather than a phantom net-zero "receive".
+   */
+  private parseTx(raw: WsSyncTx, myUnshielded: string): MidnightTransaction[] {
     const hash = raw.txHash ?? raw.tx_hash;
-    if (!hash) return null;
+    if (!hash) return [];
 
-    // Categorize as send / receive from outputs: if any unshielded output's
-    // owner matches our address, it's a receive (or self-send change). If
-    // there are spent outputs owned by us but no created ones, it's a pure send.
     const created = this.readOutputs(raw, 'created');
     const spent = this.readOutputs(raw, 'spent');
-    const receivedAmount = this.sumOutputsForOwner(created, myUnshielded);
-    const spentAmount = this.sumOutputsForOwner(spent, myUnshielded);
-    const netAmount = receivedAmount - spentAmount;
 
-    let type: MidnightTransaction['type'] = 'receive';
-    if (netAmount < 0n) type = 'send';
-    else if (netAmount === 0n && spentAmount > 0n) type = 'send'; // pure forward to others
-
-    // DUST registration: net-zero self-respend where every created output we
-    // own comes back flagged registeredForDustGeneration. Without this it
-    // renders as a confusing "Sent −0.00".
-    if (netAmount === 0n && spentAmount > 0n) {
-      const ownCreated = created.filter((o) => o?.owner === myUnshielded);
-      const allRegistered = ownCreated.length > 0 && ownCreated.every(
-        (o) => (o.registeredForDustGeneration ?? o.registered_for_dust_generation) === true,
-      );
-      if (allRegistered) type = 'register_dust';
+    // Every color touched by an output we own, on either side. Canonicalized
+    // through isNativeNight so an all-zero color of non-canonical length and
+    // an empty string collapse into the SAME "NIGHT" bucket instead of
+    // spuriously splitting into two rows.
+    const colors = new Set<string>();
+    for (const o of created) {
+      if (o?.owner === myUnshielded) colors.add(this.canonicalColor(o));
     }
+    for (const o of spent) {
+      if (o?.owner === myUnshielded) colors.add(this.canonicalColor(o));
+    }
+    if (colors.size === 0) return [];
 
-    // For sends, surface the recipient (largest NIGHT output NOT owned by us)
-    // so history can render "To: mn_addr_…". A receive can't reliably name the
-    // sender from a per-address unshielded subscription — the spent inputs
-    // aren't ours to inspect — so counterparty stays empty there.
-    let counterparty = '';
-    if (type === 'send') {
-      let best = 0n;
-      for (const o of created) {
-        if (!o || o.owner === myUnshielded) continue;
-        const tt = o.tokenType ?? o.token_type ?? '';
-        if (tt && tt !== NIGHT_TOKEN_TYPE_NULL) continue;
-        const v = this.toBig(o.value);
-        if (v > best) { best = v; counterparty = o.owner; }
+    const timestamp = raw.txTimestamp ?? raw.tx_timestamp ?? 0;
+    const blockHeight = raw.blockHeight ?? raw.block_height;
+    const rawHex = raw.raw ?? raw.cbor;
+
+    const rows: MidnightTransaction[] = [];
+    for (const color of colors) {
+      const isNight = isNativeNight(color);
+
+      // Categorize as send / receive from outputs of THIS color: if any
+      // matching output's owner is us, it's a receive (or self-send change).
+      // If there are spent outputs of this color owned by us but no created
+      // ones, it's a pure send.
+      const receivedAmount = this.sumOutputsForOwnerAndColor(created, myUnshielded, color);
+      const spentAmount = this.sumOutputsForOwnerAndColor(spent, myUnshielded, color);
+      const netAmount = receivedAmount - spentAmount;
+
+      let type: MidnightTransaction['type'] = 'receive';
+      if (netAmount < 0n) type = 'send';
+      else if (netAmount === 0n && spentAmount > 0n) type = 'send'; // pure forward to others
+
+      // DUST registration: net-zero NIGHT self-respend where every created
+      // NIGHT output we own comes back flagged registeredForDustGeneration.
+      // Without this it renders as a confusing "Sent −0.00". Registration
+      // only ever concerns NIGHT (the mapping validator), so this never
+      // fires for a custom color's row.
+      if (isNight && netAmount === 0n && spentAmount > 0n) {
+        const ownCreated = created.filter(
+          (o) => o?.owner === myUnshielded && this.canonicalColor(o) === color,
+        );
+        const allRegistered = ownCreated.length > 0 && ownCreated.every(
+          (o) => (o.registeredForDustGeneration ?? o.registered_for_dust_generation) === true,
+        );
+        if (allRegistered) type = 'register_dust';
       }
-    }
 
-    return {
-      hash,
-      type,
-      token: 'NIGHT',
-      // Net amount in NIGHT base units. Positive = received, negative = sent.
-      // The UI displays absolute value with a +/- sign based on `type`.
-      amount: netAmount < 0n ? -netAmount : netAmount,
-      counterparty,
-      timestamp: raw.txTimestamp ?? raw.tx_timestamp ?? 0,
-      status: 'confirmed',
-      // Midnight fees are paid in DUST, not NIGHT, and the unshielded
-      // subscription doesn't carry the DUST fee — leave 0 until gero-sync
-      // forwards it (tracked as a tx-history followup).
-      fee: 0n,
-      blockHeight: raw.blockHeight ?? raw.block_height,
-      isShielded: false, // gero-sync's per-address subscription delivers unshielded only
-      raw: raw.raw ?? raw.cbor,
-    };
+      // For sends, surface the recipient (largest output of THIS color NOT
+      // owned by us) so history can render "To: mn_addr_…". Picking from the
+      // matching color, not always NIGHT, is what keeps a USDM send from
+      // showing whatever NIGHT change output happened to be largest. A
+      // receive can't reliably name the sender from a per-address unshielded
+      // subscription — the spent inputs aren't ours to inspect — so
+      // counterparty stays empty there.
+      let counterparty = '';
+      if (type === 'send') {
+        let best = 0n;
+        for (const o of created) {
+          if (!o || o.owner === myUnshielded) continue;
+          if (this.canonicalColor(o) !== color) continue;
+          const v = this.toBig(o.value);
+          if (v > best) { best = v; counterparty = o.owner; }
+        }
+      }
+
+      rows.push({
+        hash,
+        type,
+        token: isNight ? 'NIGHT' : color,
+        // Net amount in base units. Positive = received, negative = sent.
+        // The UI displays absolute value with a +/- sign based on `type`.
+        amount: netAmount < 0n ? -netAmount : netAmount,
+        counterparty,
+        timestamp,
+        status: 'confirmed',
+        // Midnight fees are paid in DUST, not NIGHT/other colors, and the
+        // unshielded subscription doesn't carry the DUST fee — leave 0 until
+        // gero-sync forwards it (tracked as a tx-history followup).
+        fee: 0n,
+        blockHeight,
+        isShielded: false, // gero-sync's per-address subscription delivers unshielded only
+        raw: rawHex,
+      });
+    }
+    return rows;
+  }
+
+  /** Canonical color key for an output: NIGHT_TOKEN_TYPE_NULL for any native-NIGHT
+   * spelling (see isNativeNight), the raw color hex otherwise. */
+  private canonicalColor(o: WsMidnightOutput): string {
+    const tt = o.tokenType ?? o.token_type ?? '';
+    return isNativeNight(tt) ? NIGHT_TOKEN_TYPE_NULL : tt;
   }
 
   /** Map a gero-sync WS output payload to the wallet's UTxO record. */
@@ -594,14 +645,12 @@ class MidnightSyncService {
     return u.unshieldedSpentOutputs ?? u.unshielded_spent_outputs ?? [];
   }
 
-  private sumOutputsForOwner(outputs: WsMidnightOutput[], owner: string): bigint {
+  /** Sum outputs owned by `owner` whose canonical color matches `color` (see {@link canonicalColor}). */
+  private sumOutputsForOwnerAndColor(outputs: WsMidnightOutput[], owner: string, color: string): bigint {
     let sum = 0n;
     for (const o of outputs) {
       if (!o || o.owner !== owner) continue;
-      const tokenType = o.tokenType ?? o.token_type ?? '';
-      // Only count NIGHT (null token type). Non-null tokenTypes would be
-      // custom assets we don't track in `nightUnshielded`.
-      if (tokenType && tokenType !== NIGHT_TOKEN_TYPE_NULL) continue;
+      if (this.canonicalColor(o) !== color) continue;
       sum += this.toBig(o.value);
     }
     return sum;
