@@ -4,7 +4,7 @@
        never has to fight Vuetify's injected table CSS for specificity (the
        design audit's forced-override budget has zero headroom). Mirrors
        MidnightTransactionsList.vue's toolbar for the same reason. -->
-  <v-card flat class="liquid-glass mn-utxos-table">
+  <v-card flat class="glass-panel mn-utxos-table">
     <div class="mn-utxos-table__head">
       <span class="mn-utxos-table__title">
         {{ $t('transactions.utxos') }} ({{ sorted.length }})

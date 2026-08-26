@@ -5,7 +5,7 @@
        shared #tsac tab scaffold. A row selects into the detail pane instead of
        expanding inline (that used to be MidnightTxUtxos.vue, rendered here per
        row; it now lives inside the detail pane instead). -->
-  <v-card flat class="liquid-glass mn-tx-list">
+  <v-card flat class="glass-panel mn-tx-list">
     <div class="mn-tx-list__head">
       <span class="mn-tx-list__title">
         {{ $t('transactions.history') }} ({{ sorted.length }})
