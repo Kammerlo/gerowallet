@@ -1,7 +1,10 @@
 <template>
-  <!-- Full-page Midnight tx history — the Midnight branch of /transactions.
-       The Cardano page's tabs (history + UTxO set with detail panes) don't
-       map onto Midnight's event model, so this renders one clean list. -->
+  <!-- History tab's Midnight leaf — same role as TransactionsCard.vue for
+       Cardano: a searchable/sortable/filterable list living at width:39% next
+       to a detail pane (MidnightTransactionDetails.vue) inside Transactions.vue's
+       shared #tsac tab scaffold. A row selects into the detail pane instead of
+       expanding inline (that used to be MidnightTxUtxos.vue, rendered here per
+       row; it now lives inside the detail pane instead). -->
   <v-card flat class="liquid-glass mn-tx-list">
     <div class="mn-tx-list__head">
       <span class="mn-tx-list__title">
@@ -192,7 +195,12 @@
 
       <div class="mn-tx-list__rows">
         <div v-for="tx in sorted" :key="`${tx.hash}-${tx.token}`" class="mn-tx-row-wrap">
-          <div class="mn-tx-row">
+          <button
+            type="button"
+            class="mn-tx-row"
+            :class="{ 'mn-tx-row--selected': isSelected(tx) }"
+            @click="selectRow(tx)"
+          >
             <div class="mn-tx-row__main">
               <div class="mn-tx-row__type">{{ typeLabel(tx.type) }}</div>
               <div class="mn-tx-row__meta">
@@ -203,12 +211,7 @@
                 <span v-if="tx.blockHeight"> · #{{ tx.blockHeight }}</span>
               </div>
             </div>
-            <div class="mn-tx-row__hash">
-              <span class="mn-tx-row__hash-text">{{ shortHash(tx.hash) }}</span>
-              <v-btn icon x-small class="ml-1" @click="copyHash(tx.hash)">
-                <v-icon x-small>mdi-content-copy</v-icon>
-              </v-btn>
-            </div>
+            <div class="mn-tx-row__hash-text">{{ shortHash(tx.hash) }}</div>
             <div class="mn-tx-row__amount" :style="{ color: amountColor(tx.type) }">
               <span>{{ formatAmountSigned(tx) }}</span>
               <v-tooltip v-if="isUnscaled(tx.token)" top content-class="custom-tooltip">
@@ -218,27 +221,10 @@
                 {{ $t('midnight.rawBalanceNotice') }}
               </v-tooltip>
             </div>
-            <v-btn
-              icon
-              x-small
-              class="ml-1"
-              :aria-label="$t('common.details')"
-              @click="toggleExpand(tx)"
-            >
-              <v-icon x-small class="mn-tx-row__chevron" :class="{ 'mn-tx-row__chevron--open': isExpanded(tx) }">
-                mdi-chevron-down
-              </v-icon>
-            </v-btn>
-          </div>
-          <v-expand-transition>
-            <MidnightTxUtxos
-              v-if="isExpanded(tx)"
-              :tx-hash="tx.hash"
-              :tx-type="tx.type"
-              :tx-token="tx.token"
-              :tx-counterparty="tx.counterparty"
-            />
-          </v-expand-transition>
+          </button>
+          <v-btn icon x-small class="ml-1" @click="copyHash(tx.hash)">
+            <v-icon x-small>mdi-content-copy</v-icon>
+          </v-btn>
         </div>
       </div>
     </template>
@@ -249,7 +235,6 @@
 import { computed, onUnmounted, ref, toRefs, watch } from 'vue';
 import debounce from 'lodash/debounce';
 import { midnightStore } from '@/stores/midnightStore';
-import MidnightTxUtxos from './MidnightTxUtxos.vue';
 import { walletStore } from '@/stores/walletStore';
 import { Network } from '@/models/types';
 import { MIDNIGHT_DECIMALS } from '@/chains/midnight/midnightTypes';
@@ -261,6 +246,9 @@ import snackbar from '@/plugins/snackbar';
 const { t } = useTranslation();
 const { transactions } = toRefs(midnightStore);
 const { loggedWallet } = toRefs(walletStore);
+
+const emit = defineEmits(['row-click']);
+const props = defineProps<{ selectedTransaction?: MidnightTransaction | null }>();
 
 const isMainnet = computed(() => loggedWallet.value?.network === Network.MAINNET);
 
@@ -444,24 +432,18 @@ const sorted = computed<MidnightTransaction[]>(() => {
   return list;
 });
 
-// Expandable UTxO inspector — only one row open at a time. Keyed the same
-// way as v-for (hash+token), not hash alone, so a multi-token tx that
-// produces several rows can expand each independently; MidnightTxUtxos
-// itself caches per hash, so expanding a sibling row of the same tx is a
-// cache hit rather than a refetch.
-const expandedKey = ref<string | null>(null);
-
-function rowKey(tx: MidnightTransaction): string {
-  return `${tx.hash}-${tx.token}`;
+// Row selection — mirrors TransactionsCard.vue's row-click contract: clicking
+// a row emits it to the parent (Transactions.vue), which renders it in the
+// detail pane alongside this list. Compared on hash+token (not hash alone),
+// matching the v-for key, so a multi-token tx's rows highlight independently.
+function isSelected(tx: MidnightTransaction): boolean {
+  return !!props.selectedTransaction
+    && props.selectedTransaction.hash === tx.hash
+    && props.selectedTransaction.token === tx.token;
 }
 
-function isExpanded(tx: MidnightTransaction): boolean {
-  return expandedKey.value === rowKey(tx);
-}
-
-function toggleExpand(tx: MidnightTransaction): void {
-  const key = rowKey(tx);
-  expandedKey.value = expandedKey.value === key ? null : key;
+function selectRow(tx: MidnightTransaction): void {
+  emit('row-click', tx);
 }
 
 function currencySymbol(token: string): string {
@@ -611,6 +593,8 @@ async function copyHash(hash: string): Promise<void> {
 }
 
 .mn-tx-row-wrap {
+  display: flex;
+  align-items: center;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
@@ -622,15 +606,22 @@ async function copyHash(hash: string): Promise<void> {
   display: flex;
   align-items: center;
   gap: 12px;
+  width: 100%;
   padding: 10px 4px;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.mn-tx-row__chevron {
-  transition: transform var(--g-dur-base) ease;
+.mn-tx-row:hover {
+  background: var(--g-hairline-1);
 }
 
-.mn-tx-row__chevron--open {
-  transform: rotate(180deg);
+.mn-tx-row--selected {
+  background: var(--g-hairline-2);
 }
 
 .mn-tx-row__main {
@@ -656,13 +647,8 @@ async function copyHash(hash: string): Promise<void> {
   font-family: 'Roboto Mono', monospace;
 }
 
-.mn-tx-row__hash {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-
 .mn-tx-row__hash-text {
+  flex-shrink: 0;
   font-family: 'Roboto Mono', monospace;
   font-size: 11px;
   color: rgba(255, 255, 255, 0.45);

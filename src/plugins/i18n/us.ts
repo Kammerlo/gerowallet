@@ -4825,6 +4825,9 @@ export default {
   'midnight.utxoOutputs': 'Outputs',
   'midnight.thisWallet': 'This wallet',
   'midnight.utxoLoadFailed': 'Failed to load inputs and outputs for this transaction.',
+  // UTxOs tab detail pane: a Midnight UTxO's reference is intentHash:outputIndex,
+  // not a transaction hash — a distinct field from transactions.transactionId.
+  'midnight.intentHash': 'Intent Hash',
   // Settings > Advanced: Midnight proof server section (WP-P4)
   'midnight.proofServer.title': 'Midnight proof server',
   'midnight.proofServer.remoteLabel': 'Gero Cloud (default)',
