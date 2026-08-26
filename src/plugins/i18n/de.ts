@@ -4718,6 +4718,11 @@ export default {
   'midnight.txShield': 'NIGHT verschleiert',
   'midnight.txUnshield': 'NIGHT entschleiert',
   'midnight.txContractCall': 'Contract-Aufruf',
+  // Transaktionsdetail: aufklappbare Ein-/Ausgaben pro Transaktion (UTxO-Inspektor)
+  'midnight.utxoInputs': 'Eingänge',
+  'midnight.utxoOutputs': 'Ausgänge',
+  'midnight.thisWallet': 'Dieses Wallet',
+  'midnight.utxoLoadFailed': 'Ein- und Ausgänge für diese Transaktion konnten nicht geladen werden.',
   // Einstellungen > Erweitert: Midnight-Proof-Server-Bereich (WP-P4)
   'midnight.proofServer.title': 'Midnight-Proof-Server',
   'midnight.proofServer.remoteLabel': 'Gero Cloud (Standard)',

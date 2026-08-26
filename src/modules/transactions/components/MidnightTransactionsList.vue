@@ -14,40 +14,63 @@
     </div>
 
     <div v-else class="mn-tx-list__rows">
-      <div v-for="tx in sorted" :key="`${tx.hash}-${tx.token}`" class="mn-tx-row">
-        <div class="mn-tx-row__main">
-          <div class="mn-tx-row__type">{{ typeLabel(tx) }}</div>
-          <div class="mn-tx-row__meta">
-            <span v-if="tx.counterparty" class="mn-tx-row__counterparty">
-              {{ shortAddress(tx.counterparty) }} ·
-            </span>
-            <span>{{ formatTime(tx.timestamp) }}</span>
-            <span v-if="tx.blockHeight"> · #{{ tx.blockHeight }}</span>
+      <div v-for="tx in sorted" :key="`${tx.hash}-${tx.token}`" class="mn-tx-row-wrap">
+        <div class="mn-tx-row">
+          <div class="mn-tx-row__main">
+            <div class="mn-tx-row__type">{{ typeLabel(tx) }}</div>
+            <div class="mn-tx-row__meta">
+              <span v-if="tx.counterparty" class="mn-tx-row__counterparty">
+                {{ shortAddress(tx.counterparty) }} ·
+              </span>
+              <span>{{ formatTime(tx.timestamp) }}</span>
+              <span v-if="tx.blockHeight"> · #{{ tx.blockHeight }}</span>
+            </div>
           </div>
-        </div>
-        <div class="mn-tx-row__hash">
-          <span class="mn-tx-row__hash-text">{{ shortHash(tx.hash) }}</span>
-          <v-btn icon x-small class="ml-1" @click="copyHash(tx.hash)">
-            <v-icon x-small>mdi-content-copy</v-icon>
+          <div class="mn-tx-row__hash">
+            <span class="mn-tx-row__hash-text">{{ shortHash(tx.hash) }}</span>
+            <v-btn icon x-small class="ml-1" @click="copyHash(tx.hash)">
+              <v-icon x-small>mdi-content-copy</v-icon>
+            </v-btn>
+          </div>
+          <div class="mn-tx-row__amount" :style="{ color: amountColor(tx.type) }">
+            <span>{{ formatAmountSigned(tx) }}</span>
+            <v-tooltip v-if="isUnscaled(tx.token)" top content-class="custom-tooltip">
+              <template v-slot:activator="{ on, attrs }">
+                <v-icon x-small color="warning" v-bind="attrs" v-on="on">mdi-help-circle-outline</v-icon>
+              </template>
+              {{ $t('midnight.rawBalanceNotice') }}
+            </v-tooltip>
+          </div>
+          <v-btn
+            icon
+            x-small
+            class="ml-1"
+            :aria-label="$t('common.details')"
+            @click="toggleExpand(tx)"
+          >
+            <v-icon x-small class="mn-tx-row__chevron" :class="{ 'mn-tx-row__chevron--open': isExpanded(tx) }">
+              mdi-chevron-down
+            </v-icon>
           </v-btn>
         </div>
-        <div class="mn-tx-row__amount" :style="{ color: amountColor(tx.type) }">
-          <span>{{ formatAmountSigned(tx) }}</span>
-          <v-tooltip v-if="isUnscaled(tx.token)" top content-class="custom-tooltip">
-            <template v-slot:activator="{ on, attrs }">
-              <v-icon x-small color="warning" v-bind="attrs" v-on="on">mdi-help-circle-outline</v-icon>
-            </template>
-            {{ $t('midnight.rawBalanceNotice') }}
-          </v-tooltip>
-        </div>
+        <v-expand-transition>
+          <MidnightTxUtxos
+            v-if="isExpanded(tx)"
+            :tx-hash="tx.hash"
+            :tx-type="tx.type"
+            :tx-token="tx.token"
+            :tx-counterparty="tx.counterparty"
+          />
+        </v-expand-transition>
       </div>
     </div>
   </v-card>
 </template>
 
 <script setup lang="ts">
-import { computed, toRefs } from 'vue';
+import { computed, ref, toRefs } from 'vue';
 import { midnightStore } from '@/stores/midnightStore';
+import MidnightTxUtxos from './MidnightTxUtxos.vue';
 import { walletStore } from '@/stores/walletStore';
 import { Network } from '@/models/types';
 import { MIDNIGHT_DECIMALS } from '@/chains/midnight/midnightTypes';
@@ -68,6 +91,26 @@ const DUST_DIVISOR = 10n ** BigInt(MIDNIGHT_DECIMALS.DUST);
 const sorted = computed<MidnightTransaction[]>(() =>
   [...transactions.value].sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0)),
 );
+
+// Expandable UTxO inspector — only one row open at a time. Keyed the same
+// way as v-for (hash+token), not hash alone, so a multi-token tx that
+// produces several rows can expand each independently; MidnightTxUtxos
+// itself caches per hash, so expanding a sibling row of the same tx is a
+// cache hit rather than a refetch.
+const expandedKey = ref<string | null>(null);
+
+function rowKey(tx: MidnightTransaction): string {
+  return `${tx.hash}-${tx.token}`;
+}
+
+function isExpanded(tx: MidnightTransaction): boolean {
+  return expandedKey.value === rowKey(tx);
+}
+
+function toggleExpand(tx: MidnightTransaction): void {
+  const key = rowKey(tx);
+  expandedKey.value = expandedKey.value === key ? null : key;
+}
 
 function currencySymbol(token: string): string {
   if (token === 'NIGHT' || token === 'DUST') {
@@ -189,16 +232,27 @@ async function copyHash(hash: string): Promise<void> {
   color: rgba(255, 255, 255, 0.4);
 }
 
+.mn-tx-row-wrap {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.mn-tx-row-wrap:last-child {
+  border-bottom: none;
+}
+
 .mn-tx-row {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 10px 4px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-.mn-tx-row:last-child {
-  border-bottom: none;
+.mn-tx-row__chevron {
+  transition: transform var(--g-dur-base) ease;
+}
+
+.mn-tx-row__chevron--open {
+  transform: rotate(180deg);
 }
 
 .mn-tx-row__main {
