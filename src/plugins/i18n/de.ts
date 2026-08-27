@@ -4689,6 +4689,16 @@ export default {
   'midnight.dustRelayEstimate': 'Relay zu Midnight (einige Stunden)',
   'midnight.relayFewHours': 'einige Stunden',
   'midnight.dustSourcesReadOnly': 'Keine lokalen Schlüssel',
+  // Zeilenzustände, die kein einfaches „Hier erzeugen“ anbieten dürfen — ein
+  // Stake-Credential darf genau eine aktive Registrierung tragen.
+  'midnight.dustSourcesUnknownState': 'Status nicht verfügbar',
+  'midnight.dustSourcesUnknownHint': 'Die DUST-Registrierung dieser Wallet konnte gerade nicht geprüft werden. Eine Registrierung ohne Prüfung könnte ein Duplikat erzeugen und die DUST-Erzeugung anhalten.',
+  'midnight.dustSourcesDuplicate': 'Doppelte Registrierungen',
+  'midnight.dustSourcesDuplicateHint': 'Diese Wallet hat mehr als eine DUST-Registrierung und erzeugt deshalb nichts. Öffne sie als Cardano-Wallet, um die überzähligen zu entfernen.',
+  'midnight.dustSourcesElsewhere': 'Erzeugt derzeit für {address}.',
+  'midnight.dustSourcesElsewhereUnknown': 'Auf Cardano bereits registriert. Leite sie hierher um, damit sie DUST für diese Wallet erzeugt.',
+  'midnight.dustSourcesAlreadyRegistered': 'Diese Wallet hat bereits eine aktive DUST-Registrierung. Nutze stattdessen „Hierher umleiten“.',
+  'midnight.cnightDestinationChanging': 'Neues Ziel, wartet auf die Weiterleitung',
   // Inline DUST-Generierungszeile (Holdings-Tabelle + Token-Drawer)
   'midnight.dustLinePromo': 'Dieses NIGHT kann DUST generieren',
   'midnight.dustLineGenerating': 'Generiert DUST',

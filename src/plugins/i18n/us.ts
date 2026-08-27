@@ -4791,6 +4791,17 @@ export default {
   'midnight.dustRelayEstimate': 'Relay to Midnight (a few hours)',
   'midnight.relayFewHours': 'a few hours',
   'midnight.dustSourcesReadOnly': 'No local keys',
+  // Row states that must NOT offer a plain "Generate here" — a stake credential
+  // may carry exactly one live registration, so registering over an existing
+  // one invalidates both and pauses DUST for the whole set.
+  'midnight.dustSourcesUnknownState': 'Status unavailable',
+  'midnight.dustSourcesUnknownHint': 'Could not check this wallet\'s DUST registration just now. Registering without checking could create a duplicate and pause DUST generation.',
+  'midnight.dustSourcesDuplicate': 'Duplicate registrations',
+  'midnight.dustSourcesDuplicateHint': 'This wallet has more than one DUST registration, so it generates nothing. Open it as a Cardano wallet to remove the extras.',
+  'midnight.dustSourcesElsewhere': 'Currently generating to {address}.',
+  'midnight.dustSourcesElsewhereUnknown': 'Already registered on Cardano. Redirect it here to generate DUST for this wallet instead.',
+  'midnight.dustSourcesAlreadyRegistered': 'This wallet already has a live DUST registration. Use Redirect here instead.',
+  'midnight.cnightDestinationChanging': 'New destination, waiting for the relay',
   // Inline DUST generation line (holdings table row + token drawer)
   'midnight.dustLinePromo': 'This NIGHT can generate DUST',
   'midnight.dustLineGenerating': 'Generating DUST',
