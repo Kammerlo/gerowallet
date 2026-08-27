@@ -96,6 +96,11 @@ jobs:
       # parses every SFC in options/popup/sidepanel and fails on syntax errors.
       - name: Bundle check (build:web, placeholder env)
         run: |
-          cp .env.example .env.production
+          # Synthesize the placeholder from the VITE_* names the source actually
+          # references, rather than from a committed .env.example. That file was
+          # removed (it carried MANIFEST_KEY), and hard-depending on it made this
+          # gate fail for a reason unrelated to buildability. Deriving the list
+          # from src/ also keeps it correct as new vars are added.
+          grep -rhoE 'VITE_[A-Z0-9_]+' src/ scripts/ 2>/dev/null             | sort -u | sed 's/$/=placeholder/' > .env.production
           echo "Wrote placeholder .env.production ($(grep -c '^VITE_' .env.production) vars)"
           npm run build:web -- --mode production
