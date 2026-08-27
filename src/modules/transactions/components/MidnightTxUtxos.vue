@@ -141,14 +141,22 @@ async function load(force = false): Promise<void> {
       () => getMidnightApi(network).getTransactionUtxos(props.txHash),
       force,
     );
+    // This instance is REUSED across selections: MidnightTransactionDetails
+    // mounts it once with `:tx-hash` and no `:key`, so picking tx A then B
+    // before A settles would let A's response overwrite B's pane. Only the
+    // response for the key we are still showing may touch state — and only
+    // that response may clear `loading`, or a superseded request would hide
+    // the spinner while the current one is still in flight.
+    if (cacheKey() !== key) return;
     data.value = result;
   } catch {
     // Auth-expiry / network failures are common here (see Nexus route
     // notes) — show the failure, never swallow it into a blank panel.
+    if (cacheKey() !== key) return;
     data.value = null;
     error.value = t('midnight.utxoLoadFailed');
   } finally {
-    loading.value = false;
+    if (cacheKey() === key) loading.value = false;
   }
 }
 

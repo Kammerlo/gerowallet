@@ -80,7 +80,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, toRefs } from 'vue';
+import { computed, ref, toRefs, watch } from 'vue';
+import debounce from 'lodash/debounce';
 import { midnightStore } from '@/stores/midnightStore';
 import { walletStore } from '@/stores/walletStore';
 import { Network } from '@/models/types';
@@ -99,7 +100,15 @@ const isMainnet = computed(() => loggedWallet.value?.network === Network.MAINNET
 
 const NIGHT_DIVISOR = 10n ** BigInt(MIDNIGHT_DECIMALS.NIGHT);
 
+// Debounced 300ms, matching MidnightTransactionsList and Cardano's
+// TransactionsCard. This file's header claims to mirror that pattern; without
+// this it filtered on every keystroke instead.
 const search = ref('');
+const debouncedSearch = ref('');
+const debouncedUpdateSearch = debounce((value: string) => {
+  debouncedSearch.value = value;
+}, 300);
+watch(search, value => debouncedUpdateSearch(value));
 type SortField = 'amount' | 'ref';
 const sortBy = ref<SortField>('amount');
 const sortDesc = ref(true);
@@ -172,7 +181,7 @@ function toRow(u: MidnightUnshieldedUtxo): MidnightUtxoRow {
 const rows = computed<MidnightUtxoRow[]>(() => midnightStore.utxos.map(toRow));
 
 const searched = computed<MidnightUtxoRow[]>(() => {
-  const needle = search.value?.trim().toLowerCase();
+  const needle = debouncedSearch.value?.trim().toLowerCase();
   if (!needle) return rows.value;
   return rows.value.filter(r =>
     r.intentHash.toLowerCase().includes(needle) ||

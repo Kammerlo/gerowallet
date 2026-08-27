@@ -22,9 +22,10 @@ name: Dev Bundle Gate
 # also unavailable: Vue 2.7 + TS 5.8 has no compatible version — 1.x caps at
 # ~TS 5.4, 2.x+ dropped Vue 2.) Cleaning up the tsc/lint debt is a separate task.
 #
-# Secret-free by design: it materializes a placeholder .env.production from the
-# committed .env.example (VITE_* values are inlined runtime strings, not build
-# secrets), so the bundle path matches production without exposing credentials.
+# Secret-free by design: it synthesizes a placeholder .env.production from the
+# VITE_* names the source references (VITE_* values are inlined runtime strings,
+# not build secrets), so the bundle path matches production without exposing
+# credentials and without depending on a committed env file.
 
 on:
   pull_request:

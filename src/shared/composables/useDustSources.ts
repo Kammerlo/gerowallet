@@ -176,11 +176,16 @@ export function dustSourceRowState(
     return source.canSign ? 'registeredElsewhere' : 'readOnly';
   }
 
-  if (!source.canSign) return 'readOnly';
-
   // Both chain reads must have actually answered before a row may claim to be
   // clear. "Unregistered" and "the query failed" look identical on the wire.
+  //
+  // Ranked ABOVE the read-only fallback: a watch-only row whose lookup failed
+  // is still a failed lookup, and labelling it "read only" states we know its
+  // registration when we do not. Neither label offers a CTA, so this only
+  // changes what the row claims — which is the point.
   if (!source.registrationsLoaded || !source.statusLoaded) return 'unknown';
+
+  if (!source.canSign) return 'readOnly';
 
   return 'unregistered';
 }
