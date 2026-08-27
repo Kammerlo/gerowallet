@@ -92,6 +92,7 @@ import { walletStore } from '@/stores/walletStore';
 import { Network } from '@/models/types';
 import { useTranslation } from '@/shared/composables/useTranslation';
 import ErrorState from '@/shared/components/feedback/ErrorState.vue';
+import { fetchTxUtxos, getCachedTxUtxos } from './midnightTxUtxosCache';
 
 const { t } = useTranslation();
 
@@ -103,10 +104,8 @@ const props = defineProps<{
   txCounterparty?: string;
 }>();
 
-// Module-scope session cache keyed by network+hash. Survives this
-// component's mount/unmount (a collapsed row is v-if'd out of the DOM), so a
-// re-expand is a cache hit, not a refetch.
-const utxosCache = new Map<string, MidnightTransactionUtxosDto>();
+// Cache lives in ./midnightTxUtxosCache — see that file for why it cannot
+// live in `<script setup>` (this block re-runs per instance).
 
 const loading = ref(false);
 const error = ref<string | null>(null);
@@ -121,7 +120,7 @@ function cacheKey(): string {
 async function load(force = false): Promise<void> {
   const key = cacheKey();
   if (!force) {
-    const cached = utxosCache.get(key);
+    const cached = getCachedTxUtxos(key);
     if (cached) {
       data.value = cached;
       error.value = null;
@@ -137,8 +136,11 @@ async function load(force = false): Promise<void> {
   loading.value = true;
   error.value = null;
   try {
-    const result = await getMidnightApi(network).getTransactionUtxos(props.txHash);
-    utxosCache.set(key, result);
+    const result = await fetchTxUtxos(
+      key,
+      () => getMidnightApi(network).getTransactionUtxos(props.txHash),
+      force,
+    );
     data.value = result;
   } catch {
     // Auth-expiry / network failures are common here (see Nexus route
