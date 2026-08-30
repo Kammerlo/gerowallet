@@ -124,6 +124,7 @@ function broadcastFromBackground(updates: Partial<StoreType>) {
 
 ## CIP-113 Programmable Tokens (Stage 1 — read-only)
 - **Config**: `src/utils/cip113Deployments.ts` — one `readonly string[]` of `programmable_logic_base` script hashes per network (a list, because re-bootstrapping changes the hash while old holdings stay put). Reviewed protocol constants, NOT env config: a wrong hash badges someone else's UTxOs as the user's. Empty = unsupported, fails closed; mainnet ships empty, which is what keeps the feature off there. `networks.ts` re-validates the hex shape.
+- **Two gates, both required**: the deployment list above (build-time) AND the `isCip113Enabled` feature flag (runtime, ships off). The background reads the flag from the `chrome.storage.local` `featureFlags` mirror via `src/chrome/cip113Flag.ts`, since the SSE flag service can't run in an MV3 worker. Flag off ⇒ `programmableBaseScriptHashes()` is empty ⇒ no partition, no refusal index, and `subscriptionCredentials()` keeps the server-side allowlist — i.e. exactly pre-CIP-113 behaviour.
 - **Discovery**: these UTxOs sit at the shared PLB *script* address carrying the wallet's own stake credential. gero-sync's SUBSCRIBE `credentials` array is a **strict allowlist of payment key hashes** and can never match a script hash — so when a network has PLB hashes configured, `walletBg.subscriptionCredentials()` sends `[]` and the server resolves everything under the subscribed stake address.
 - **Partition**: `classifyUtxoAddress()` (`src/chrome/serialization.ts`) → `spendable` | `programmable` | `programmable-other` | `foreign`. Spendable checks run first, so programmable UTxOs never enter coin selection or the balance total.
 - **Never signable**: `refusalForProgrammableInputs()` in `background.ts` preflights CIP-30 `signTx`, WalletConnect, cross-device relay and Trezor; `walletBg.signTx` re-checks. The `txId#index` refusal index lives in the existing per-wallet `config` row — no schema bump.
@@ -147,7 +148,7 @@ function broadcastFromBackground(updates: Partial<StoreType>) {
 ## Feature Flags
 - Self-hosted flag service (gero-sync): `src/services/featureFlag.service.ts` + `src/stores/featureFlagsStore.ts`
 - Backend URL: `VITE_FLAGS_BASE_URL` (see `.env.*`)
-- Flags: `isSwapEnabled`, `isGeroCardEnabled`, `isBlogEnabled`, `isGoMiningEnabled`, `isPoolOperatorEnabled`, `isPhysicalCardOrderingEnabled`, `isBitcoinEnabled` (master visibility gate for the Bitcoin chain: onboarding tile + BTC route guards + BTC nav items)
+- Flags: `isSwapEnabled`, `isGeroCardEnabled`, `isBlogEnabled`, `isGoMiningEnabled`, `isPoolOperatorEnabled`, `isPhysicalCardOrderingEnabled`, `isBitcoinEnabled` (master visibility gate for the Bitcoin chain: onboarding tile + BTC route guards + BTC nav items), `isCip113Enabled` (runtime kill-switch for CIP-113; ANDed with the per-network deployment list)
 - Route gating: `isRouteUnderMaintenance()` in router.ts
 - Nav hiding: check flag in NavigationDrawer.vue menu items
 

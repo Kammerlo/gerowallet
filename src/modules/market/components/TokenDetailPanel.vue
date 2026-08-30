@@ -11,10 +11,9 @@
         <div class="d-flex align-center">
           <span class="text-h6 font-weight-bold mr-2">{{ token.ticker }}</span>
           <v-icon v-if="token.verified" small color="primary" class="mr-1">mdi-check-decagram</v-icon>
-          <v-tooltip top :open-delay="300" content-class="custom-tooltip">
+          <v-tooltip v-if="token.isProgrammable" top :open-delay="300" content-class="custom-tooltip">
             <template v-slot:activator="{ on, attrs }">
               <v-chip
-                v-if="token.isProgrammable"
                 x-small label
                 class="mr-1 flex-shrink-0"
                 style="height: 16px; font-size: 10px; padding: 0 5px; color: var(--g-warning); background: var(--g-warning-fill); border: 1px solid var(--g-warning-line);"

@@ -479,7 +479,7 @@ const columnOptions = computed<{ key: ColumnKey; label: string }[]>(() => {
 
 // ── Store refs ────────────────────────────────────────────────────────────────
 
-const { loggedWallet, transactions, account, collections, bitcoinBalance } = toRefs(walletStore);
+const { loggedWallet, transactions, account, collections, bitcoinBalance, programmableLockedLovelace } = toRefs(walletStore);
 
 // ── Portfolio Data ────────────────────────────────────────────────────────────
 
@@ -602,6 +602,10 @@ const isWalletEmpty = computed(() => {
   if (loggedWallet.value?.chain === Blockchain.BITCOIN) {
     return !(bitcoinBalance.value && BigInt(bitcoinBalance.value.total ?? 0) > 0n);
   }
+  // controlled_amount is the SPENDABLE figure — the CIP-113 locked share is subtracted
+  // from it in the store — so a wallet holding nothing but programmable UTxOs reads
+  // exactly '0' here and would get the "no funds" hero over a funded portfolio.
+  if (BigInt(programmableLockedLovelace.value || '0') > 0n) return false;
   return !account.value || account.value?.controlled_amount === '0';
 });
 

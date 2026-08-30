@@ -318,7 +318,7 @@ const isBeta = ref<boolean>(import.meta.env['VITE_IS_BETA'] === 'true');
 const vmProxy = getCurrentInstance()!.proxy;
 const currentPage = computed(() => vmProxy.$route);
 const { isSyncing, connected, connecting } = toRefs(loadingState);
-const { loggedWallet, account, config, bitcoinBalance } = toRefs(walletStore);
+const { loggedWallet, account, config, bitcoinBalance, programmableLockedLovelace } = toRefs(walletStore);
 const { config: geroConfig } = toRefs(geroStore);
 const { tip } = toRefs(networkStore);
 // Midnight uses its own store — `networkStore.tip` is Cardano-shaped (epoch/slot)
@@ -355,6 +355,9 @@ const emptyStateShowing = computed(() => {
   if (loggedWallet.value?.chain === Blockchain.BITCOIN) {
     return !(bitcoinBalance.value && BigInt(bitcoinBalance.value.total ?? 0) > 0n);
   }
+  // Mirrors PortfolioPage: controlled_amount is spendable-only, so CIP-113 locked ADA
+  // has to be counted separately or a fully-locked wallet reads as empty.
+  if (BigInt(programmableLockedLovelace.value || '0') > 0n) return false;
   return !account.value || account.value?.controlled_amount === '0';
 });
 
@@ -401,6 +404,7 @@ const hasNewSettingsFeatures = computed(() => hasNewFeaturesInPath(['settings'])
 
 // Check if wallet is empty (no native tokens)
 const isWalletEmpty = computed(() => {
+  if (BigInt(programmableLockedLovelace.value || '0') > 0n) return false;
   return !account.value || account.value.controlled_amount === '0';
 });
 // Notifications menu

@@ -19,6 +19,7 @@ import { WalletBg } from './walletBg';
 import WalletStore, { walletStore, type Account } from '@/stores/walletStore';
 import { getAddress, getStakeKey } from './serialization';
 import { CIP113_BASE_PREVIEW } from '@/utils/cip113Deployments';
+import { setCip113EnabledForTest } from './cip113Flag';
 import { Blockchain } from '@/models/types';
 
 // clearForWalletSwitch() clears the wallet-scoped alarms; there is no extension API here.
@@ -121,6 +122,9 @@ async function loginFromCache(bg: WalletBg) {
 describe('CIP-113 locked share across a service-worker restart', () => {
   beforeEach(() => {
     WalletStore.clearForWalletSwitch();
+    // CIP-113 ships behind a remote kill-switch that defaults OFF. Everything below
+    // exercises the feature, so turn it on explicitly; the last case turns it back off.
+    setCip113EnabledForTest(true);
   });
 
   it('keeps the locked lovelace out of the spendable balance after a live push', async () => {
@@ -247,5 +251,28 @@ describe('CIP-113 partition when the holdings go away', () => {
     await loginFromCache(bootWallet(wallet));
 
     expect(walletStore.programmableLockedLovelace).toBe('0');
+  });
+
+  // The remote kill-switch has to leave the wallet in its pre-CIP-113 shape, not in a
+  // half-on one: partition gone AND refusal index gone, so the UTxOs are ordinary
+  // spendable ones again rather than unspendable-and-unexplained.
+  it('with the flag off, partitions nothing and refuses nothing', async () => {
+    const wallet = makeWallet();
+    const armed = bootWallet(wallet);
+    await armed.applyUtxos([spendableUtxo(), programmableUtxo()], true);
+    expect(armed.findProgrammableInputs(txSpendingProgrammable)).not.toEqual([]);
+
+    setCip113EnabledForTest(false);
+    simulateWorkerRestart();
+    const killed = bootWallet(wallet);
+    await loginFromCache(killed);
+
+    expect(walletStore.programmableLockedLovelace).toBe('0');
+    expect(walletStore.programmableTokens).toEqual({});
+    expect(killed.hasProgrammableInputs()).toBe(false);
+    expect(killed.findProgrammableInputs(txSpendingProgrammable)).toEqual([]);
+    // The full stake-level total is spendable again, exactly as before the feature.
+    WalletStore.setAccount({ controlled_amount: CONTROLLED_TOTAL } as Account);
+    expect(walletStore.account?.controlled_amount).toBe(CONTROLLED_TOTAL);
   });
 });

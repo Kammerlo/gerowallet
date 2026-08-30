@@ -42,6 +42,7 @@ import {
   submitTx as submitTxFn,
   toStakeAddress,
 } from '@/chrome/serialization';
+import { isCip113Enabled } from '@/chrome/cip113Flag';
 import { readCachedUtxoRows, serializeUtxoRows, type CachedUtxoRow } from '@/chrome/utxoCache';
 import { decryptPrivateKey, encryptWithPassword, isRawEncryptedKey } from '@/shared/utils/crypto';
 import type { IUnifiedUtxo } from '@/chains/common/interfaces';
@@ -443,8 +444,16 @@ export class WalletBg {
 
   private programmableUtxos: Cardano.Utxo[] = [];
 
-  /** Empty when CIP-113 is not configured for this network, which disables the feature. */
+  /**
+   * Empty when CIP-113 is off, which disables the feature everywhere downstream: no
+   * partition, no refusal index, and `subscriptionCredentials()` keeps the server-side
+   * allowlist. Two independent gates, both of which must pass:
+   *
+   *  - the network has a configured deployment (`cip113Deployments.ts`, build-time), and
+   *  - the `isCip113Enabled` remote flag is on (runtime kill-switch, ships dark).
+   */
   private programmableBaseScriptHashes(): Set<string> {
+    if (!isCip113Enabled()) return new Set();
     return new Set(networks.resolveProgrammableLogicBaseScriptHashes(this.chain, this.network));
   }
 
@@ -546,6 +555,14 @@ export class WalletBg {
 
   /** Restore the refusal index at login, before any sign request can arrive. */
   public async loadProgrammableRefs() {
+    // Killed remotely (or unconfigured for this network) means the feature is absent, not
+    // half-on: without the partition those UTxOs are ordinary spendable ones again, and a
+    // refusal index left over from an earlier session would block signing them with no
+    // surface left to explain why.
+    if (this.programmableBaseScriptHashes().size === 0) {
+      this.programmableInputRefs = new Set();
+      return;
+    }
     try {
       const db = await this.getDb();
       const row = await db.table('config').where({ key: WalletBg.PROGRAMMABLE_REFS_CONFIG_KEY }).first();
@@ -558,6 +575,15 @@ export class WalletBg {
     } catch (e) {
       debugLog('CIP-113: could not restore programmable input refs', e);
     }
+  }
+
+  /**
+   * True when the refusal index holds anything at all. Lets a caller skip deserializing a
+   * transaction it could not possibly have to refuse — the common case on any network
+   * without a CIP-113 deployment, mainnet included.
+   */
+  hasProgrammableInputs(): boolean {
+    return this.programmableInputRefs.size > 0;
   }
 
   /**
