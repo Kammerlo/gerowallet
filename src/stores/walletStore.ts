@@ -130,6 +130,21 @@ export function spendableControlledAmount(total: string | number | null | undefi
   }
 }
 
+/**
+ * True when this wallet holds lovelace locked in CIP-113 UTxOs.
+ *
+ * Exists so the empty-state gates don't each hand-roll a `BigInt()` parse: they run
+ * inside render computeds, where a throw on a malformed stored value takes the whole
+ * page down rather than mis-reporting one number.
+ */
+export function hasProgrammableLockedLovelace(): boolean {
+  try {
+    return BigInt(walletStore.programmableLockedLovelace || '0') > 0n;
+  } catch {
+    return false;
+  }
+}
+
 /** Re-derive `controlled_amount` from the provider total, tolerating repeated application. */
 function withSpendableControlledAmount(account: Account | null): Account | null {
   if (!account) return account;

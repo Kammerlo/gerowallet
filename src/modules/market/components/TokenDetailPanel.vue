@@ -11,7 +11,7 @@
         <div class="d-flex align-center">
           <span class="text-h6 font-weight-bold mr-2">{{ token.ticker }}</span>
           <v-icon v-if="token.verified" small color="primary" class="mr-1">mdi-check-decagram</v-icon>
-          <v-tooltip v-if="token.isProgrammable" top :open-delay="300" content-class="custom-tooltip">
+          <v-tooltip v-if="isProgrammableRow(token)" top :open-delay="300" content-class="custom-tooltip">
             <template v-slot:activator="{ on, attrs }">
               <v-chip
                 x-small label
@@ -188,14 +188,14 @@
           <!-- GeroSwapEmbed (Cardano DEX only). Never for a CIP-113 token: moving one
                needs the transfer-logic script and directory proofs, which ordinary DEX
                routing cannot supply, so the swap could only fail. -->
-          <div v-if="!isApex && token.unit !== 'lovelace' && !token.isProgrammable" class="swap-shell">
+          <div v-if="!isApex && token.unit !== 'lovelace' && !isProgrammableRow(token)" class="swap-shell">
             <GeroSwapEmbed
               :token-out="token.unit"
               context="dialog"
               @swap-submitted="onSwapComplete"
             />
           </div>
-          <div v-else-if="token.isProgrammable" class="text-center py-4 text--secondary text-caption">
+          <div v-else-if="isProgrammableRow(token)" class="text-center py-4 text--secondary text-caption">
             {{ $t(programmableTooltipKey(token.unit)) }}
           </div>
           <div v-else class="text-center py-4 text--secondary text-caption">
@@ -294,7 +294,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, type Ref } from 'vue';
-import { programmableTooltipKey } from '@/shared/utils/programmableTokenDisplay';
+import { programmableTooltipKey, isProgrammableRow } from '@/shared/utils/programmableTokenDisplay';
 import { useTranslation } from '@/shared/composables/useTranslation';
 import { useWatchlist } from '@/modules/market/composables/useWatchlist';
 import { useMarketData, type MarketToken, type CandlestickDataPoint } from '@/modules/market/composables/useMarketData';
