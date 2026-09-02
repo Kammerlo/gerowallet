@@ -4547,7 +4547,7 @@ export default {
   // Empfangsdialog Midnight-Bereich (Öffentlich / Privat / DUST Tabs)
   'midnight.receive.tabDust': 'DUST',
   'midnight.receive.publicLabel': 'Öffentliche Adresse',
-  'midnight.receive.publicInfo': 'Für normale (Unshielded) NIGHT-Transfers. Beträge und Adressen sind on-chain sichtbar.',
+  'midnight.receive.publicInfo': 'Für normale (Unshielded) Transfers von NIGHT und anderen Midnight-Token. Beträge und Adressen sind on-chain sichtbar.',
   'midnight.receive.privateLabel': 'Private Adresse',
   'midnight.receive.privateInfo': 'Für private (Shielded) Transfers. Beträge und Teilnehmer bleiben vertraulich.',
   'midnight.receive.dustLabel': 'DUST-Adresse',
@@ -4691,6 +4691,16 @@ export default {
   'midnight.dustRelayEstimate': 'Relay zu Midnight (einige Stunden)',
   'midnight.relayFewHours': 'einige Stunden',
   'midnight.dustSourcesReadOnly': 'Keine lokalen Schlüssel',
+  // Zeilenzustände, die kein einfaches „Hier erzeugen“ anbieten dürfen — ein
+  // Stake-Credential darf genau eine aktive Registrierung tragen.
+  'midnight.dustSourcesUnknownState': 'Status nicht verfügbar',
+  'midnight.dustSourcesUnknownHint': 'Die DUST-Registrierung dieser Wallet konnte gerade nicht geprüft werden. Eine Registrierung ohne Prüfung könnte ein Duplikat erzeugen und die DUST-Erzeugung anhalten.',
+  'midnight.dustSourcesDuplicate': 'Doppelte Registrierungen',
+  'midnight.dustSourcesDuplicateHint': 'Diese Wallet hat mehr als eine DUST-Registrierung und erzeugt deshalb nichts. Öffne sie als Cardano-Wallet, um die überzähligen zu entfernen.',
+  'midnight.dustSourcesElsewhere': 'Erzeugt derzeit für {address}.',
+  'midnight.dustSourcesElsewhereUnknown': 'Auf Cardano bereits registriert. Leite sie hierher um, damit sie DUST für diese Wallet erzeugt.',
+  'midnight.dustSourcesAlreadyRegistered': 'Diese Wallet hat bereits eine aktive DUST-Registrierung. Nutze stattdessen „Hierher umleiten“.',
+  'midnight.cnightDestinationChanging': 'Neues Ziel, wartet auf die Weiterleitung',
   // Inline DUST-Generierungszeile (Holdings-Tabelle + Token-Drawer)
   'midnight.dustLinePromo': 'Dieses NIGHT kann DUST generieren',
   'midnight.dustLineGenerating': 'Generiert DUST',
@@ -4720,6 +4730,14 @@ export default {
   'midnight.txShield': 'NIGHT verschleiert',
   'midnight.txUnshield': 'NIGHT entschleiert',
   'midnight.txContractCall': 'Contract-Aufruf',
+  // Transaktionsdetail: aufklappbare Ein-/Ausgaben pro Transaktion (UTxO-Inspektor)
+  'midnight.utxoInputs': 'Eingänge',
+  'midnight.utxoOutputs': 'Ausgänge',
+  'midnight.thisWallet': 'Dieses Wallet',
+  'midnight.utxoLoadFailed': 'Ein- und Ausgänge für diese Transaktion konnten nicht geladen werden.',
+  // UTxOs-Tab-Detailbereich: Die Referenz eines Midnight-UTxO ist intentHash:outputIndex,
+  // ein eigenes Feld, verschieden von transactions.transactionId.
+  'midnight.intentHash': 'Intent-Hash',
   // Einstellungen > Erweitert: Midnight-Proof-Server-Bereich (WP-P4)
   'midnight.proofServer.title': 'Midnight-Proof-Server',
   'midnight.proofServer.remoteLabel': 'Gero Cloud (Standard)',
@@ -4799,6 +4817,9 @@ export default {
   'midnight.proofServerPage.faq4A': 'Nein. Nur geschützte (private) Transaktionen benötigen einen Proof. Öffentliche NIGHT-Überweisungen sind von dieser Einstellung nicht betroffen.',
   'midnight.proofServerPage.faq5Q': 'Was ist Arkhia zkPaaS?',
   'midnight.proofServerPage.faq5A': 'Ein gehosteter Beweis-Dienst für das Midnight-Ökosystem, betrieben hinter dem Arkhia-API-Gateway auf Google Cloud Confidential Computing (einer Trusted Execution Environment, sodass Proof-Daten selbst während der Verarbeitung verschlüsselt bleiben). Er benötigt einen API-Key aus dem Arkhia-Dashboard. Wie jeder entfernte Prover erhält er deine privaten Transaktionsdaten für den Beweis-Schritt; anders als bei Gero Cloud gehen diese Daten an Arkhia statt an Gero.',
+  // Non-NIGHT-Token-Zeilen (Dezimalstellen unbekannt, bis Token-Metadaten verfügbar sind)
+  'midnight.unknownToken': 'Unbekanntes Token',
+  'midnight.rawBalanceNotice': 'Rohbetrag — Dezimalstellen unbekannt',
   // ---- Positions explorer (action detail) ----
   // One key for one concept: this replaced 'assets.clearFilters' and
   // 'transactions.clearFilters', which said the same thing in three spellings.

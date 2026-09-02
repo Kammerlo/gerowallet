@@ -22,9 +22,10 @@ name: Dev Bundle Gate
 # also unavailable: Vue 2.7 + TS 5.8 has no compatible version — 1.x caps at
 # ~TS 5.4, 2.x+ dropped Vue 2.) Cleaning up the tsc/lint debt is a separate task.
 #
-# Secret-free by design: it materializes a placeholder .env.production from the
-# committed .env.example (VITE_* values are inlined runtime strings, not build
-# secrets), so the bundle path matches production without exposing credentials.
+# Secret-free by design: it synthesizes a placeholder .env.production from the
+# VITE_* names the source references (VITE_* values are inlined runtime strings,
+# not build secrets), so the bundle path matches production without exposing
+# credentials and without depending on a committed env file.
 
 on:
   pull_request:
@@ -97,6 +98,11 @@ jobs:
       # parses every SFC in options/popup/sidepanel and fails on syntax errors.
       - name: Bundle check (build:web, placeholder env)
         run: |
-          cp .env.example .env.production
+          # Synthesize the placeholder from the VITE_* names the source actually
+          # references, rather than from a committed .env.example. That file was
+          # removed (it carried MANIFEST_KEY), and hard-depending on it made this
+          # gate fail for a reason unrelated to buildability. Deriving the list
+          # from src/ also keeps it correct as new vars are added.
+          grep -rhoE 'VITE_[A-Z0-9_]+' src/ scripts/ 2>/dev/null             | sort -u | sed 's/$/=placeholder/' > .env.production
           echo "Wrote placeholder .env.production ($(grep -c '^VITE_' .env.production) vars)"
           npm run build:web -- --mode production
