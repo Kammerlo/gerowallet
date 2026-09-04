@@ -556,9 +556,12 @@ export class WalletBg {
   /** Restore the refusal index at login, before any sign request can arrive. */
   public async loadProgrammableRefs() {
     // Killed remotely (or unconfigured for this network) means the feature is absent, not
-    // half-on: without the partition those UTxOs are ordinary spendable ones again, and a
-    // refusal index left over from an earlier session would block signing them with no
-    // surface left to explain why.
+    // half-on. With the gate shut those UTxOs do not come back as spendable — the gate
+    // also restores the server-side credential allowlist, so gero-sync stops returning
+    // them, and classifyUtxoAddress would call one 'foreign' if it arrived anyway. What
+    // must not survive is this index: it is state belonging to a feature that is off, it
+    // names outputs no transaction the wallet builds can reference any more, and on a
+    // later re-enable it has to be rebuilt from live UTxOs rather than restored stale.
     if (this.programmableBaseScriptHashes().size === 0) {
       this.programmableInputRefs = new Set();
       return;

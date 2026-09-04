@@ -253,9 +253,12 @@ describe('CIP-113 partition when the holdings go away', () => {
     expect(walletStore.programmableLockedLovelace).toBe('0');
   });
 
-  // The remote kill-switch has to leave the wallet in its pre-CIP-113 shape, not in a
-  // half-on one: partition gone AND refusal index gone, so the UTxOs are ordinary
-  // spendable ones again rather than unspendable-and-unexplained.
+  // The remote kill-switch has to leave the wallet in its pre-CIP-113 shape, not a
+  // half-on one: partition gone AND refusal index gone. Note what "pre-CIP-113" means
+  // here — the programmable UTxOs are not spendable again, they are simply not returned
+  // (the gate also restores gero-sync's credential allowlist). It is the stake-level
+  // BALANCE that goes back to its unadjusted figure, which is what the last assertion
+  // pins; the locked lovelace was always part of that total before this feature existed.
   it('with the flag off, partitions nothing and refuses nothing', async () => {
     const wallet = makeWallet();
     const armed = bootWallet(wallet);
@@ -271,7 +274,7 @@ describe('CIP-113 partition when the holdings go away', () => {
     expect(walletStore.programmableTokens).toEqual({});
     expect(killed.hasProgrammableInputs()).toBe(false);
     expect(killed.findProgrammableInputs(txSpendingProgrammable)).toEqual([]);
-    // The full stake-level total is spendable again, exactly as before the feature.
+    // Balance figure back to the provider's unadjusted total, exactly as before the feature.
     WalletStore.setAccount({ controlled_amount: CONTROLLED_TOTAL } as Account);
     expect(walletStore.account?.controlled_amount).toBe(CONTROLLED_TOTAL);
   });
